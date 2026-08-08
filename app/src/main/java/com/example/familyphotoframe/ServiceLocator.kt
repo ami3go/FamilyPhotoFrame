@@ -10,6 +10,8 @@ import com.example.familyphotoframe.data.cache.MediaCache
 import com.example.familyphotoframe.data.db.AppDatabase
 import com.example.familyphotoframe.data.db.PhotoDao
 import com.example.familyphotoframe.data.diagnostics.DiagnosticsLog
+import com.example.familyphotoframe.data.diagnostics.DiagnosticIdentityHasher
+import com.example.familyphotoframe.data.diagnostics.DiagnosticIdentityKeyStore
 import com.example.familyphotoframe.data.diagnostics.DiagnosticRuntimeState
 import com.example.familyphotoframe.data.diagnostics.FileDiagnosticsSink
 import com.example.familyphotoframe.data.diagnostics.RuntimeSampler
@@ -234,6 +236,9 @@ class ServiceLocator(private val appContext: Context) {
             io = dispatchers.io,
             clearMemoryCache = { imageLoader.memoryCache?.clear() },
             clearPreview = { webServer.clearPreview() },
+            rotateDiagnosticIdentityKey = {
+                DiagnosticIdentityHasher.install(DiagnosticIdentityKeyStore(appContext).rotate())
+            },
         )
     }
 

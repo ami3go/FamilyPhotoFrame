@@ -35,6 +35,13 @@ class FactoryResetCoordinator(
     private val io: CoroutineDispatcher,
     private val clearMemoryCache: () -> Unit,
     private val clearPreview: () -> Unit,
+    /**
+     * Rotates the diagnostics identity HMAC key so pseudonymized tokens (folder names,
+     * hostnames, paths, ...) logged after a reset are unlinkable from tokens logged
+     * before it — otherwise a "reset" device keeps hashing the same identifiers to the
+     * same tokens forever, defeating the point of resetting it for a new owner/session.
+     */
+    private val rotateDiagnosticIdentityKey: () -> Unit,
 ) {
     data class Outcome(
         val uploadedPhotosPreserved: Boolean = true,
@@ -81,6 +88,9 @@ class FactoryResetCoordinator(
 
             stage = "SETTINGS_RESET"
             settings.update { AppSettings() }
+
+            stage = "DIAGNOSTIC_IDENTITY_ROTATE"
+            rotateDiagnosticIdentityKey()
 
             diagnostics.logEvent(
                 "WEB_FACTORY_RESET_COMPLETED",

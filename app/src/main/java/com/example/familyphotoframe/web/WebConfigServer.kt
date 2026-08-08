@@ -356,7 +356,7 @@ class WebConfigServer(
             }
             uri.startsWith("/api/v1/security/remembered-browsers/") && uri.endsWith("/revoke") && method == Method.POST -> guarded(token, csrf) {
                 val id = uri.removePrefix("/api/v1/security/remembered-browsers/").removeSuffix("/revoke")
-                revokeRememberedBrowser(id)
+                revokeRememberedBrowser(session, token, id)
             }
         else -> null
     }
@@ -840,8 +840,18 @@ class WebConfigServer(
         return v1Ok(buildJsonObject { put("revokedCount", count) })
     }
 
-    private fun revokeRememberedBrowser(id: String): Response {
+    private fun revokeRememberedBrowser(session: IHTTPSession, token: String?, id: String): Response {
         if (id.length !in 16..80) return v1Error(Response.Status.BAD_REQUEST, "BAD_BROWSER_ID", "Invalid browser id")
+        // Self-revoke needs no extra proof (same as /current/revoke). Revoking a
+        // *different* browser's trust is a cross-device action and, like revoke-all,
+        // requires the current frame PIN so an authenticated-but-unattended session
+        // can't silently strip another paired browser's trust.
+        if (id != security.rememberedBrowserIdForSession(token)) {
+            val body = readJsonObject(session, MAX_PAIR_BODY_CHARS) ?: return badJson()
+            if (!security.verifyPin(body.string("pin").orEmpty())) {
+                return v1Error(Response.Status.UNAUTHORIZED, "STEP_UP_REQUIRED", "The current frame PIN is required")
+            }
+        }
         val changed = runBlocking { rememberedBrowsers?.revoke(id) } == true
         security.revokeSessionsForRememberedBrowser(id)
         return v1Ok(buildJsonObject { put("revoked", changed); put("id", id) })

@@ -19,6 +19,19 @@ class DiagnosticIdentityKeyStore(context: Context) {
         return generated
     }
 
+    /**
+     * Replace the installation key with a fresh one, so every pseudonymized diagnostic
+     * token (folder names, hostnames, paths, ...) computed after this call is unlinkable
+     * from tokens computed before it. Callers must also re-install the new key into
+     * [DiagnosticIdentityHasher] for it to take effect without a process restart.
+     */
+    @Synchronized
+    fun rotate(): ByteArray {
+        val generated = ByteArray(KEY_BYTES).also(SecureRandom()::nextBytes)
+        preferences.edit().putString(KEY_MATERIAL, generated.toHex()).commit()
+        return generated
+    }
+
     private fun decodeHex(value: String): ByteArray? {
         if (value.length != KEY_BYTES * 2 || value.any { it.digitToIntOrNull(16) == null }) return null
         return ByteArray(KEY_BYTES) { index ->
