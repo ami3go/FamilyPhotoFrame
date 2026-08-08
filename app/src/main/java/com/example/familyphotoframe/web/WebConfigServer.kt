@@ -938,8 +938,9 @@ class WebConfigServer(
 
     private fun readJsonObject(session: IHTTPSession, maxChars: Int = MAX_BODY_CHARS): JsonObject? {
         return try {
-            val declared = session.headers["content-length"]?.toLongOrNull()
-            if (declared != null && declared > maxChars.toLong() * 4L) return null
+            if (!session.headers["transfer-encoding"].isNullOrBlank()) return null
+            val declared = session.headers["content-length"]?.toLongOrNull() ?: return null
+            if (declared > maxChars.toLong() * 4L) return null
             val files = HashMap<String, String>()
             session.parseBody(files)
             requestBodyConsumed.set(true)

@@ -73,6 +73,7 @@ class MediaCache(
     }
 
     private val dir: File = File(context.filesDir, "mediacache").apply { mkdirs() }
+    private val tmpSuffixCounter = java.util.concurrent.atomic.AtomicLong(0)
 
     fun keyFor(item: PhotoItem): String = item.stableId
 
@@ -151,7 +152,9 @@ class MediaCache(
 
     private suspend fun download(item: PhotoItem, source: PhotoSource, key: String): ResolveResult {
         val target = File(dir, key)
-        val tmp = File(dir, "$key.part")
+        // Unique per call so concurrent downloads of the same key (e.g. current photo also
+        // happens to be the preloaded next photo) never write/delete/rename the same temp file.
+        val tmp = File(dir, "$key.${tmpSuffixCounter.incrementAndGet()}.part")
         var stage = FailureStage.SOURCE_READ
         return try {
             source.openStream(item).use { input ->
