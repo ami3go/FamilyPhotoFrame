@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FamilyPhotoFrame — a privacy-first Android photo frame</title>
+<meta name="description" content="A privacy-first digital photo frame for Android. Local network only, no cloud, no accounts, no ads.">
+<link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3GwHAAAEKElEQVR4nO3cz2rUUBjG4VS8hq5KlxUEBddejdtekNtejWtBQdCbqQsdbHXGyZ8zOV/yPs+20J7mfL9kEtJe3d5cPw4Q6kXvBUBPAiCaAIgmAKIJgGgCIJoAiCYAogmAaAIgmgCIJgCiCYBoAiCaAIgmAKIJgGgCIJoAiCYAogmAaAIgmgCIJgCiCYBoAiCaAIgmAKIJgGgvey9gqk8f73ovgTPe3//ovYTRrm5vrh97L+IcQ79NWwihfACGf/sqh1D6HsDw70PlfSwbQOWDxnRV97NkAFUPFstU3NdyAVQ8SLRTbX/LBQBrEgDRSgVQ7fLIZVTa51IBwNo29yrEMe8+fO29hEifH970XsJirgBEEwDRBEC0XdwD8K9Tn8/dLz0ngJ05d2N6+LoQfvERaEemPJXZwxOcFgSwE3MGWgQC2IUlg5wegQA2rsUAJ0cgAKIJYMNanrlTrwICIJoAiCYAogmAaAIgmgA2rOX7PKnvBgmAaALYuBZn7tSz/zAIYBeWDHDy8A+DAHZjziCnD/8wCGBXpgy04f/FX4TtzGGw/UnkOALYKYM+jo9ARBMA0QRANAEQTQBEEwDRBEA0ARBNAEQTANEE0Nj3b196L4EJBNDQYfhFsB0CaOTvoRfBNgiggVPDLoL6BHBhIqhNAAuNGXAR1CWABaYMdo8IhHeeAGaaM1xrDqQnUuMIYIYlQ7XGQBr68QQwUYvhutSAfv/25ej3FsRpApig5SC1HkpDPo8ARrrEgLX6np5EzSeAzpYOZvUnUdUJYIRLD87cJ0oGejkBnLHWkK11JhfNcwL4j7WHxWf59QnghF6D9r+fu+ZNcwoBHNF7QI69Wu2x6WUI4C9VBsOrDOsQwBPVhq3i06e9EQDRBPBb6tkw9fc+EMBgCJJ///gAkjef8AAM/x+pxyI2gNQN57nIAAz/cYnHJS6AxE2eIu34xAUAT0UFkHZ2myvpOMUEkLSpjBcRgOGfLuWYvey9gDW8ev229xIoKuIKAKcIgGgCIJoAiCYAogmAaAIgmgCIJgCiCYBoAiCaAIgmAKIJgGgCIJoAiCYAogmAaAIgmgCIJgCiCYBoAiCaAIgmAKLt4j/DfX5403sJbJQrANEEQLRSAby//9F7Cayg0j6XCgDWVi6ASmcH2qu2v+UCgDWVDKDaWYI2Ku5ryQCGoebBYr6q+1k2gGGoe9CYpvI+Xt3eXD/2XsQ5nz7e9V4CM1Qe/INNBPCUGOrbwuAfbC4AaKn0PQBcmgCIJgCiCYBoAiCaAIgmAKIJgGgCIJoAiCYAogmAaAIgmgCIJgCiCYBoAiCaAIgmAKIJgGgCIJoAiCYAogmAaAIgmgCIJgCiCYBoAiCaAIgmAKIJgGgCINpPL0UqQZMZ9z8AAAAASUVORK5CYII=">
+<style>
+  :root{
+    --bg:#14130F;
+    --bg-2:#1E1C16;
+    --ink:#EDE9E1;
+    --ink-dim:#B8B2A4;
+    --amber:#E3B23C;
+    --amber-dim:#8a6a24;
+    --line:#33301f;
+    --card:#1b1912;
+    --radius:14px;
+    --maxw:960px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--amber)}
+  a:hover{color:#f0c766}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+
+  header.top{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:20px 0;border-bottom:1px solid var(--line);
+  }
+  .brand{display:flex;align-items:center;gap:12px;font-weight:700;font-size:1.05rem}
+  .brand img{width:32px;height:32px;border-radius:8px;display:block}
+  nav.top-links{display:flex;gap:20px;font-size:.92rem}
+  nav.top-links a{text-decoration:none}
+
+  .badge{
+    display:inline-flex;align-items:center;gap:8px;
+    background:var(--card);border:1px solid var(--line);
+    color:var(--ink-dim);
+    padding:6px 12px;border-radius:999px;font-size:.82rem;
+  }
+  .badge b{color:var(--amber);font-weight:600}
+
+  .hero{padding:64px 0 40px;text-align:center}
+  .hero .badge{margin-bottom:22px}
+  .hero h1{
+    font-size:clamp(2rem,5vw,3rem);
+    margin:0 0 18px;
+    letter-spacing:-0.01em;
+  }
+  .hero h1 .accent{color:var(--amber)}
+  .hero p.lede{
+    font-size:1.15rem;color:var(--ink-dim);
+    max-width:640px;margin:0 auto 30px;
+  }
+  .cta-row{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+  .btn{
+    display:inline-block;padding:12px 22px;border-radius:10px;
+    font-weight:600;font-size:.95rem;text-decoration:none;
+    border:1px solid var(--line);
+  }
+  .btn.primary{background:var(--amber);color:#1a1608;border-color:var(--amber)}
+  .btn.primary:hover{background:#f0c766}
+  .btn.ghost{color:var(--ink);background:transparent}
+  .btn.ghost:hover{border-color:var(--amber-dim)}
+
+  section{padding:52px 0;border-top:1px solid var(--line)}
+  section h2{font-size:1.5rem;margin:0 0 8px}
+  section p.section-lede{color:var(--ink-dim);margin:0 0 32px;max-width:640px}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}
+  .card{
+    background:var(--card);border:1px solid var(--line);
+    border-radius:var(--radius);padding:20px;
+  }
+  .card h3{margin:0 0 8px;font-size:1.02rem;color:var(--ink)}
+  .card p{margin:0;color:var(--ink-dim);font-size:.92rem}
+
+  .privacy{
+    background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:28px;
+  }
+  .privacy ul{margin:0;padding-left:1.2em;color:var(--ink-dim)}
+  .privacy li{margin-bottom:10px}
+  .privacy li b{color:var(--ink)}
+
+  pre{
+    background:#0d0c09;border:1px solid var(--line);border-radius:10px;
+    padding:16px 18px;overflow-x:auto;font-size:.86rem;color:#d8d2c2;
+  }
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+  .status-box{
+    display:flex;gap:16px;align-items:flex-start;
+    background:var(--card);border:1px solid var(--amber-dim);
+    border-radius:var(--radius);padding:20px 22px;
+  }
+  .status-box .dot{
+    flex:0 0 auto;width:10px;height:10px;border-radius:50%;
+    background:var(--amber);margin-top:7px;
+  }
+  .status-box p{margin:0;color:var(--ink-dim);font-size:.94rem}
+  .status-box p b{color:var(--ink)}
+
+  .doclist{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+  .doclist a{
+    display:block;background:var(--card);border:1px solid var(--line);
+    border-radius:10px;padding:14px 16px;text-decoration:none;font-size:.92rem;
+  }
+  .doclist a:hover{border-color:var(--amber-dim)}
+  .doclist a span{display:block;color:var(--ink-dim);font-size:.82rem;margin-top:4px}
+
+  footer{
+    padding:36px 0 60px;color:var(--ink-dim);font-size:.85rem;
+    text-align:center;border-top:1px solid var(--line);
+  }
+  footer a{color:var(--ink-dim);text-decoration:underline}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3GwHAAAEKElEQVR4nO3cz2rUUBjG4VS8hq5KlxUEBddejdtekNtejWtBQdCbqQsdbHXGyZ8zOV/yPs+20J7mfL9kEtJe3d5cPw4Q6kXvBUBPAiCaAIgmAKIJgGgCIJoAiCYAogmAaAIgmgCIJgCiCYBoAiCaAIgmAKIJgGgCIJoAiCYAogmAaAIgmgCIJgCiCYBoAiCaAIgmAKIJgGgvey9gqk8f73ovgTPe3//ovYTRrm5vrh97L+IcQ79NWwihfACGf/sqh1D6HsDw70PlfSwbQOWDxnRV97NkAFUPFstU3NdyAVQ8SLRTbX/LBQBrEgDRSgVQ7fLIZVTa51IBwNo29yrEMe8+fO29hEifH970XsJirgBEEwDRBEC0XdwD8K9Tn8/dLz0ngJ05d2N6+LoQfvERaEemPJXZwxOcFgSwE3MGWgQC2IUlg5wegQA2rsUAJ0cgAKIJYMNanrlTrwICIJoAiCYAogmAaAIgmgA2rOX7PKnvBgmAaALYuBZn7tSz/zAIYBeWDHDy8A+DAHZjziCnD/8wCGBXpgy04f/FX4TtzGGw/UnkOALYKYM+jo9ARBMA0QRANAEQTQBEEwDRBEA0ARBNAEQTANEE0Nj3b196L4EJBNDQYfhFsB0CaOTvoRfBNgiggVPDLoL6BHBhIqhNAAuNGXAR1CWABaYMdo8IhHeeAGaaM1xrDqQnUuMIYIYlQ7XGQBr68QQwUYvhutSAfv/25ej3FsRpApig5SC1HkpDPo8ARrrEgLX6np5EzSeAzpYOZvUnUdUJYIRLD87cJ0oGejkBnLHWkK11JhfNcwL4j7WHxWf59QnghF6D9r+fu+ZNcwoBHNF7QI69Wu2x6WUI4C9VBsOrDOsQwBPVhq3i06e9EQDRBPBb6tkw9fc+EMBgCJJ///gAkjef8AAM/x+pxyI2gNQN57nIAAz/cYnHJS6AxE2eIu34xAUAT0UFkHZ2myvpOMUEkLSpjBcRgOGfLuWYvey9gDW8ev229xIoKuIKAKcIgGgCIJoAiCYAogmAaAIgmgCIJgCiCYBoAiCaAIgmAKIJgGgCIJoAiCYAogmAaAIgmgCIJgCiCYBoAiCaAIgmAKLt4j/DfX5403sJbJQrANEEQLRSAby//9F7Cayg0j6XCgDWVi6ASmcH2qu2v+UCgDWVDKDaWYI2Ku5ryQCGoebBYr6q+1k2gGGoe9CYpvI+Xt3eXD/2XsQ5nz7e9V4CM1Qe/INNBPCUGOrbwuAfbC4AaKn0PQBcmgCIJgCiCYBoAiCaAIgmAKIJgGgCIJoAiCYAogmAaAIgmgCIJgCiCYBoAiCaAIgmAKIJgGgCIJoAiCYAogmAaAIgmgCIJgCiCYBoAiCaAIgmAKIJgGgCINpPL0UqQZMZ9z8AAAAASUVORK5CYII=" alt="">
+      <span>FamilyPhotoFrame</span>
+    </div>
+    <nav class="top-links">
+      <a href="https://github.com/ami3go/FamilyPhotoFrame">GitHub</a>
+      <a href="https://github.com/ami3go/FamilyPhotoFrame/blob/main/docs/ARCHITECTURE.md">Docs</a>
+      <a href="https://github.com/ami3go/FamilyPhotoFrame/blob/main/LICENSE">License</a>
+    </nav>
+  </header>
+
+  <section class="hero" style="border-top:none">
+    <span class="badge">● <b>v0.12.13-prerelease</b> · actively developed</span>
+    <h1>Your photos. <span class="accent">Your network.</span><br>Nobody else's.</h1>
+    <p class="lede">
+      A privacy-first digital photo frame for Android. It plays photos from a folder you
+      choose — on the device, on your NAS, or over WebDAV — over your local network only.
+      No account, no cloud upload, no ads.
+    </p>
+    <div class="cta-row">
+      <a class="btn primary" href="https://github.com/ami3go/FamilyPhotoFrame">View on GitHub</a>
+      <a class="btn ghost" href="https://github.com/ami3go/FamilyPhotoFrame#building">Build from source</a>
+    </div>
+  </section>
+
+  <section>
+    <div class="status-box">
+      <span class="dot"></span>
+      <p>
+        <b>This is pre-release software.</b> The codebase and test suite are substantial
+        and actively reviewed, but hardware soak testing and a signed release build have
+        not been completed. See
+        <a href="https://github.com/ami3go/FamilyPhotoFrame/blob/main/KNOWN_LIMITATIONS.md">KNOWN_LIMITATIONS.md</a>
+        for exactly what is and isn't validated yet.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>What it does</h2>
+    <p class="section-lede">A merged pool of sources, played as one slideshow, with the controls a frame left running for years actually needs.</p>
+    <div class="grid">
+      <div class="card">
+        <h3>Multiple sources, one slideshow</h3>
+        <p>Local SAF folder, SMB/CIFS share, Synology File Station, WebDAV/Nextcloud, or bundled samples — mixed into one merged pool.</p>
+      </div>
+      <div class="card">
+        <h3>Folder-balanced shuffle</h3>
+        <p>No-repeat-per-cycle shuffle that balances across folders, or straightforward ordering by date-taken, filename, or folder.</p>
+      </div>
+      <div class="card">
+        <h3>Favourites &amp; hidden photos</h3>
+        <p>Curate right from the slideshow — mark favourites, hide the ones you don't want to see again.</p>
+      </div>
+      <div class="card">
+        <h3>Portrait collages</h3>
+        <p>Two- or three-up portrait layouts, so a portrait photo doesn't play alone with huge letterboxing.</p>
+      </div>
+      <div class="card">
+        <h3>Motion &amp; transitions</h3>
+        <p>Ken Burns pans, crossfades, and a full set of slide transitions.</p>
+      </div>
+      <div class="card">
+        <h3>Overlays &amp; schedules</h3>
+        <p>Clock, date, folder, and weather overlays; quiet hours, brightness timelines, and automatic re-scans.</p>
+      </div>
+      <div class="card">
+        <h3>On-device web panel</h3>
+        <p>Set up and remote-control from a phone or laptop — QR pairing, live status, diagnostics, encrypted backup/restore.</p>
+      </div>
+      <div class="card">
+        <h3>D-pad friendly</h3>
+        <p>Built to work on Android TV boxes with a remote, not just touchscreens.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Privacy, by construction</h2>
+    <p class="section-lede">Not a policy promise — properties enforced by what the app is (and isn't) allowed to do.</p>
+    <div class="privacy">
+      <ul>
+        <li><b>No broad storage/media permission is ever requested.</b> Local folders are accessed through Android's Storage Access Framework — a scoped grant to the one folder you pick — verified on every build by an automated permission-audit gate.</li>
+        <li><b>No cloud dependency.</b> NAS/SMB, Synology, and WebDAV credentials and photo bytes never leave your LAN.</li>
+        <li><b>Secrets live in the Android Keystore</b>, not in a plain settings file.</li>
+        <li><b>The web control panel is LAN-only by design</b> — see <a href="https://github.com/ami3go/FamilyPhotoFrame/blob/main/WEB_SECURITY.md">WEB_SECURITY.md</a> for exactly what that does and doesn't protect against.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="building">
+    <h2>Building from source</h2>
+    <p class="section-lede">There's no packaged release yet — build the debug APK yourself.</p>
+    <pre><code>git clone https://github.com/ami3go/FamilyPhotoFrame.git
+cd FamilyPhotoFrame
+./gradlew testDebugUnitTest   # pure-logic + JVM tests
+./gradlew assembleDebug       # debug APK</code></pre>
+    <p style="color:var(--ink-dim);font-size:.9rem">
+      A release build falls back to debug signing unless you configure a real keystore —
+      see <a href="https://github.com/ami3go/FamilyPhotoFrame/blob/main/BUILD_NOTES.md">BUILD_NOTES.md</a>.
+      Don't distribute a debug-signed APK.
+    </p>
+  </section>
+
+  <section>
+    <h2>Documentation</h2>
+    <div class="doclist">
+      <a href="https://github.com/ami3go/FamilyPhotoFrame/blob/main/docs/ARCHITECTURE.md">Architecture<span>Module ownership and boundaries</span></a>
+      <a href="https://github.com/ami3go/FamilyPhotoFrame/blob/main/CAPABILITIES.md">Capabilities<span>Machine-checked feature inventory</span></a>
+      <a href="https://github.com/ami3go/FamilyPhotoFrame/blob/main/KNOWN_LIMITATIONS.md">Known limitations<span>What's genuinely unvalidated, and why</span></a>
+      <a href="https://github.com/ami3go/FamilyPhotoFrame/blob/main/ROADMAP.md">Roadmap<span>Deferred, not-yet-started work</span></a>
+      <a href="https://github.com/ami3go/FamilyPhotoFrame/blob/main/MANUAL_TEST_CHECKLIST.md">Manual test checklist<span>The hardware acceptance procedure</span></a>
+      <a href="https://github.com/ami3go/FamilyPhotoFrame/blob/main/WEB_SECURITY.md">Web security<span>Threat model for the web panel</span></a>
+    </div>
+  </section>
+
+  <footer>
+    <p>FamilyPhotoFrame is free software, licensed under the
+      <a href="https://github.com/ami3go/FamilyPhotoFrame/blob/main/LICENSE">GNU GPLv3</a>.
+      Source on <a href="https://github.com/ami3go/FamilyPhotoFrame">GitHub</a>.</p>
+  </footer>
+</div>
+
+</body>
+</html>
