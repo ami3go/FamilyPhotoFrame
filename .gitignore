@@ -19,6 +19,41 @@
 *.tar.gz
 *.rar
 
+# The Gradle wrapper jar must be committed — without it a fresh clone can't
+# run ./gradlew at all. The blanket *.jar rule above would otherwise strip it.
+!gradle/wrapper/gradle-wrapper.jar
+
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*
+
+# Gradle
+.gradle/
+build/
+gradle-app.setting
+.gradletasknamecache
+
+# Local configuration file (contains SDK path, may contain signing paths)
+local.properties
+
+# Release signing material — must never be committed
+keystore.properties
+*.keystore
+*.jks
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+.DS_Store
+captures/
+.navigation/
+.externalNativeBuild/
+.cxx/
+
+# Log Files
+*.hprof
+
+# Freeline
+freeline.py
+freeline/
+freeline_project_description.json
