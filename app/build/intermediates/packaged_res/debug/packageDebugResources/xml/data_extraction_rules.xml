@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ backup & device-transfer rules. Mirrors backup_rules.xml. Spec §18.3. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="media_cache/" />
+        <exclude domain="file" path="fallback/" />
+        <exclude domain="file" path="diagnostics/" />
+        <exclude domain="sharedpref" path="diagnostics_crash_envelope.xml" />
+        <exclude domain="sharedpref" path="diagnostics_process_exit.xml" />
+        <exclude domain="sharedpref" path="process_diagnostics.xml" />
+        <exclude domain="sharedpref" path="diagnostics_identity.xml" />
+        <exclude domain="database" path="frame.db" />
+        <exclude domain="cache" path="." />
+        <exclude domain="external" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="media_cache/" />
+        <exclude domain="file" path="fallback/" />
+        <exclude domain="file" path="diagnostics/" />
+        <exclude domain="sharedpref" path="diagnostics_crash_envelope.xml" />
+        <exclude domain="sharedpref" path="diagnostics_process_exit.xml" />
+        <exclude domain="sharedpref" path="process_diagnostics.xml" />
+        <exclude domain="sharedpref" path="diagnostics_identity.xml" />
+        <exclude domain="database" path="frame.db" />
+        <exclude domain="cache" path="." />
+        <exclude domain="external" path="." />
+    </device-transfer>
+</data-extraction-rules>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.example.familyphotoframe.util.StableIdTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-08-07T04:51:49" hostname="aleksu-Vostro-5471" time="0.001">
+  <properties/>
+  <testcase name="is32HexChars" classname="com.example.familyphotoframe.util.StableIdTest" time="0.0"/>
+  <testcase name="changes_whenAnyComponentChanges" classname="com.example.familyphotoframe.util.StableIdTest" time="0.001"/>
+  <testcase name="supportedFormats_acceptByExtensionOrMime" classname="com.example.familyphotoframe.util.StableIdTest" time="0.0"/>
+  <testcase name="deterministic_forSameInputs" classname="com.example.familyphotoframe.util.StableIdTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

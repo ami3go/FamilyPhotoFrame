@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.example.familyphotoframe.web.WebSecurityTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-08-07T04:51:51" hostname="aleksu-Vostro-5471" time="1.858">
+  <properties/>
+  <testcase name="unknownTokenIsNotAuthenticated" classname="com.example.familyphotoframe.web.WebSecurityTest" time="0.078"/>
+  <testcase name="pinIsGeneratedAndPairsOnce" classname="com.example.familyphotoframe.web.WebSecurityTest" time="0.187"/>
+  <testcase name="repeatedFailuresLockOut" classname="com.example.familyphotoframe.web.WebSecurityTest" time="0.444"/>
+  <testcase name="activityRefreshesIdleDeadline" classname="com.example.familyphotoframe.web.WebSecurityTest" time="0.156"/>
+  <testcase name="stateChangeRequiresMatchingCsrfToken" classname="com.example.familyphotoframe.web.WebSecurityTest" time="0.163"/>
+  <testcase name="recentSessionActivityCanGatePreviewGeneration" classname="com.example.familyphotoframe.web.WebSecurityTest" time="0.131"/>
+  <testcase name="regeneratingPinInvalidatesExistingSessions" classname="com.example.familyphotoframe.web.WebSecurityTest" time="0.227"/>
+  <testcase name="rememberedBrowserKeepsAtMostTwoActiveSessions" classname="com.example.familyphotoframe.web.WebSecurityTest" time="0.001"/>
+  <testcase name="sessionExpiresAfterIdleTimeout" classname="com.example.familyphotoframe.web.WebSecurityTest" time="0.159"/>
+  <testcase name="rememberedSessionHasAbsoluteLifetime" classname="com.example.familyphotoframe.web.WebSecurityTest" time="0.001"/>
+  <testcase name="wrongPinIsRejected" classname="com.example.familyphotoframe.web.WebSecurityTest" time="0.153"/>
+  <testcase name="resetRevokesEverything" classname="com.example.familyphotoframe.web.WebSecurityTest" time="0.157"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

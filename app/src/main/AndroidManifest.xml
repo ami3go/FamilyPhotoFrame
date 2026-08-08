@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Permission posture: SAF folder access, keep-screen-on, and app-private fallback
+      need no permissions. The only permissions declared are the network ones below,
+      which map to the shipped SMB/NAS feature. No broad media/storage permissions are
+      ever declared (enforced by the merged-manifest audit in app/build.gradle.kts).
+    -->
+
+    <!--
+      Phase 1 adds SMB/NAS. INTERNET + ACCESS_NETWORK_STATE map to that shipped
+      feature (spec §21.1); both are network permissions, NOT media/storage, so the
+      §22.1/§27.8 permission gate still passes (no READ_MEDIA_*, no *_EXTERNAL_STORAGE,
+      no ACCESS_MEDIA_LOCATION, no QUERY_ALL_PACKAGES). Boot (RECEIVE_BOOT_COMPLETED)
+      is added in the auto-start increment, when that feature ships.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Auto-start on boot when the user enables it (spec §13.3). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Operable without a touchscreen (spec §12.2, §21.4). -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+
+    <application
+        android:name=".App"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:banner="@drawable/tv_banner"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.FamilyPhotoFrame">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density"
+            android:launchMode="singleTask"
+            android:screenOrientation="fullUser"
+            android:theme="@style/Theme.FamilyPhotoFrame">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <!-- Appears in the Android TV launcher too. -->
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <receiver
+            android:name=".platform.BootReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

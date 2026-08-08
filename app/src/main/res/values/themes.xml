@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose-driven UI; this theme just provides a black, bar-free window so the
+         Activity background never flashes white before the first photo paints. -->
+    <style name="Theme.FamilyPhotoFrame" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/frame_black</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:statusBarColor">@color/frame_black</item>
+        <item name="android:navigationBarColor">@color/frame_black</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

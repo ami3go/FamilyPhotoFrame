@@ -1,0 +1,4 @@
+{"t":1000,"sid":"legacy-session","cat":"APP","code":"SESSION_START","appVersion":"0.10.0"}
+{"t":2000,"sid":"legacy-session","cat":"APP","code":"APP_CREATE"}
+{"t":3000,"sid":"legacy-session","cat":"ENGINE","code":"SLIDE_RENDERED","sourceKind":"SMB","presentationToken":"presentation_0123456789abcdef01234567"}
+{"t":4000,"sid":"legacy-session","cat":"MEMORY","code":"HEAP_SAMPLE","heapUsedKb":42000,"heapMaxKb":100000}

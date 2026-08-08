@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- A simple framed photo: amber frame, mountain + sun motif. -->
+    <path android:fillColor="#E3B23C"
+        android:pathData="M30,32 h48 a4,4 0 0 1 4,4 v36 a4,4 0 0 1 -4,4 h-48 a4,4 0 0 1 -4,-4 v-36 a4,4 0 0 1 4,-4 z"/>
+    <path android:fillColor="#14130F"
+        android:pathData="M33,39 h42 v30 h-42 z"/>
+    <path android:fillColor="#E3B23C"
+        android:pathData="M64,46 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0"/>
+    <path android:fillColor="#EDE9E1"
+        android:pathData="M35,67 L47,53 L57,63 L64,56 L73,67 Z"/>
+</vector>

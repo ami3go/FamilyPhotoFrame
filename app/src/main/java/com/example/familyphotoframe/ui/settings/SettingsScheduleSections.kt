@@ -1,0 +1,252 @@
+package com.example.familyphotoframe.ui.settings
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.res.stringArrayResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.familyphotoframe.R
+import com.example.familyphotoframe.data.db.FolderSummary
+import com.example.familyphotoframe.data.diagnostics.DiagnosticsLog
+import com.example.familyphotoframe.data.settings.ActiveSourceKind
+import com.example.familyphotoframe.data.settings.AspectMode
+import com.example.familyphotoframe.data.settings.FilterSettings
+import com.example.familyphotoframe.data.settings.MotionMode
+import com.example.familyphotoframe.data.settings.CollageGap
+import com.example.familyphotoframe.data.settings.PortraitCollageMode
+import com.example.familyphotoframe.data.settings.PortraitFallback
+import com.example.familyphotoframe.data.settings.OverlayPosition
+import com.example.familyphotoframe.data.settings.PlaybackInterval
+import com.example.familyphotoframe.data.settings.SelectionMode
+import com.example.familyphotoframe.data.settings.TransitionMode
+import com.example.familyphotoframe.data.settings.TransitionSelectionMode
+import com.example.familyphotoframe.data.settings.UnreachablePolicy
+import com.example.familyphotoframe.data.settings.BrightnessMode
+import com.example.familyphotoframe.data.settings.NightAction
+import com.example.familyphotoframe.data.settings.UploadDuplicatePolicy
+import com.example.familyphotoframe.data.weather.TemperatureUnits
+import com.example.familyphotoframe.domain.schedule.RescanSchedule
+import com.example.familyphotoframe.ui.slideshow.SlideshowUiState
+import com.example.familyphotoframe.ui.slideshow.SlideshowViewModel
+import com.example.familyphotoframe.web.QrCodes
+import kotlin.math.roundToInt
+
+/** Refactored settings sections: PlaylistScheduleSection, ScheduleSettings, AutoRescanSection, SleepSection. */
+@Composable
+internal fun PlaylistScheduleSection(state: SlideshowUiState, vm: SlideshowViewModel) {
+    SectionLabel("Scheduled playlist switching")
+    ToggleRow("Enable playlist schedule", state.playlistScheduleEnabled, vm::setPlaylistScheduleEnabled)
+    state.activePlaylistRuleName?.let {
+        Text("Active rule: $it", color = Color.White.copy(alpha = 0.75f), fontSize = 14.sp)
+    }
+    state.playlistScheduleRules.forEach { rule ->
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(rule.name, color = Color.White)
+                Text(
+                    "${rule.startTime}–${rule.endTime} · ${state.playlists.firstOrNull { it.id == rule.playlistId }?.name ?: rule.playlistId}",
+                    color = Color.White.copy(alpha = 0.65f),
+                    fontSize = 13.sp,
+                )
+            }
+            TextButton(onClick = { vm.deletePlaylistScheduleRule(rule.id) }) { Text("Delete") }
+        }
+    }
+    var name by remember { mutableStateOf("") }
+    var start by remember { mutableStateOf("08:00") }
+    var end by remember { mutableStateOf("20:00") }
+    var playlistId by remember(state.activePlaylistId) { mutableStateOf(state.activePlaylistId) }
+    OutlinedTextField(name, { name = it.take(80) }, label = { Text("Rule name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(start, { start = it.take(5) }, label = { Text("Start HH:mm") }, singleLine = true, modifier = Modifier.weight(1f))
+        OutlinedTextField(end, { end = it.take(5) }, label = { Text("End HH:mm") }, singleLine = true, modifier = Modifier.weight(1f))
+    }
+    Text("Playlist", color = Color.White.copy(alpha = 0.75f), fontSize = 14.sp)
+    state.playlists.filter { it.enabled }.forEach { playlist ->
+        FilterChip(
+            selected = playlistId == playlist.id,
+            onClick = { playlistId = playlist.id },
+            label = { Text(playlist.name) },
+        )
+    }
+    OutlinedButton(
+        onClick = { vm.addPlaylistScheduleRule(name, playlistId, start, end) },
+        enabled = state.playlists.any { it.id == playlistId },
+        modifier = Modifier.fillMaxWidth(),
+    ) { Text("Add schedule rule") }
+    OutlinedButton(onClick = vm::cancelPlaylistOverride, modifier = Modifier.fillMaxWidth()) {
+        Text("Cancel manual playlist override")
+    }
+}
+@Composable
+internal fun ScheduleSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
+    PlaylistScheduleSection(state, vm)
+    HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
+    SleepSection(state = state, vm = vm)
+    AutoRescanSection(state = state, vm = vm)
+}
+@Composable
+internal fun AutoRescanSection(state: SlideshowUiState, vm: SlideshowViewModel) {
+    val schedule = state.schedule
+    var at by remember(schedule.autoRescanAt) { mutableStateOf(schedule.autoRescanAt) }
+    val days = remember(schedule.autoRescanDays) {
+        RescanSchedule.parseDays(schedule.autoRescanDays)
+    }
+
+    HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+    SectionLabel(stringResource(R.string.settings_autorescan))
+    ToggleRow(
+        stringResource(R.string.settings_autorescan_enable),
+        schedule.autoRescanEnabled,
+        vm::setAutoRescanEnabled,
+    )
+
+    if (schedule.autoRescanEnabled) {
+        Text(
+            stringResource(R.string.settings_autorescan_hint),
+            color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp,
+        )
+        OutlinedTextField(
+            value = at,
+            onValueChange = { at = it; vm.setAutoRescanAt(it) },
+            label = { Text(stringResource(R.string.settings_autorescan_at)) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        SectionLabel(stringResource(R.string.settings_autorescan_days))
+        val dayLabels = listOf(
+            R.string.day_mon, R.string.day_tue, R.string.day_wed, R.string.day_thu,
+            R.string.day_fri, R.string.day_sat, R.string.day_sun,
+        )
+        // Two rows so seven chips fit a narrow frame without clipping.
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (d in 1..4) {
+                    FilterChip(
+                        selected = d in days,
+                        onClick = { vm.setAutoRescanDay(d, d !in days) },
+                        label = { Text(stringResource(dayLabels[d - 1])) },
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (d in 5..7) {
+                    FilterChip(
+                        selected = d in days,
+                        onClick = { vm.setAutoRescanDay(d, d !in days) },
+                        label = { Text(stringResource(dayLabels[d - 1])) },
+                    )
+                }
+                OutlinedButton(onClick = { vm.setAutoRescanDays(RescanSchedule.everyDay()) }) {
+                    Text(stringResource(R.string.settings_autorescan_everyday))
+                }
+            }
+        }
+        if (days.isEmpty()) {
+            // Enabled with no days selected would never run; say so rather than letting
+            // it look like a broken feature.
+            Text(
+                stringResource(R.string.settings_autorescan_nodays),
+                color = Color(0xFFE3B23C), fontSize = 14.sp,
+            )
+        }
+    }
+}
+@Composable
+internal fun SleepSection(state: SlideshowUiState, vm: SlideshowViewModel) {
+    val schedule = state.schedule
+    var start by remember(schedule.sleepStart) { mutableStateOf(schedule.sleepStart) }
+    var end by remember(schedule.sleepEnd) { mutableStateOf(schedule.sleepEnd) }
+
+    HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+    SectionLabel(stringResource(R.string.settings_sleep))
+    ToggleRow(stringResource(R.string.settings_sleep_enable), schedule.sleepEnabled, vm::setSleepEnabled)
+
+    if (schedule.sleepEnabled) {
+        Text(
+            stringResource(R.string.settings_sleep_hint),
+            color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp,
+        )
+        OutlinedTextField(
+            value = start,
+            onValueChange = { start = it; vm.setSleepStart(it) },
+            label = { Text(stringResource(R.string.settings_sleep_start)) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = end,
+            onValueChange = { end = it; vm.setSleepEnd(it) },
+            label = { Text(stringResource(R.string.settings_sleep_end)) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        // Presets rather than a slider: a slider is awkward to hit with a D-pad (§12.2).
+        SectionLabel(stringResource(R.string.settings_sleep_brightness))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            listOf(0.05f to "5%", 0.15f to "15%", 0.30f to "30%", 0.60f to "60%").forEach { (value, label) ->
+                FilterChip(
+                    selected = kotlin.math.abs(schedule.brightnessNight - value) < 0.01f,
+                    onClick = { vm.setNightBrightness(value) },
+                    label = { Text(label) },
+                )
+            }
+        }
+        if (state.asleep) {
+            Text(
+                stringResource(R.string.settings_sleep_active),
+                color = Color(0xFFE3B23C), fontSize = 14.sp,
+            )
+        }
+    }
+}

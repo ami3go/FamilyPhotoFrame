@@ -1,0 +1,1212 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 8,
+    "identityHash": "c77bc30af24f7cb6d9416cea3e47fbf0",
+    "entities": [
+      {
+        "tableName": "photos",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `stableId` TEXT NOT NULL, `sourceId` TEXT NOT NULL, `normalizedPath` TEXT NOT NULL, `folderName` TEXT NOT NULL, `fileName` TEXT NOT NULL, `mimeType` TEXT, `sizeBytes` INTEGER NOT NULL, `fileModifiedEpochMs` INTEGER NOT NULL, `openToken` TEXT NOT NULL, `indexedAtEpochMs` INTEGER NOT NULL, `isHidden` INTEGER NOT NULL, `lastShownAtEpochMs` INTEGER, `decodeFailureCount` INTEGER NOT NULL, `lastDecodeFailureAtEpochMs` INTEGER, `width` INTEGER, `height` INTEGER, `exifOrientation` INTEGER NOT NULL DEFAULT 0, `dateTakenEpochMs` INTEGER, `isFavorite` INTEGER NOT NULL DEFAULT 0, `missingSinceEpochMs` INTEGER, `cacheKey` TEXT, `caption` TEXT, `gpsLat` REAL, `gpsLon` REAL, `exifScannedAtEpochMs` INTEGER, `canonicalDirectory` TEXT NOT NULL DEFAULT '@root', `contentSha256` TEXT, `contentHashScannedAtEpochMs` INTEGER)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stableId",
+            "columnName": "stableId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceId",
+            "columnName": "sourceId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "normalizedPath",
+            "columnName": "normalizedPath",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "folderName",
+            "columnName": "folderName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fileName",
+            "columnName": "fileName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mimeType",
+            "columnName": "mimeType",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "sizeBytes",
+            "columnName": "sizeBytes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fileModifiedEpochMs",
+            "columnName": "fileModifiedEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "openToken",
+            "columnName": "openToken",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "indexedAtEpochMs",
+            "columnName": "indexedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isHidden",
+            "columnName": "isHidden",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastShownAtEpochMs",
+            "columnName": "lastShownAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "decodeFailureCount",
+            "columnName": "decodeFailureCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastDecodeFailureAtEpochMs",
+            "columnName": "lastDecodeFailureAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "width",
+            "columnName": "width",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "height",
+            "columnName": "height",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "exifOrientation",
+            "columnName": "exifOrientation",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "dateTakenEpochMs",
+            "columnName": "dateTakenEpochMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "isFavorite",
+            "columnName": "isFavorite",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "missingSinceEpochMs",
+            "columnName": "missingSinceEpochMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "cacheKey",
+            "columnName": "cacheKey",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "caption",
+            "columnName": "caption",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "gpsLat",
+            "columnName": "gpsLat",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "gpsLon",
+            "columnName": "gpsLon",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "exifScannedAtEpochMs",
+            "columnName": "exifScannedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "canonicalDirectory",
+            "columnName": "canonicalDirectory",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'@root'"
+          },
+          {
+            "fieldPath": "contentSha256",
+            "columnName": "contentSha256",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "contentHashScannedAtEpochMs",
+            "columnName": "contentHashScannedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_photos_sourceId_normalizedPath",
+            "unique": true,
+            "columnNames": [
+              "sourceId",
+              "normalizedPath"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_photos_sourceId_normalizedPath` ON `${TABLE_NAME}` (`sourceId`, `normalizedPath`)"
+          },
+          {
+            "name": "index_photos_sourceId_isHidden_lastShownAtEpochMs",
+            "unique": false,
+            "columnNames": [
+              "sourceId",
+              "isHidden",
+              "lastShownAtEpochMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_photos_sourceId_isHidden_lastShownAtEpochMs` ON `${TABLE_NAME}` (`sourceId`, `isHidden`, `lastShownAtEpochMs`)"
+          },
+          {
+            "name": "index_photos_stableId",
+            "unique": false,
+            "columnNames": [
+              "stableId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_photos_stableId` ON `${TABLE_NAME}` (`stableId`)"
+          },
+          {
+            "name": "index_photos_sourceId_dateTakenEpochMs",
+            "unique": false,
+            "columnNames": [
+              "sourceId",
+              "dateTakenEpochMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_photos_sourceId_dateTakenEpochMs` ON `${TABLE_NAME}` (`sourceId`, `dateTakenEpochMs`)"
+          },
+          {
+            "name": "index_photos_cacheKey",
+            "unique": false,
+            "columnNames": [
+              "cacheKey"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_photos_cacheKey` ON `${TABLE_NAME}` (`cacheKey`)"
+          },
+          {
+            "name": "index_photos_missingSinceEpochMs",
+            "unique": false,
+            "columnNames": [
+              "missingSinceEpochMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_photos_missingSinceEpochMs` ON `${TABLE_NAME}` (`missingSinceEpochMs`)"
+          },
+          {
+            "name": "index_photos_isFavorite",
+            "unique": false,
+            "columnNames": [
+              "isFavorite"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_photos_isFavorite` ON `${TABLE_NAME}` (`isFavorite`)"
+          },
+          {
+            "name": "index_photos_sourceId_canonicalDirectory",
+            "unique": false,
+            "columnNames": [
+              "sourceId",
+              "canonicalDirectory"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_photos_sourceId_canonicalDirectory` ON `${TABLE_NAME}` (`sourceId`, `canonicalDirectory`)"
+          },
+          {
+            "name": "index_photos_contentSha256",
+            "unique": false,
+            "columnNames": [
+              "contentSha256"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_photos_contentSha256` ON `${TABLE_NAME}` (`contentSha256`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "source_config",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `type` TEXT NOT NULL, `displayName` TEXT NOT NULL, `enabled` INTEGER NOT NULL DEFAULT 1, `role` TEXT NOT NULL, `credentialRef` TEXT, `includeSubfolders` INTEGER NOT NULL DEFAULT 1, `includeGlobsCsv` TEXT NOT NULL, `excludeGlobsCsv` TEXT NOT NULL, `priority` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "displayName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enabled",
+            "columnName": "enabled",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "1"
+          },
+          {
+            "fieldPath": "role",
+            "columnName": "role",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "credentialRef",
+            "columnName": "credentialRef",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "includeSubfolders",
+            "columnName": "includeSubfolders",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "1"
+          },
+          {
+            "fieldPath": "includeGlobsCsv",
+            "columnName": "includeGlobsCsv",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "excludeGlobsCsv",
+            "columnName": "excludeGlobsCsv",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "priority",
+            "columnName": "priority",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "smb_source_config",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sourceId` TEXT NOT NULL, `host` TEXT NOT NULL, `share` TEXT NOT NULL, `path` TEXT NOT NULL, `user` TEXT NOT NULL, `domain` TEXT NOT NULL, `connectionTimeoutMs` INTEGER NOT NULL DEFAULT 5000, `readTimeoutMs` INTEGER NOT NULL DEFAULT 15000, `listTimeoutMs` INTEGER NOT NULL DEFAULT 15000, PRIMARY KEY(`sourceId`))",
+        "fields": [
+          {
+            "fieldPath": "sourceId",
+            "columnName": "sourceId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "host",
+            "columnName": "host",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "share",
+            "columnName": "share",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "path",
+            "columnName": "path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "user",
+            "columnName": "user",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "domain",
+            "columnName": "domain",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "connectionTimeoutMs",
+            "columnName": "connectionTimeoutMs",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "5000"
+          },
+          {
+            "fieldPath": "readTimeoutMs",
+            "columnName": "readTimeoutMs",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "15000"
+          },
+          {
+            "fieldPath": "listTimeoutMs",
+            "columnName": "listTimeoutMs",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "15000"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sourceId"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "local_saf_source_config",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sourceId` TEXT NOT NULL, `treeUri` TEXT NOT NULL, `permissionState` TEXT NOT NULL, PRIMARY KEY(`sourceId`))",
+        "fields": [
+          {
+            "fieldPath": "sourceId",
+            "columnName": "sourceId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "treeUri",
+            "columnName": "treeUri",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "permissionState",
+            "columnName": "permissionState",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sourceId"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "secrets",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`credentialRef` TEXT NOT NULL, `type` TEXT NOT NULL, `encryptedSecretBlob` BLOB NOT NULL, `iv` BLOB NOT NULL, `wrappedKey` BLOB, `createdAtEpochMs` INTEGER NOT NULL, `updatedAtEpochMs` INTEGER NOT NULL, `securityLevel` TEXT NOT NULL, PRIMARY KEY(`credentialRef`))",
+        "fields": [
+          {
+            "fieldPath": "credentialRef",
+            "columnName": "credentialRef",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "encryptedSecretBlob",
+            "columnName": "encryptedSecretBlob",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "iv",
+            "columnName": "iv",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "wrappedKey",
+            "columnName": "wrappedKey",
+            "affinity": "BLOB",
+            "notNull": false
+          },
+          {
+            "fieldPath": "createdAtEpochMs",
+            "columnName": "createdAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMs",
+            "columnName": "updatedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "securityLevel",
+            "columnName": "securityLevel",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "credentialRef"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "cache_index",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`cacheKey` TEXT NOT NULL, `photoStableId` TEXT NOT NULL, `localFilePathPrivate` TEXT NOT NULL, `sizeBytes` INTEGER NOT NULL, `createdAtEpochMs` INTEGER NOT NULL, `lastAccessedAtEpochMs` INTEGER NOT NULL, `verifiedDecodeOk` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`cacheKey`))",
+        "fields": [
+          {
+            "fieldPath": "cacheKey",
+            "columnName": "cacheKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photoStableId",
+            "columnName": "photoStableId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "localFilePathPrivate",
+            "columnName": "localFilePathPrivate",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sizeBytes",
+            "columnName": "sizeBytes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMs",
+            "columnName": "createdAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastAccessedAtEpochMs",
+            "columnName": "lastAccessedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "verifiedDecodeOk",
+            "columnName": "verifiedDecodeOk",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "cacheKey"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_cache_index_photoStableId",
+            "unique": false,
+            "columnNames": [
+              "photoStableId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_cache_index_photoStableId` ON `${TABLE_NAME}` (`photoStableId`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "remembered_browsers",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `currentTokenHash` BLOB NOT NULL, `previousTokenHash` BLOB, `previousTokenValidUntilEpochMs` INTEGER, `retiredTokenHash` BLOB, `label` TEXT NOT NULL, `createdAtEpochMs` INTEGER NOT NULL, `lastUsedAtEpochMs` INTEGER NOT NULL, `expiresAtEpochMs` INTEGER, `revokedAtEpochMs` INTEGER, `browserSummary` TEXT, `osSummary` TEXT, `lastTrustedWallClockEpochMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "currentTokenHash",
+            "columnName": "currentTokenHash",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "previousTokenHash",
+            "columnName": "previousTokenHash",
+            "affinity": "BLOB",
+            "notNull": false
+          },
+          {
+            "fieldPath": "previousTokenValidUntilEpochMs",
+            "columnName": "previousTokenValidUntilEpochMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "retiredTokenHash",
+            "columnName": "retiredTokenHash",
+            "affinity": "BLOB",
+            "notNull": false
+          },
+          {
+            "fieldPath": "label",
+            "columnName": "label",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMs",
+            "columnName": "createdAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastUsedAtEpochMs",
+            "columnName": "lastUsedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "expiresAtEpochMs",
+            "columnName": "expiresAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "revokedAtEpochMs",
+            "columnName": "revokedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "browserSummary",
+            "columnName": "browserSummary",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "osSummary",
+            "columnName": "osSummary",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "lastTrustedWallClockEpochMs",
+            "columnName": "lastTrustedWallClockEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "shuffle_scopes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`scopeKey` TEXT NOT NULL, `playlistId` TEXT NOT NULL, `poolRole` TEXT NOT NULL, `activeFolderCycle` INTEGER NOT NULL, `lastPresentedFolderKey` TEXT, `lastUsedAtEpochMs` INTEGER NOT NULL, `eligibilityRevision` INTEGER NOT NULL, `reconciliationRevision` INTEGER NOT NULL, `historyCursorSequence` INTEGER NOT NULL, `latestHistorySequence` INTEGER NOT NULL, `lastCommitEpochMs` INTEGER, `lastReconciliationEpochMs` INTEGER, `lastRecoveryEpochMs` INTEGER, PRIMARY KEY(`scopeKey`))",
+        "fields": [
+          {
+            "fieldPath": "scopeKey",
+            "columnName": "scopeKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "playlistId",
+            "columnName": "playlistId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "poolRole",
+            "columnName": "poolRole",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activeFolderCycle",
+            "columnName": "activeFolderCycle",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastPresentedFolderKey",
+            "columnName": "lastPresentedFolderKey",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "lastUsedAtEpochMs",
+            "columnName": "lastUsedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "eligibilityRevision",
+            "columnName": "eligibilityRevision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reconciliationRevision",
+            "columnName": "reconciliationRevision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "historyCursorSequence",
+            "columnName": "historyCursorSequence",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latestHistorySequence",
+            "columnName": "latestHistorySequence",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastCommitEpochMs",
+            "columnName": "lastCommitEpochMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "lastReconciliationEpochMs",
+            "columnName": "lastReconciliationEpochMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "lastRecoveryEpochMs",
+            "columnName": "lastRecoveryEpochMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "scopeKey"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_shuffle_scopes_lastUsedAtEpochMs",
+            "unique": false,
+            "columnNames": [
+              "lastUsedAtEpochMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_shuffle_scopes_lastUsedAtEpochMs` ON `${TABLE_NAME}` (`lastUsedAtEpochMs`)"
+          },
+          {
+            "name": "index_shuffle_scopes_playlistId_poolRole",
+            "unique": false,
+            "columnNames": [
+              "playlistId",
+              "poolRole"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_shuffle_scopes_playlistId_poolRole` ON `${TABLE_NAME}` (`playlistId`, `poolRole`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "folder_shuffle_entries",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`scopeKey` TEXT NOT NULL, `folderCycle` INTEGER NOT NULL, `position` INTEGER NOT NULL, `folderKey` TEXT NOT NULL, `state` TEXT NOT NULL, `retryCount` INTEGER NOT NULL, `skipReason` TEXT, PRIMARY KEY(`scopeKey`, `folderCycle`, `position`))",
+        "fields": [
+          {
+            "fieldPath": "scopeKey",
+            "columnName": "scopeKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "folderCycle",
+            "columnName": "folderCycle",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "position",
+            "columnName": "position",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "folderKey",
+            "columnName": "folderKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "retryCount",
+            "columnName": "retryCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "skipReason",
+            "columnName": "skipReason",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "scopeKey",
+            "folderCycle",
+            "position"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_folder_shuffle_entries_scopeKey_folderCycle_folderKey",
+            "unique": true,
+            "columnNames": [
+              "scopeKey",
+              "folderCycle",
+              "folderKey"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_folder_shuffle_entries_scopeKey_folderCycle_folderKey` ON `${TABLE_NAME}` (`scopeKey`, `folderCycle`, `folderKey`)"
+          },
+          {
+            "name": "index_folder_shuffle_entries_scopeKey_folderCycle_state_position",
+            "unique": false,
+            "columnNames": [
+              "scopeKey",
+              "folderCycle",
+              "state",
+              "position"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_folder_shuffle_entries_scopeKey_folderCycle_state_position` ON `${TABLE_NAME}` (`scopeKey`, `folderCycle`, `state`, `position`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "folder_photo_cycles",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`scopeKey` TEXT NOT NULL, `folderKey` TEXT NOT NULL, `activePhotoCycle` INTEGER NOT NULL, `lastConsumedPhotoKey` TEXT, `reconciliationRevision` INTEGER NOT NULL, `lastUsedAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`scopeKey`, `folderKey`))",
+        "fields": [
+          {
+            "fieldPath": "scopeKey",
+            "columnName": "scopeKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "folderKey",
+            "columnName": "folderKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activePhotoCycle",
+            "columnName": "activePhotoCycle",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastConsumedPhotoKey",
+            "columnName": "lastConsumedPhotoKey",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "reconciliationRevision",
+            "columnName": "reconciliationRevision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastUsedAtEpochMs",
+            "columnName": "lastUsedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "scopeKey",
+            "folderKey"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_folder_photo_cycles_scopeKey_lastUsedAtEpochMs",
+            "unique": false,
+            "columnNames": [
+              "scopeKey",
+              "lastUsedAtEpochMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_folder_photo_cycles_scopeKey_lastUsedAtEpochMs` ON `${TABLE_NAME}` (`scopeKey`, `lastUsedAtEpochMs`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "photo_shuffle_entries",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`scopeKey` TEXT NOT NULL, `folderKey` TEXT NOT NULL, `photoCycle` INTEGER NOT NULL, `position` INTEGER NOT NULL, `folderPhotoKey` TEXT NOT NULL, `photoId` INTEGER NOT NULL, `state` TEXT NOT NULL, `failureCount` INTEGER NOT NULL, PRIMARY KEY(`scopeKey`, `folderKey`, `photoCycle`, `position`))",
+        "fields": [
+          {
+            "fieldPath": "scopeKey",
+            "columnName": "scopeKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "folderKey",
+            "columnName": "folderKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photoCycle",
+            "columnName": "photoCycle",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "position",
+            "columnName": "position",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "folderPhotoKey",
+            "columnName": "folderPhotoKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photoId",
+            "columnName": "photoId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "failureCount",
+            "columnName": "failureCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "scopeKey",
+            "folderKey",
+            "photoCycle",
+            "position"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_photo_shuffle_entries_scopeKey_folderKey_photoCycle_folderPhotoKey",
+            "unique": true,
+            "columnNames": [
+              "scopeKey",
+              "folderKey",
+              "photoCycle",
+              "folderPhotoKey"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_photo_shuffle_entries_scopeKey_folderKey_photoCycle_folderPhotoKey` ON `${TABLE_NAME}` (`scopeKey`, `folderKey`, `photoCycle`, `folderPhotoKey`)"
+          },
+          {
+            "name": "index_photo_shuffle_entries_scopeKey_folderKey_photoCycle_state_position",
+            "unique": false,
+            "columnNames": [
+              "scopeKey",
+              "folderKey",
+              "photoCycle",
+              "state",
+              "position"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_photo_shuffle_entries_scopeKey_folderKey_photoCycle_state_position` ON `${TABLE_NAME}` (`scopeKey`, `folderKey`, `photoCycle`, `state`, `position`)"
+          },
+          {
+            "name": "index_photo_shuffle_entries_photoId",
+            "unique": false,
+            "columnNames": [
+              "photoId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_photo_shuffle_entries_photoId` ON `${TABLE_NAME}` (`photoId`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "shuffle_reservations",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`scopeKey` TEXT NOT NULL, `reservationId` TEXT NOT NULL, `folderCycle` INTEGER NOT NULL, `folderPosition` INTEGER NOT NULL, `folderKey` TEXT NOT NULL, `photoCycle` INTEGER NOT NULL, `photoPositionsJson` TEXT NOT NULL, `photoIdsJson` TEXT NOT NULL, `createdAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`scopeKey`))",
+        "fields": [
+          {
+            "fieldPath": "scopeKey",
+            "columnName": "scopeKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reservationId",
+            "columnName": "reservationId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "folderCycle",
+            "columnName": "folderCycle",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "folderPosition",
+            "columnName": "folderPosition",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "folderKey",
+            "columnName": "folderKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photoCycle",
+            "columnName": "photoCycle",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photoPositionsJson",
+            "columnName": "photoPositionsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photoIdsJson",
+            "columnName": "photoIdsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMs",
+            "columnName": "createdAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "scopeKey"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_shuffle_reservations_createdAtEpochMs",
+            "unique": false,
+            "columnNames": [
+              "createdAtEpochMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_shuffle_reservations_createdAtEpochMs` ON `${TABLE_NAME}` (`createdAtEpochMs`)"
+          },
+          {
+            "name": "index_shuffle_reservations_folderKey",
+            "unique": false,
+            "columnNames": [
+              "folderKey"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_shuffle_reservations_folderKey` ON `${TABLE_NAME}` (`folderKey`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "presentation_history",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`presentationId` TEXT NOT NULL, `scopeKey` TEXT NOT NULL, `sequence` INTEGER NOT NULL, `folderKey` TEXT NOT NULL, `presentationType` TEXT NOT NULL, `photoIdsJson` TEXT NOT NULL, `committedAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`presentationId`))",
+        "fields": [
+          {
+            "fieldPath": "presentationId",
+            "columnName": "presentationId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scopeKey",
+            "columnName": "scopeKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sequence",
+            "columnName": "sequence",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "folderKey",
+            "columnName": "folderKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "presentationType",
+            "columnName": "presentationType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photoIdsJson",
+            "columnName": "photoIdsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "committedAtEpochMs",
+            "columnName": "committedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "presentationId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_presentation_history_scopeKey_sequence",
+            "unique": true,
+            "columnNames": [
+              "scopeKey",
+              "sequence"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_presentation_history_scopeKey_sequence` ON `${TABLE_NAME}` (`scopeKey`, `sequence`)"
+          },
+          {
+            "name": "index_presentation_history_scopeKey_committedAtEpochMs",
+            "unique": false,
+            "columnNames": [
+              "scopeKey",
+              "committedAtEpochMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_presentation_history_scopeKey_committedAtEpochMs` ON `${TABLE_NAME}` (`scopeKey`, `committedAtEpochMs`)"
+          }
+        ],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c77bc30af24f7cb6d9416cea3e47fbf0')"
+    ]
+  }
+}

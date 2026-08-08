@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.example.familyphotoframe.domain.engine.HostLifecycleGateTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-08-07T04:51:48" hostname="aleksu-Vostro-5471" time="0.0">
+  <properties/>
+  <testcase name="stopAndRestartNeverRevalidateOldWork" classname="com.example.familyphotoframe.domain.engine.HostLifecycleGateTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

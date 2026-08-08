@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.example.familyphotoframe.ui.render.ImageBlurTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-08-07T04:51:48" hostname="aleksu-Vostro-5471" time="0.019">
+  <properties/>
+  <testcase name="downsampleBudgetMatchesSpec" classname="com.example.familyphotoframe.ui.render.ImageBlurTest" time="0.0"/>
+  <testcase name="uniformImageIsUnchanged" classname="com.example.familyphotoframe.ui.render.ImageBlurTest" time="0.001"/>
+  <testcase name="nonSquareImageKeepsDimensions" classname="com.example.familyphotoframe.ui.render.ImageBlurTest" time="0.013"/>
+  <testcase name="blurSpreadsASinglePeak" classname="com.example.familyphotoframe.ui.render.ImageBlurTest" time="0.0"/>
+  <testcase name="radiusLargerThanImageDoesNotCrash" classname="com.example.familyphotoframe.ui.render.ImageBlurTest" time="0.0"/>
+  <testcase name="zeroRadiusIsIdentity" classname="com.example.familyphotoframe.ui.render.ImageBlurTest" time="0.0"/>
+  <testcase name="alphaIsPreservedForOpaqueInput" classname="com.example.familyphotoframe.ui.render.ImageBlurTest" time="0.0"/>
+  <testcase name="outputStaysInByteRange" classname="com.example.familyphotoframe.ui.render.ImageBlurTest" time="0.003"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

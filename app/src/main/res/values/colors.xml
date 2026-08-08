@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="frame_black">#FF000000</color>
+    <color name="frame_white">#FFFFFFFF</color>
+    <color name="ink">#FFEDE9E1</color>
+    <color name="accent_amber">#FFE3B23C</color>
+    <color name="surface_dark">#FF14130F</color>
+    <color name="surface_dark_2">#FF1E1C16</color>
+</resources>
