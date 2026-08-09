@@ -64,6 +64,48 @@ interface PhotoDao {
     )
     suspend fun localThumbnailRebuildCandidates(limit: Int, offset: Int): List<LocalThumbnailRebuildCandidate>
 
+    /** Lightweight projection for [onThisDayCandidates]. */
+    data class OnThisDayCandidate(
+        val id: Long,
+        val stableId: String,
+        val folderName: String,
+        val dateTakenEpochMs: Long,
+        val isFavorite: Boolean,
+        val openToken: String,
+    )
+
+    /**
+     * Exact-day match (any year) for the "on this day" memory feature — see
+     * docs/FPF-FEAT-ON-THIS-DAY-001.md §0.1 (no day-window tolerance by design).
+     * [monthDay] is "MM-dd" in the device's local calendar; the caller computes it fresh
+     * at query time so a device asleep across midnight is never served a stale day.
+     * Grouping by year and picking one photo per year happens in
+     * `domain.onthisday.OnThisDaySelection`, not here — SQLite has no per-group LIMIT,
+     * so this only applies an overall safety cap via [limit].
+     */
+    @Query(
+        """
+        SELECT id, stableId, folderName, dateTakenEpochMs, isFavorite, openToken FROM photos
+        WHERE sourceId IN (:sourceIds) AND isHidden = 0 AND decodeFailureCount < :maxFailures
+          AND dateTakenEpochMs IS NOT NULL
+          AND strftime('%m-%d', dateTakenEpochMs / 1000, 'unixepoch', 'localtime') = :monthDay
+          AND (:allowHeif = 1 OR (
+            lower(fileName) NOT LIKE '%.heic' AND lower(fileName) NOT LIKE '%.heif'
+            AND lower(COALESCE(mimeType, '')) NOT IN
+              ('image/heic','image/heif','image/heic-sequence','image/heif-sequence')
+          ))
+        ORDER BY isFavorite DESC, id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun onThisDayCandidates(
+        sourceIds: List<String>,
+        monthDay: String,
+        maxFailures: Int,
+        allowHeif: Int,
+        limit: Int,
+    ): List<OnThisDayCandidate>
+
     @Query("SELECT COUNT(*) FROM photos")
     suspend fun count(): Int
 
