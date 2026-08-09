@@ -170,4 +170,7 @@ data class SlideshowUiState(
     val localThumbnailCacheEffectiveMaxBytes: Long? = null,
     val localThumbnailCacheRebuildInProgress: Boolean = false,
     val localThumbnailCacheRebuildCount: Int = 0,
+    /** Periodic "on this day" memory interlude (docs/FPF-FEAT-ON-THIS-DAY-001.md). */
+    val onThisDay: com.example.familyphotoframe.data.settings.OnThisDaySettings =
+        com.example.familyphotoframe.data.settings.OnThisDaySettings(),
 )

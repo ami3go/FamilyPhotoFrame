@@ -1,9 +1,13 @@
 # FamilyPhotoFrame — "On This Day" Memory Playlist
 
-**Status:** Phases 1–2 implemented (pure selection/schedule logic, and single-photo
-playback wiring incl. "Preview now" via a `preview_on_this_day` maintenance action).
-Phase 3 (collage), Phase 4 (Settings UI + web parity for the toggle itself), and Phase 5
-(device validation) remain.
+**Status:** Phases 1, 2, and 4 implemented (pure selection/schedule logic, single-photo
+playback wiring, and Settings UI + web parity — enable toggle, times/day, duration,
+minimum years ago, and a "Preview now" button on both surfaces). Phase 3 (multi-year
+collage) and Phase 5 (device validation) remain. Also fixed a pre-existing bug found
+while wiring this in: `onSettings()` never mirrored `localThumbnailCache` into
+`SlideshowUiState`, so that toggle/slider always showed stale defaults regardless of the
+persisted value — fixed alongside the new `onThisDay` mirroring, since both go through
+the same `_state.update` block.
 
 ## 0. Decisions locked in
 

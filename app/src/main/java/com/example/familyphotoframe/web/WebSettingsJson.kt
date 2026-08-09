@@ -151,6 +151,10 @@ internal object WebSettingsJson {
             put("webUploadAllowWhilePlaying", s.webUpload.allowWhilePlaying)
             put("localThumbnailCacheEnabled", s.localThumbnailCache.enabled)
             put("localThumbnailCacheMaxGiB", (s.localThumbnailCache.maxBytes / (1024L * 1024L * 1024L)).toInt())
+            put("onThisDayEnabled", s.onThisDay.enabled)
+            put("onThisDayTimesPerDay", s.onThisDay.timesPerDay)
+            put("onThisDayDurationMinutes", s.onThisDay.durationMinutes)
+            put("onThisDayMinYearsAgo", s.onThisDay.minYearsAgo)
             put("nextScheduleAction", nextScheduleAction)
         }
     }

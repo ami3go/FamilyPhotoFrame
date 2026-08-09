@@ -119,6 +119,9 @@ internal class WebSettingsPatchApplier(
         int("webPort")?.let { if (it !in 1024..65535) return "webPort must be 1024-65535" }
         int("webIdleTimeoutMinutes")?.let { if (it !in 1..1440) return "webIdleTimeoutMinutes must be 1-1440" }
         int("localThumbnailCacheMaxGiB")?.let { if (it < 1) return "localThumbnailCacheMaxGiB must be at least 1" }
+        int("onThisDayTimesPerDay")?.let { if (it !in 1..12) return "onThisDayTimesPerDay must be 1-12" }
+        int("onThisDayDurationMinutes")?.let { if (it !in 1..60) return "onThisDayDurationMinutes must be 1-60" }
+        int("onThisDayMinYearsAgo")?.let { if (it !in 0..100) return "onThisDayMinYearsAgo must be 0-100" }
         str("activePlaylistId")?.let { id ->
             if (settings.settings.first().playlists.playlists.none { it.id == id && it.enabled }) return "Unknown activePlaylistId"
         }
@@ -326,6 +329,18 @@ internal class WebSettingsPatchApplier(
                 next = next.copy(localThumbnailCache = next.localThumbnailCache.copy(
                     maxBytes = value.toLong() * 1024L * 1024L * 1024L,
                 ))
+            }
+            bool("onThisDayEnabled")?.let { value ->
+                next = next.copy(onThisDay = next.onThisDay.copy(enabled = value))
+            }
+            int("onThisDayTimesPerDay")?.let { value ->
+                next = next.copy(onThisDay = next.onThisDay.copy(timesPerDay = value))
+            }
+            int("onThisDayDurationMinutes")?.let { value ->
+                next = next.copy(onThisDay = next.onThisDay.copy(durationMinutes = value))
+            }
+            int("onThisDayMinYearsAgo")?.let { value ->
+                next = next.copy(onThisDay = next.onThisDay.copy(minYearsAgo = value))
             }
             bool("autoRescanEnabled")?.let {
                 next = next.copy(schedule = next.schedule.copy(autoRescanEnabled = it))

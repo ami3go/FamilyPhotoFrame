@@ -636,6 +636,8 @@ class SlideshowViewModel(
                 playlistScheduleRules = s.playlists.scheduleRules,
                 brightnessAutomation = s.brightnessAutomation,
                 webUpload = s.webUpload,
+                localThumbnailCache = s.localThumbnailCache,
+                onThisDay = s.onThisDay,
                 configurableKinds = ActiveSourceKind.entries
                     .filter { it != s.source.kind && isConfigured(it, s.source) }
                     .toSet(),
@@ -3869,6 +3871,36 @@ class SlideshowViewModel(
     }
 
     // ---- "On this day" memory interlude (docs/FPF-FEAT-ON-THIS-DAY-001.md) --------
+
+    fun setOnThisDayEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            services.settings.update { it.copy(onThisDay = it.onThisDay.copy(enabled = enabled)) }
+        }
+    }
+
+    fun setOnThisDayTimesPerDay(timesPerDay: Int) {
+        viewModelScope.launch {
+            services.settings.update {
+                it.copy(onThisDay = it.onThisDay.copy(timesPerDay = timesPerDay.coerceIn(1, 12)))
+            }
+        }
+    }
+
+    fun setOnThisDayDurationMinutes(minutes: Int) {
+        viewModelScope.launch {
+            services.settings.update {
+                it.copy(onThisDay = it.onThisDay.copy(durationMinutes = minutes.coerceIn(1, 60)))
+            }
+        }
+    }
+
+    fun setOnThisDayMinYearsAgo(years: Int) {
+        viewModelScope.launch {
+            services.settings.update {
+                it.copy(onThisDay = it.onThisDay.copy(minYearsAgo = years.coerceIn(0, 100)))
+            }
+        }
+    }
 
     /** Deliberately excludes lastTriggeredEpochMs — see rescanConfigSig's own comment. */
     private fun onThisDayConfigSig(cfg: OnThisDaySettings?): String =

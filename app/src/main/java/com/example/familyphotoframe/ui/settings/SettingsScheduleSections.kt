@@ -130,8 +130,72 @@ internal fun PlaylistScheduleSection(state: SlideshowUiState, vm: SlideshowViewM
 @Composable
 internal fun ScheduleSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     PlaylistScheduleSection(state, vm)
+    OnThisDaySection(state, vm)
     SleepSection(state = state, vm = vm)
     AutoRescanSection(state = state, vm = vm)
+}
+
+/**
+ * Periodic memory interlude — see docs/FPF-FEAT-ON-THIS-DAY-001.md. Single-photo
+ * playback only for now (Phase 3 adds the multi-year collage); "Preview now" works
+ * regardless of the enable toggle, matching the folder-preview button elsewhere.
+ */
+@Composable
+internal fun OnThisDaySection(state: SlideshowUiState, vm: SlideshowViewModel) {
+    val cfg = state.onThisDay
+    var timesPerDay by remember(cfg.timesPerDay) { mutableStateOf(cfg.timesPerDay.toString()) }
+    var durationMinutes by remember(cfg.durationMinutes) { mutableStateOf(cfg.durationMinutes.toString()) }
+    var minYearsAgo by remember(cfg.minYearsAgo) { mutableStateOf(cfg.minYearsAgo.toString()) }
+
+    SettingsSectionCard("On this day") {
+        Text(
+            "Periodically shows photos taken on today's date in previous years, then " +
+                "returns to normal playback.",
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            fontSize = 14.sp,
+        )
+        ToggleRow("Enable on this day", cfg.enabled, vm::setOnThisDayEnabled)
+        if (cfg.enabled) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = timesPerDay,
+                    onValueChange = {
+                        timesPerDay = it.filter(Char::isDigit).take(2)
+                        timesPerDay.toIntOrNull()?.let(vm::setOnThisDayTimesPerDay)
+                    },
+                    label = { Text("Times per day") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                    value = durationMinutes,
+                    onValueChange = {
+                        durationMinutes = it.filter(Char::isDigit).take(2)
+                        durationMinutes.toIntOrNull()?.let(vm::setOnThisDayDurationMinutes)
+                    },
+                    label = { Text("Minutes each") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            OutlinedTextField(
+                value = minYearsAgo,
+                onValueChange = {
+                    minYearsAgo = it.filter(Char::isDigit).take(3)
+                    minYearsAgo.toIntOrNull()?.let(vm::setOnThisDayMinYearsAgo)
+                },
+                label = { Text("Minimum years ago (0 counts this year)") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        OutlinedButton(onClick = vm::previewOnThisDay, modifier = Modifier.fillMaxWidth()) {
+            Text("Preview now")
+        }
+    }
 }
 @Composable
 internal fun AutoRescanSection(state: SlideshowUiState, vm: SlideshowViewModel) {
