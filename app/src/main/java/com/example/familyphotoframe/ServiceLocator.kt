@@ -235,7 +235,7 @@ class ServiceLocator(private val appContext: Context) {
     /** Embedded web setup server (spec §15); off unless enabled in settings. */
     val webServer: WebServerController by lazy {
         WebServerController(
-            settings, photoDao, engine, diagnostics, webUploadManager, rememberedBrowsers,
+            settings, photoDao, engine, diagnostics, appContext, webUploadManager, rememberedBrowsers,
             allowHeifPlayback, diagnosticRuntimeState, localThumbnailCache,
         )
     }

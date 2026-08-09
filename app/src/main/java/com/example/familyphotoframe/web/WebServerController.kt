@@ -1,7 +1,10 @@
 package com.example.familyphotoframe.web
 
+import android.app.ActivityManager
+import android.content.Context
 import com.example.familyphotoframe.BuildConfig
 import com.example.familyphotoframe.data.db.PhotoDao
+import com.example.familyphotoframe.data.diagnostics.BatteryTelemetry
 import com.example.familyphotoframe.data.diagnostics.DiagnosticsLog
 import com.example.familyphotoframe.data.diagnostics.DiagnosticsBundleContext
 import com.example.familyphotoframe.data.diagnostics.DiagnosticRuntimeState
@@ -83,12 +86,15 @@ class WebServerController(
     private val photoDao: PhotoDao,
     private val engine: SlideshowEngine,
     private val diagnostics: DiagnosticsLog,
+    private val context: Context,
     private val uploadManager: WebUploadManager? = null,
     private val rememberedBrowsers: RememberedBrowserManager? = null,
     private val allowHeif: Boolean = true,
     private val diagnosticRuntimeState: DiagnosticRuntimeState = DiagnosticRuntimeState(),
     private val localThumbnailCache: com.example.familyphotoframe.data.cache.LocalThumbnailCache? = null,
 ) {
+    /** Permission-free device snapshot; see BatteryTelemetry's own doc comment. */
+    private val batteryTelemetry = BatteryTelemetry(context)
 
     /** Slideshow-dependent operations the web API can trigger. */
     interface FrameControls {
@@ -325,6 +331,12 @@ class WebServerController(
             val failedPhotos = photoDao.failedOrUnsupportedCount(3, heifFlag)
             val localUploadPhotos = photoDao.countForSource("local_uploads")
             val freeStorageBytes = android.os.Environment.getDataDirectory().usableSpace.coerceAtLeast(0L)
+            val totalStorageBytes = android.os.Environment.getDataDirectory().totalSpace.coerceAtLeast(0L)
+            val memInfo = ActivityManager.MemoryInfo()
+            runCatching {
+                (context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager)?.getMemoryInfo(memInfo)
+            }
+            val battery = batteryTelemetry.fields()
             val shuffle = ui.shuffleProgress
             val healthLevel = when {
                 eligiblePhotos == 0 || freeStorageBytes < 250L * MB -> "CRITICAL"
@@ -360,6 +372,12 @@ class WebServerController(
                 put("localThumbnailCacheMaxBytes", localThumbnailCache?.effectiveMaxBytes() ?: s.localThumbnailCache.maxBytes)
                 put("localThumbnailCacheRebuildInProgress", localThumbnailCache?.rebuildInProgress ?: false)
                 put("localThumbnailCacheRebuildCount", localThumbnailCache?.rebuildCount ?: 0)
+                put("totalStorageBytes", totalStorageBytes)
+                put("totalRamBytes", memInfo.totalMem)
+                put("freeRamBytes", memInfo.availMem)
+                put("batteryLevelPercent", battery["batteryLevelPct"]?.toIntOrNull() ?: -1)
+                put("batteryStatus", battery["batteryStatus"] ?: "UNKNOWN")
+                put("powerSource", battery["powerSource"] ?: "NONE")
                 put("webUrl", boundUrl.orEmpty())
                 put("previewAvailable", preview != null)
                 put("previewRevision", preview?.revision.orEmpty())
