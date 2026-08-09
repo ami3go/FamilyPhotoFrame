@@ -5,7 +5,7 @@ package com.example.familyphotoframe.web
  * browser client live in separate source files so they can be reviewed independently.
  */
 object WebUiAssets {
-    const val REVISION: String = "v52151"
+    const val REVISION: String = "v52152"
 
     val CSS: String get() = WebUiCss.VALUE
     val JS: String get() = WebUiScript.VALUE
