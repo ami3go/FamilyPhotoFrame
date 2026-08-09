@@ -15,9 +15,12 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
 import com.example.familyphotoframe.ui.settings.SettingsPage
@@ -180,31 +183,41 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 BackHandler(enabled = screen == Screen.SETTINGS) {
                     navigateBackFromSettings()
                 }
-                when (screen) {
-                    Screen.SLIDESHOW -> SlideshowScreen(
+                // SlideshowScreen stays composed underneath Settings instead of being torn
+                // down and rebuilt on every trip. Disposing it used to clear the prepared
+                // slide registry (already-decoded current/next bitmaps), forcing a full
+                // re-decode — or, for remote sources, a full network re-fetch — on return,
+                // which showed up as a black screen for a few seconds. Settings is fully
+                // opaque and full-bleed on every page, so nothing bleeds through and it
+                // captures all touch while shown; D-pad routing is unaffected since that's
+                // driven by the `screen` field in onKeyDown, not by composition presence.
+                Box(Modifier.fillMaxSize()) {
+                    SlideshowScreen(
                         vm = vm,
                         imageLoader = services.imageLoader,
                         onOpenSettings = ::openSettings,
                         onOpenPhotoSources = ::openPhotoSources,
                     )
-                    Screen.SETTINGS -> SettingsScreen(
-                        vm = vm,
-                        diagnostics = services.diagnostics,
-                        page = settingsPage,
-                        onOpenPage = {
-                            settingsPage = it
-                            immersiveMode.recover("SETTINGS_PAGE_CHANGED")
-                        },
-                        onBack = {
-                            settingsPage = if (settingsPage == SettingsPage.FOLDERS) {
-                                SettingsPage.PHOTOS
-                            } else {
-                                SettingsPage.ROOT
-                            }
-                            immersiveMode.recover("SETTINGS_PAGE_BACK")
-                        },
-                        onBackToSlideshow = ::returnToSlideshow,
-                    )
+                    if (screen == Screen.SETTINGS) {
+                        SettingsScreen(
+                            vm = vm,
+                            diagnostics = services.diagnostics,
+                            page = settingsPage,
+                            onOpenPage = {
+                                settingsPage = it
+                                immersiveMode.recover("SETTINGS_PAGE_CHANGED")
+                            },
+                            onBack = {
+                                settingsPage = if (settingsPage == SettingsPage.FOLDERS) {
+                                    SettingsPage.PHOTOS
+                                } else {
+                                    SettingsPage.ROOT
+                                }
+                                immersiveMode.recover("SETTINGS_PAGE_BACK")
+                            },
+                            onBackToSlideshow = ::returnToSlideshow,
+                        )
+                    }
                 }
             }
         }
