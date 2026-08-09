@@ -30,11 +30,14 @@ import com.example.familyphotoframe.data.settings.AspectMode
 import com.example.familyphotoframe.data.settings.ScheduleSettings
 import com.example.familyphotoframe.data.settings.SlideshowPlaylist
 import com.example.familyphotoframe.data.settings.PlaylistSettings
+import com.example.familyphotoframe.data.settings.OnThisDaySettings
 import com.example.familyphotoframe.data.settings.PlaylistScheduleRule
 import com.example.familyphotoframe.domain.schedule.RescanSchedule
 import com.example.familyphotoframe.domain.schedule.SleepSchedule
 import com.example.familyphotoframe.domain.schedule.PlaylistSchedule
 import com.example.familyphotoframe.domain.schedule.BrightnessPolicy
+import com.example.familyphotoframe.domain.schedule.OnThisDaySchedule
+import com.example.familyphotoframe.domain.onthisday.OnThisDaySelection
 import com.example.familyphotoframe.data.settings.BrightnessAutomationSettings
 import com.example.familyphotoframe.data.settings.BrightnessMode
 import com.example.familyphotoframe.data.settings.BrightnessPeriod
@@ -295,6 +298,7 @@ class SlideshowViewModel(
     private var playlistScheduleJob: kotlinx.coroutines.Job? = null
     private var brightnessJob: kotlinx.coroutines.Job? = null
     private var healthJob: kotlinx.coroutines.Job? = null
+    private var onThisDayJob: kotlinx.coroutines.Job? = null
     @Volatile private var ambientLux: Float? = null
     @Volatile private var ambientSensorAvailable: Boolean = false
     private var activePlaylistSourceFilter: Set<String> = emptySet()
@@ -464,6 +468,9 @@ class SlideshowViewModel(
             return null
         }
 
+        override suspend fun previewOnThisDay(): String? =
+            this@SlideshowViewModel.triggerOnThisDay(preview = true)
+
         override suspend fun rebuildLocalThumbnailCache(): String? {
             this@SlideshowViewModel.rebuildLocalThumbnailCache()
             return null
@@ -582,6 +589,9 @@ class SlideshowViewModel(
         // recorded a run — mid-scan.
         if (rescanConfigSig(lastSettings?.schedule) != rescanConfigSig(s.schedule)) {
             restartRescanWatcher(s.schedule)
+        }
+        if (onThisDayConfigSig(lastSettings?.onThisDay) != onThisDayConfigSig(s.onThisDay)) {
+            restartOnThisDayWatcher(s.onThisDay)
         }
         if (lastSettings?.weather != s.weather) restartWeather(s.weather)
         val playlist = s.playlists.activePlaylist()
@@ -3858,6 +3868,120 @@ class SlideshowViewModel(
         }
     }
 
+    // ---- "On this day" memory interlude (docs/FPF-FEAT-ON-THIS-DAY-001.md) --------
+
+    /** Deliberately excludes lastTriggeredEpochMs — see rescanConfigSig's own comment. */
+    private fun onThisDayConfigSig(cfg: OnThisDaySettings?): String =
+        cfg?.let { "${it.enabled}|${it.timesPerDay}|${it.durationMinutes}|${it.minYearsAgo}" }.orEmpty()
+
+    private fun restartOnThisDayWatcher(cfg: OnThisDaySettings) {
+        onThisDayJob?.cancel()
+        if (!cfg.enabled) return
+        onThisDayJob = viewModelScope.launch {
+            while (isActive) {
+                runCatching { maybeAutoTriggerOnThisDay() }
+                delay(ON_THIS_DAY_POLL_MS)
+            }
+        }
+    }
+
+    private suspend fun maybeAutoTriggerOnThisDay() {
+        val current = services.settings.settings.first()
+        val cfg = current.onThisDay
+        if (!cfg.enabled) return
+        // Quiet hours: the slideshow itself is paused, so firing now would just be
+        // consumed silently — wait for the next window after waking instead (§5.5).
+        if (_state.value.asleep) return
+        // Never preempts an active override (§0.3) — skip this occurrence entirely
+        // rather than deferring it; the next window gets its own chance.
+        val playlists = current.playlists
+        val overrideActive = playlists.manualOverrideUntilEpochMs == Long.MAX_VALUE ||
+            playlists.manualOverrideUntilEpochMs > System.currentTimeMillis()
+        if (overrideActive) return
+        val due = OnThisDaySchedule.isDue(
+            nowMinutes = nowMinutes(),
+            timesPerDay = cfg.timesPerDay,
+            minutesSinceLastTrigger = RescanSchedule.minutesSince(
+                cfg.lastTriggeredEpochMs.takeIf { it > 0L },
+                System.currentTimeMillis(),
+            ),
+        )
+        if (!due) return
+        triggerOnThisDay(preview = false)
+    }
+
+    /**
+     * On-demand trigger for an eventual Settings/web "Preview now" button (Phase 4 of
+     * docs/FPF-FEAT-ON-THIS-DAY-001.md) — bypasses the enabled/schedule checks so it
+     * works even while the feature is off, matching [previewFolderOnce]'s calling
+     * convention (fire-and-forget from a button, notice surfaced via [transientNotice]).
+     */
+    fun previewOnThisDay() {
+        viewModelScope.launch {
+            triggerOnThisDay(preview = true)?.let { message ->
+                _state.update { it.copy(transientNotice = message) }
+            }
+        }
+    }
+
+    /**
+     * Assembles today's memory pool and activates it via the same bounded playlist
+     * override that manual playlist activation already uses (`playPlaylist`) — the
+     * existing `restartPlaylistScheduleWatcher` loop automatically reverts once the
+     * override expires, so no separate revert logic is needed here.
+     *
+     * @param preview true for the on-demand "Preview now" action, which bypasses the
+     * enabled/schedule checks that already ran (or didn't) before this is called.
+     * @return null on success, or a message explaining why nothing happened.
+     */
+    private suspend fun triggerOnThisDay(preview: Boolean): String? {
+        val current = services.settings.settings.first()
+        val cfg = current.onThisDay
+        if (!preview && !cfg.enabled) return "On this day is disabled"
+        val today = java.time.LocalDate.now()
+        val monthDay = "%02d-%02d".format(today.monthValue, today.dayOfMonth)
+        val candidates = services.photoDao.onThisDayCandidates(
+            sourceIds = currentPlaybackSourceIds(),
+            monthDay = monthDay,
+            maxFailures = current.temporarilySuppressAfterDecodeFailures,
+            allowHeif = if (services.allowHeifPlayback) 1 else 0,
+            limit = ON_THIS_DAY_CANDIDATE_LIMIT,
+        )
+        val selected = OnThisDaySelection.select(
+            candidates = candidates,
+            currentYear = today.year,
+            minYearsAgo = cfg.minYearsAgo,
+            maxYears = ON_THIS_DAY_MAX_YEARS,
+        )
+        if (selected.isEmpty()) {
+            diagnostics.log(DiagnosticsLog.Category.ENGINE, "ON_THIS_DAY_SKIPPED_EMPTY")
+            return if (preview) "No memories match today's date yet" else null
+        }
+        engine.setOnThisDayPool(selected.map { it.id })
+        val now = System.currentTimeMillis()
+        services.settings.update { latest ->
+            latest.copy(
+                playlists = latest.playlists.copy(
+                    activePlaylistId = PlaylistSettings.PLAYLIST_ON_THIS_DAY,
+                    manualOverrideUntilEpochMs = now + cfg.durationMinutes.coerceIn(1, 60) * 60_000L,
+                ),
+                onThisDay = latest.onThisDay.copy(lastTriggeredEpochMs = now),
+            )
+        }
+        val years = selected.map {
+            java.time.Instant.ofEpochMilli(it.dateTakenEpochMs).atZone(java.time.ZoneId.systemDefault()).year
+        }
+        diagnostics.log(
+            DiagnosticsLog.Category.ENGINE, "ON_THIS_DAY_TRIGGERED",
+            "years" to years.size.toString(),
+            "preview" to preview.toString(),
+        )
+        _state.update {
+            it.copy(transientNotice = "Showing memories from " + years.joinToString(", "))
+        }
+        return null
+    }
+
     private fun restartBrightnessWatcher(
         schedule: ScheduleSettings,
         automation: BrightnessAutomationSettings,
@@ -4616,6 +4740,12 @@ class SlideshowViewModel(
 
         /** Step clear of the slot just served so it cannot re-trigger. */
         const val RESCAN_SETTLE_MS = 5L * 60_000L
+        /** "On this day" windows are short and frequent — poll more often than rescan. */
+        const val ON_THIS_DAY_POLL_MS = 30_000L
+        /** Safety cap on rows fetched before year-grouping; a real day rarely nears this. */
+        const val ON_THIS_DAY_CANDIDATE_LIMIT = 500
+        /** Matches docs/FPF-FEAT-ON-THIS-DAY-001.md §9's proposed default. */
+        const val ON_THIS_DAY_MAX_YEARS = 6
         /** Cap on a single wait so clock/timezone changes are noticed promptly. */
         const val MAX_SCHEDULE_WAIT_MINUTES = 15
         const val WEATHER_RECHECK_MS = 5 * 60_000L

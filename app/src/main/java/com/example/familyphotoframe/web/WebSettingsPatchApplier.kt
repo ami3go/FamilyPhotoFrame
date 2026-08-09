@@ -104,7 +104,11 @@ internal class WebSettingsPatchApplier(
             if (CollageGap.entries.none { it.name == v }) return "Unknown portraitCollageGap"
         }
         str("selectionMode")?.let { v ->
-            if (SelectionMode.entries.none { it.name == v }) return "Unknown selectionMode"
+            // ON_THIS_DAY is system-managed only (empty pool otherwise) — never a valid
+            // direct choice for the global selection mode. See SelectionMode.ON_THIS_DAY.
+            if (v == SelectionMode.ON_THIS_DAY.name || SelectionMode.entries.none { it.name == v }) {
+                return "Unknown selectionMode"
+            }
         }
         str("onUnreachable")?.let { v ->
             if (UnreachablePolicy.entries.none { it.name == v }) return "Unknown onUnreachable"

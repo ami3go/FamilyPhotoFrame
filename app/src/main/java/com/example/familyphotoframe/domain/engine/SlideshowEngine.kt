@@ -113,6 +113,12 @@ class SlideshowEngine(
     private var activeShuffleScopeKey: String? = null
     /** Current committed slide restored after a non-mutating one-folder preview. */
     private var previewReturnPick: Pick? = null
+    /**
+     * Explicit id pool for [SelectionMode.ON_THIS_DAY], pushed by
+     * `SlideshowViewModel`'s "on this day" trigger (docs/FPF-FEAT-ON-THIS-DAY-001.md
+     * §4.2) rather than derived from a SQL predicate like every other selection mode.
+     */
+    private var onThisDayIds: List<Long> = emptyList()
     /** True until the first presentation of this process is selected. */
     private var startupSelectionPending: Boolean = true
 
@@ -255,6 +261,17 @@ class SlideshowEngine(
     fun previewFolderOnce(folderKey: String) {
         if (folderKey.isNotBlank()) commands.trySend(Command.PreviewFolderOnce(folderKey))
     }
+
+    /**
+     * Sets the explicit id pool for [SelectionMode.ON_THIS_DAY]. Must be called before
+     * activating `PlaylistSettings.PLAYLIST_ON_THIS_DAY` — switching to that playlist
+     * changes the effective selection mode, which triggers an immediate
+     * [Command.Reselect] (via [setPlayback]) that reads this pool right away.
+     */
+    fun setOnThisDayPool(ids: List<Long>) {
+        onThisDayIds = ids
+    }
+
     /** Request idempotent queue reconciliation without changing the visible slide. */
     fun reconcileShuffle() {
         folderBalancedShuffle.invalidateEligibility()
@@ -1051,6 +1068,8 @@ class SlideshowEngine(
                 dao.displayableIdsByDateTakenDesc(sourceIds, maxFailures, favFlag, cacheFlag, if (allowHeif) 1 else 0, allFolders, folderArg)
             SelectionMode.DATE_TAKEN_OLDEST ->
                 dao.displayableIdsByDateTakenAsc(sourceIds, maxFailures, favFlag, cacheFlag, if (allowHeif) 1 else 0, allFolders, folderArg)
+            // Explicit id list, not a SQL predicate — see setOnThisDayPool.
+            SelectionMode.ON_THIS_DAY -> onThisDayIds
             else -> emptyList()
         }
         if (pool.isEmpty()) return null

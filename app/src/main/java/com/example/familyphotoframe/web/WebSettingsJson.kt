@@ -101,16 +101,20 @@ internal object WebSettingsJson {
             put("activePlaylistId", s.playlists.activePlaylistId)
             put("defaultPlaylistId", s.playlists.defaultPlaylistId)
             put("playlists", buildJsonArray {
-                s.playlists.playlists.forEach { playlist ->
-                    add(buildJsonObject {
-                        put("id", playlist.id)
-                        put("name", playlist.name)
-                        put("enabled", playlist.enabled)
-                        put("favoritesOnly", playlist.favoritesOnly)
-                        put("localUploadsOnly", playlist.localUploadsOnly)
-                        put("builtIn", playlist.id in PlaylistSettings.BUILT_IN_IDS)
-                    })
-                }
+                // ON_THIS_DAY is system-managed only (empty pool otherwise, see
+                // SelectionMode.ON_THIS_DAY) — never shown as a manually pickable row.
+                s.playlists.playlists
+                    .filterNot { it.id == PlaylistSettings.PLAYLIST_ON_THIS_DAY }
+                    .forEach { playlist ->
+                        add(buildJsonObject {
+                            put("id", playlist.id)
+                            put("name", playlist.name)
+                            put("enabled", playlist.enabled)
+                            put("favoritesOnly", playlist.favoritesOnly)
+                            put("localUploadsOnly", playlist.localUploadsOnly)
+                            put("builtIn", playlist.id in PlaylistSettings.BUILT_IN_IDS)
+                        })
+                    }
             })
             put("playlistScheduleEnabled", s.playlists.scheduleEnabled)
             put("playlistScheduleRules", buildJsonArray {

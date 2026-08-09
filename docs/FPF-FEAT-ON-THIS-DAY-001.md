@@ -1,6 +1,9 @@
 # FamilyPhotoFrame — "On This Day" Memory Playlist
 
-**Status:** Design proposal, with defaults locked in (§0). No code written yet.
+**Status:** Phases 1–2 implemented (pure selection/schedule logic, and single-photo
+playback wiring incl. "Preview now" via a `preview_on_this_day` maintenance action).
+Phase 3 (collage), Phase 4 (Settings UI + web parity for the toggle itself), and Phase 5
+(device validation) remain.
 
 ## 0. Decisions locked in
 
@@ -109,16 +112,40 @@ data class OnThisDaySettings(
   skipping the day — but never fires more than once per window, so a multi-day-off catch
   up doesn't burst-fire. Before firing, it also checks `overrideActive` (§0.3); if
   something else already has the floor, this occurrence is skipped, not deferred.
-- The pool is modeled as a **fourth dynamic built-in playlist**
+- The pool is modeled as a **fourth built-in playlist**
   (`PlaylistSettings.PLAYLIST_ON_THIS_DAY`), joining `PLAYLIST_ALL`,
-  `PLAYLIST_FAVORITES`, and `PLAYLIST_RECENT_UPLOADS` — all three of which are already
-  "dynamic filter" playlists rather than stored photo lists, so On This Day is the same
-  idiom with a date-relative filter instead of a static one. No new playlist-storage
-  concept required.
-- When due: activate the built-in playlist and set
-  `manualOverrideUntilEpochMs = now + durationMinutes`, exactly like the existing
-  `playlistAction 'play'` path. `restartPlaylistScheduleWatcher()` already reverts to the
-  schedule/default playlist once that timestamp passes — no new revert logic needed.
+  `PLAYLIST_FAVORITES`, and `PLAYLIST_RECENT_UPLOADS`. Unlike those three, though, its
+  photo set can't be expressed as a `SlideshowPlaylist` filter field (`sourceIds`/
+  `folderNames`/`favoritesOnly`) — the pool is an explicit, app-computed id list that
+  changes daily. **As actually implemented:** a new `SelectionMode.ON_THIS_DAY` value
+  plus `SlideshowEngine.setOnThisDayPool(ids)` (a plain field the engine's `pickFrom()`
+  reads instead of querying Room, reusing the existing `PlaybackQueue` cycling — the same
+  mechanism `SEQUENTIAL`/`DATE_TAKEN_*` already use for an ordered id list). The built-in
+  playlist's `selectionMode = ON_THIS_DAY` is what switches the engine into reading that
+  pool once activated. The playlist itself is created with `enabled = false` so it never
+  appears in the ordinary playlist picker/schedule-rule UI (which filters to `enabled`
+  playlists) or via the generic "play any playlist" API path (which requires `enabled`)
+  — the *only* way to activate it is `SlideshowViewModel.triggerOnThisDay()`, which sets
+  `activePlaylistId` directly, bypassing that check by design.
+  `SelectionMode.ON_THIS_DAY` is also rejected by `WebSettingsPatchApplier` as a direct
+  value for the general `selectionMode` field, so it can't be set (accidentally or
+  otherwise) with an empty pool behind it.
+- When due: push the pool into the engine, then set
+  `activePlaylistId = PLAYLIST_ON_THIS_DAY` and
+  `manualOverrideUntilEpochMs = now + durationMinutes` in the same settings update —
+  exactly like the existing `playPlaylist()` override path.
+  `restartPlaylistScheduleWatcher()` already reverts to the schedule/default playlist
+  once that timestamp passes, and switching `activePlaylistId` away from
+  `ON_THIS_DAY` naturally switches `selectionMode` back too — no new revert logic
+  needed. A useful side effect already in the engine: changing `selectionMode` via
+  `setPlayback()` triggers an immediate `Command.Reselect`, so both the scheduled
+  trigger and "Preview now" show a memory photo right away rather than waiting for the
+  next scheduled advance.
+- "Preview now" (Phase 2) is wired as a `preview_on_this_day` maintenance action
+  (`WebServerController`/`FrameControls`, same pattern as the thumbnail cache's
+  clean/rebuild actions) plus a `SlideshowViewModel.previewOnThisDay()` entry point —
+  both call the same `triggerOnThisDay(preview = true)`, which bypasses the
+  enabled/schedule/override checks the automatic path applies.
 
 ### 4.3 Collage mode: one tile per year
 

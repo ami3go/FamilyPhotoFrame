@@ -99,6 +99,7 @@ class WebServerController(
         suspend fun clearMediaCache(): String? = "Media cache control is unavailable"
         suspend fun clearLocalThumbnailCache(): String? = "Local photo cache control is unavailable"
         suspend fun rebuildLocalThumbnailCache(): String? = "Local photo cache control is unavailable"
+        suspend fun previewOnThisDay(): String? = "On this day preview is unavailable"
         suspend fun restartApplication(): String? = "Application restart is unavailable"
         suspend fun factoryReset(): String? = "Factory reset is unavailable"
     }
@@ -590,6 +591,7 @@ class WebServerController(
             "clear_cache" -> withControls { it.clearMediaCache() }
             "clear_local_thumbnail_cache" -> withControls { it.clearLocalThumbnailCache() }
             "rebuild_local_thumbnail_cache" -> withControls { it.rebuildLocalThumbnailCache() }
+            "preview_on_this_day" -> withControls { it.previewOnThisDay() }
             "clear_suppression" -> {
                 for (sourceId in sourceIdsFor(settings.settings.first())) photoDao.clearSuppression(sourceId)
                 diagnostics.log(DiagnosticsLog.Category.APP, "WEB_SUPPRESSION_CLEARED")

@@ -105,6 +105,15 @@ enum class SelectionMode {
     FOLDER_BALANCED_SHUFFLE,
     DATE_TAKEN_NEWEST,
     DATE_TAKEN_OLDEST,
+    /**
+     * System-managed only — the pool is an explicit id list pushed by
+     * `SlideshowViewModel`'s "on this day" trigger, not a SQL predicate. Never valid as
+     * a directly user-chosen value for the global selection mode (see
+     * [WebSettingsPatchApplier][com.example.familyphotoframe.web.WebSettingsPatchApplier]);
+     * only reachable via the built-in `PlaylistSettings.PLAYLIST_ON_THIS_DAY` playlist,
+     * which is not user-selectable either (docs/FPF-FEAT-ON-THIS-DAY-001.md §4.2).
+     */
+    ON_THIS_DAY,
 }
 
 /**
@@ -566,7 +575,15 @@ data class PlaylistSettings(
         const val PLAYLIST_ALL = "builtin_all"
         const val PLAYLIST_FAVORITES = "builtin_favorites"
         const val PLAYLIST_RECENT_UPLOADS = "builtin_recent_uploads"
-        val BUILT_IN_IDS = setOf(PLAYLIST_ALL, PLAYLIST_FAVORITES, PLAYLIST_RECENT_UPLOADS)
+        /**
+         * The "on this day" memory pool. Deliberately `enabled = false` below — unlike
+         * the other built-ins, its photo list is an explicit id set assembled fresh
+         * each trigger, not a stable filter, so it must never appear as a manually
+         * pickable playlist (docs/FPF-FEAT-ON-THIS-DAY-001.md §4.2). Only
+         * `SlideshowViewModel`'s dedicated trigger may activate it.
+         */
+        const val PLAYLIST_ON_THIS_DAY = "builtin_on_this_day"
+        val BUILT_IN_IDS = setOf(PLAYLIST_ALL, PLAYLIST_FAVORITES, PLAYLIST_RECENT_UPLOADS, PLAYLIST_ON_THIS_DAY)
 
         fun builtInPlaylists(): List<SlideshowPlaylist> = listOf(
             SlideshowPlaylist(PLAYLIST_ALL, "All photos"),
@@ -578,8 +595,41 @@ data class PlaylistSettings(
                 localUploadsOnly = true,
                 selectionMode = SelectionMode.DATE_TAKEN_NEWEST,
             ),
+            SlideshowPlaylist(
+                PLAYLIST_ON_THIS_DAY,
+                "On this day",
+                enabled = false,
+                selectionMode = SelectionMode.ON_THIS_DAY,
+            ),
         )
     }
+}
+
+/**
+ * Periodic "on this day" memory interlude (docs/FPF-FEAT-ON-THIS-DAY-001.md). The photo
+ * pool itself is never stored here — it's assembled fresh at each trigger from
+ * `PhotoDao.onThisDayCandidates` + `OnThisDaySelection`; this only holds the schedule
+ * and behavior knobs.
+ */
+@Serializable
+data class OnThisDaySettings(
+    val enabled: Boolean = false,
+    /** How many evenly spaced interludes per day (§0.2 default: 3). */
+    val timesPerDay: Int = 3,
+    /** How long each interlude plays before reverting (§0.2 default: 5). */
+    val durationMinutes: Int = 5,
+    /** Years newer than this many years ago are excluded (0 = "this year" counts). */
+    val minYearsAgo: Int = 1,
+    /** Reserved for Phase 3 (multi-year collage rendering); single-photo playback for now. */
+    val collageMode: Boolean = true,
+    /** Wall-clock bookkeeping for `OnThisDaySchedule`'s due/grace check. */
+    val lastTriggeredEpochMs: Long = 0L,
+) {
+    fun normalized(): OnThisDaySettings = copy(
+        timesPerDay = timesPerDay.coerceIn(1, 12),
+        durationMinutes = durationMinutes.coerceIn(1, 60),
+        minYearsAgo = minYearsAgo.coerceIn(0, 100),
+    )
 }
 
 enum class BrightnessMode { MANUAL, SCHEDULED, AMBIENT, SCHEDULED_AMBIENT }
@@ -710,6 +760,8 @@ data class AppSettings(
     val webUpload: WebUploadSettings = WebUploadSettings(),
     /** Persistent on-disk thumbnail cache for local (SAF/fallback) photos. */
     val localThumbnailCache: LocalThumbnailCacheSettings = LocalThumbnailCacheSettings(),
+    /** Periodic "on this day" memory interlude (docs/FPF-FEAT-ON-THIS-DAY-001.md). */
+    val onThisDay: OnThisDaySettings = OnThisDaySettings(),
     /**
      * Shows a live frame-timing readout for measuring the §22.4 performance budget on
      * the reference device. Off by default and not a user-facing feature — it exists so
@@ -736,6 +788,7 @@ data class AppSettings(
             web = web.copy(rememberedBrowsers = web.rememberedBrowsers.normalized()),
             webUpload = webUpload.normalized(),
             localThumbnailCache = localThumbnailCache.normalized(),
+            onThisDay = onThisDay.normalized(),
         )
     }
 
