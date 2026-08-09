@@ -378,18 +378,28 @@ private fun PlayingContent(
             handler = Handler(Looper.getMainLooper()),
         )
     }
-    val registry = remember(targetW, targetH) {
+    // None of this state is keyed on targetW/targetH: a screen rotation changes those
+    // values (portrait/landscape swap width and height) without recreating the Activity
+    // (configChanges="orientation|screenSize|..." in the manifest), so keying on them
+    // used to discard every prepared bitmap and in-flight transition on every rotation —
+    // forcing a full re-decode, or for remote sources a full re-fetch, of the photo
+    // already on screen (observed as a spurious TRANSITION_SELECTED reason=cold_start
+    // immediately after a logged DISPLAY_CONFIGURATION_CHANGED). build() and the
+    // preload effect below both read targetW/targetH directly and live, so a resize
+    // still decodes new work at the correct size — it just no longer nukes what was
+    // already prepared to do it.
+    val registry = remember {
         PreparedSlideRegistry(onRetired = reclaimer::retire)
     }
     DisposableEffect(registry) {
         onDispose { registry.clear() }
     }
-    val preparationMutex = remember(targetW, targetH) { Mutex() }
-    val transitionProgress = remember(targetW, targetH) { Animatable(1f) }
-    val transitionSelector = remember(targetW, targetH) {
+    val preparationMutex = remember { Mutex() }
+    val transitionProgress = remember { Animatable(1f) }
+    val transitionSelector = remember {
         TransitionSelector(Random(SystemClock.elapsedRealtimeNanos()))
     }
-    val performanceController = remember(targetW, targetH) { TransitionPerformanceController() }
+    val performanceController = remember { TransitionPerformanceController() }
 
     /**
      * Photo ids that failed permanently (e.g. HEIC on Android 5.1 with no HEIF decoder).
@@ -403,17 +413,17 @@ private fun PlayingContent(
      * recreation — but permanent suppressions written to the database survive across
      * sessions and make the in-memory set redundant after the first scan cycle anyway.
      */
-    val permanentlyFailedCandidates = remember(targetW, targetH) { mutableSetOf<Long>() }
+    val permanentlyFailedCandidates = remember { mutableSetOf<Long>() }
 
     // Snapshot state stores only tiny handles. Decoded bitmap graphs live in [registry].
-    var candidateHandle by remember(targetW, targetH) { mutableStateOf<PreparedSlideHandle?>(null) }
-    var committedHandle by remember(targetW, targetH) { mutableStateOf<PreparedSlideHandle?>(null) }
-    var outgoingHandle by remember(targetW, targetH) { mutableStateOf<PreparedSlideHandle?>(null) }
-    var incomingHandle by remember(targetW, targetH) { mutableStateOf<PreparedSlideHandle?>(null) }
-    var transitionState by remember(targetW, targetH) {
+    var candidateHandle by remember { mutableStateOf<PreparedSlideHandle?>(null) }
+    var committedHandle by remember { mutableStateOf<PreparedSlideHandle?>(null) }
+    var outgoingHandle by remember { mutableStateOf<PreparedSlideHandle?>(null) }
+    var incomingHandle by remember { mutableStateOf<PreparedSlideHandle?>(null) }
+    var transitionState by remember {
         mutableStateOf<TransitionState>(TransitionState.Idle)
     }
-    var activeTransition by remember(targetW, targetH) {
+    var activeTransition by remember {
         mutableStateOf(ResolvedTransition(TransitionMode.CROSSFADE))
     }
 
