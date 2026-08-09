@@ -15,6 +15,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -28,7 +29,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
@@ -73,7 +73,7 @@ internal fun PhotosSettings(
 ) {
     Text(
         stringResource(R.string.settings_source_hint),
-        color = Color.White.copy(alpha = 0.6f),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
         fontSize = 14.sp,
     )
     Button(onClick = vm::requestPickFolder, modifier = Modifier.fillMaxWidth()) {
@@ -92,18 +92,18 @@ internal fun PhotosSettings(
     // Keep remote source setup immediately below the basic local choices. First-run
     // navigation lands on this page, so a NAS user must not have to scroll through
     // unrelated upload controls before reaching the connection form.
-    HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f))
     SmbSection(state = state, vm = vm)
     SynologySection(state = state, vm = vm)
     WebDavSection(state = state, vm = vm)
     WebUploadSettingsSection(state, vm)
     FiltersSection(state = state, vm = vm)
-    HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
     SectionLabel(stringResource(R.string.settings_folders))
     Text(
         if (state.selectedFolders.isEmpty()) stringResource(R.string.settings_folders_all)
         else stringResource(R.string.settings_folders_some, state.selectedFolders.size),
-        color = Color.White.copy(alpha = 0.6f),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
         fontSize = 14.sp,
     )
     OutlinedButton(onClick = onManageFolders, modifier = Modifier.fillMaxWidth()) {
@@ -116,14 +116,14 @@ internal fun WebUploadSettingsSection(state: SlideshowUiState, vm: SlideshowView
     ToggleRow("Enable paired browser uploads", state.webUpload.enabled, vm::setWebUploadEnabled)
     Text(
         "Use only on a trusted private network. Uploaded photos are stored in the app-managed Local uploads library.",
-        color = Color.White.copy(alpha = 0.65f), fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f), fontSize = 14.sp,
     )
     ToggleRow(
         "Allow uploads while slideshow is playing",
         state.webUpload.allowWhilePlaying,
         vm::setWebUploadAllowWhilePlaying,
     )
-    Text("Duplicate policy", color = Color.White)
+    Text("Duplicate policy", color = MaterialTheme.colorScheme.onSurface)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         UploadDuplicatePolicy.entries.forEach { policy ->
             FilterChip(
@@ -133,7 +133,7 @@ internal fun WebUploadSettingsSection(state: SlideshowUiState, vm: SlideshowView
             )
         }
     }
-    Text("Maximum file size", color = Color.White)
+    Text("Maximum file size", color = MaterialTheme.colorScheme.onSurface)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(25, 100, 250).forEach { sizeMiB ->
             FilterChip(
@@ -154,11 +154,11 @@ internal fun SynologySection(state: SlideshowUiState, vm: SlideshowViewModel) {
     var otp by remember { mutableStateOf("") }
     var thumbs by remember(syn?.useThumbnails) { mutableStateOf(syn?.useThumbnails ?: true) }
 
-    HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
     SectionLabel(stringResource(R.string.settings_synology))
     Text(
         stringResource(R.string.settings_syn_hint),
-        color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 14.sp,
     )
     OutlinedTextField(
         value = url, onValueChange = { url = it },
@@ -196,9 +196,9 @@ internal fun SynologySection(state: SlideshowUiState, vm: SlideshowViewModel) {
     if (!pinned.isNullOrBlank()) {
         Text(
             stringResource(R.string.settings_syn_cert_pinned),
-            color = Color.White.copy(alpha = 0.75f), fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f), fontSize = 13.sp,
         )
-        Text(pinned, color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp)
+        Text(pinned, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f), fontSize = 11.sp)
         OutlinedButton(onClick = vm::clearSynologyCertificate) {
             Text(stringResource(R.string.settings_syn_cert_forget))
         }
@@ -209,9 +209,9 @@ internal fun SynologySection(state: SlideshowUiState, vm: SlideshowViewModel) {
         // fingerprint is shown in full rather than truncated.
         Text(
             stringResource(R.string.settings_syn_cert_prompt),
-            color = Color(0xFFE3B23C), fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.primary, fontSize = 13.sp,
         )
-        Text(offered, color = Color.White, fontSize = 11.sp)
+        Text(offered, color = MaterialTheme.colorScheme.onSurface, fontSize = 11.sp)
         Button(onClick = { vm.trustSynologyCertificate(offered) }) {
             Text(stringResource(R.string.settings_syn_cert_trust))
         }
@@ -244,11 +244,11 @@ internal fun FiltersSection(state: SlideshowUiState, vm: SlideshowViewModel) {
 
     fun split(text: String) = text.split(',').map { it.trim() }.filter { it.isNotEmpty() }
 
-    HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
     SectionLabel(stringResource(R.string.settings_filters))
     Text(
         stringResource(R.string.settings_filter_hint),
-        color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 14.sp,
     )
     OutlinedTextField(
         value = includes, onValueChange = { includes = it },
@@ -294,11 +294,11 @@ internal fun WebDavSection(state: SlideshowUiState, vm: SlideshowViewModel) {
     var user by remember(dav?.user) { mutableStateOf(dav?.user.orEmpty()) }
     var password by remember { mutableStateOf("") }
 
-    HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
     SectionLabel(stringResource(R.string.settings_dav))
     Text(
         stringResource(R.string.settings_dav_hint),
-        color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 14.sp,
     )
     OutlinedTextField(
         value = url, onValueChange = { url = it },
@@ -347,7 +347,7 @@ internal fun SmbSection(state: SlideshowUiState, vm: SlideshowViewModel) {
     var domain by remember(smb) { mutableStateOf(smb?.domain ?: "") }
     var password by remember(smb) { mutableStateOf("") }
 
-    HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
     SectionLabel(stringResource(R.string.settings_smb))
     SmbField(host, { host = it }, R.string.smb_host)
     SmbField(share, { share = it }, R.string.smb_share)
@@ -357,7 +357,7 @@ internal fun SmbSection(state: SlideshowUiState, vm: SlideshowViewModel) {
     SmbField(password, { password = it }, R.string.smb_password, isPassword = true)
 
     state.smbTestResult?.let {
-        Text(it, color = Color(0xFFE3B23C), fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Text(it, color = MaterialTheme.colorScheme.primary, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
     }
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         OutlinedButton(onClick = { vm.testSmb(host, share, path, user, domain, password) }) {

@@ -20,6 +20,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -81,7 +82,7 @@ internal fun BrightnessAutomationSection(state: SlideshowUiState, vm: SlideshowV
     Text(
         "Current brightness: ${(state.screenBrightness * 100).roundToInt()}%" +
             (state.activeBrightnessPeriodId?.let { " · $it" } ?: ""),
-        color = Color.White.copy(alpha = 0.75f), fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f), fontSize = 14.sp,
     )
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         BrightnessMode.entries.forEach { mode ->
@@ -92,7 +93,7 @@ internal fun BrightnessAutomationSection(state: SlideshowUiState, vm: SlideshowV
             )
         }
     }
-    Text("Manual/day brightness", color = Color.White)
+    Text("Manual/day brightness", color = MaterialTheme.colorScheme.onSurface)
     Slider(
         value = settings.manualBrightness,
         onValueChange = vm::setManualBrightness,
@@ -119,7 +120,7 @@ internal fun BrightnessAutomationSection(state: SlideshowUiState, vm: SlideshowV
                     singleLine = true, modifier = Modifier.widthIn(max = 120.dp),
                 )
                 Column(Modifier.weight(1f)) {
-                    Text("${(period.brightness * 100).roundToInt()}% · ${period.action.name.lowercase().replace('_', ' ')}", color = Color.White)
+                    Text("${(period.brightness * 100).roundToInt()}% · ${period.action.name.lowercase().replace('_', ' ')}", color = MaterialTheme.colorScheme.onSurface)
                     Slider(
                         value = period.brightness,
                         onValueChange = { vm.setBrightnessPeriod(index, start, it, period.action) },
@@ -142,7 +143,7 @@ internal fun BrightnessAutomationSection(state: SlideshowUiState, vm: SlideshowV
         Text(
             if (state.ambientSensorAvailable) "Ambient sensor: ${state.ambientLux?.roundToInt() ?: 0} lux"
             else "Ambient light sensor is not available; scheduled/manual brightness is used.",
-            color = Color.White.copy(alpha = 0.65f), fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f), fontSize = 14.sp,
         )
     }
     OutlinedButton(onClick = vm::temporaryWake, modifier = Modifier.fillMaxWidth()) {
@@ -152,18 +153,17 @@ internal fun BrightnessAutomationSection(state: SlideshowUiState, vm: SlideshowV
 @Composable
 internal fun HealthDashboardSection(state: SlideshowUiState, vm: SlideshowViewModel) {
     val h = state.health
-    SectionLabel("Frame health")
     Text(h.headline, color = when (h.level) {
         "CRITICAL" -> Color(0xFFFF8A80)
         "WARNING" -> Color(0xFFFFD180)
         else -> Color(0xFFA5D6A7)
     }, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-    Text("Photos: ${h.eligiblePhotos} playable / ${h.totalPhotos} indexed", color = Color.White)
-    Text("Favorites: ${h.favoritePhotos} · Hidden: ${h.hiddenPhotos} · Failed: ${h.failedPhotos}", color = Color.White.copy(alpha = 0.75f))
-    Text("Local uploads: ${h.localUploadPhotos}", color = Color.White.copy(alpha = 0.75f))
-    Text("Free storage: ${formatBytes(h.freeStorageBytes)}", color = Color.White.copy(alpha = 0.75f))
-    Text("Playlist: ${state.activePlaylistName}", color = Color.White.copy(alpha = 0.75f))
-    state.activePlaylistRuleName?.let { Text("Schedule rule: $it", color = Color.White.copy(alpha = 0.75f)) }
+    Text("Photos: ${h.eligiblePhotos} playable / ${h.totalPhotos} indexed", color = MaterialTheme.colorScheme.onSurface)
+    Text("Favorites: ${h.favoritePhotos} · Hidden: ${h.hiddenPhotos} · Failed: ${h.failedPhotos}", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
+    Text("Local uploads: ${h.localUploadPhotos}", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
+    Text("Free storage: ${formatBytes(h.freeStorageBytes)}", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
+    Text("Playlist: ${state.activePlaylistName}", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
+    state.activePlaylistRuleName?.let { Text("Schedule rule: $it", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)) }
     h.recommendations.forEach { Text("• $it", color = Color(0xFFFFD180), fontSize = 14.sp) }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = vm::rebuildIndex, modifier = Modifier.weight(1f)) { Text("Scan now") }
@@ -181,7 +181,7 @@ internal fun formatBytes(bytes: Long): String = when {
 @Composable
 internal fun DisplaySettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     BrightnessAutomationSection(state, vm)
-    HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f))
     SectionLabel(stringResource(R.string.settings_overlays))
     OpacityStepper(state.overlays.opacity, vm::setOverlayOpacity)
 
@@ -211,14 +211,14 @@ internal fun WeatherSection(state: SlideshowUiState, vm: SlideshowViewModel) {
     var endpoint by remember(weather.endpointBaseUrl) { mutableStateOf(weather.endpointBaseUrl) }
     var apiKey by remember { mutableStateOf("") }
 
-    HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
     SectionLabel(stringResource(R.string.settings_weather))
     ToggleRow(stringResource(R.string.settings_weather_enable), weather.enabled, vm::setWeatherEnabled)
 
     if (weather.enabled) {
         Text(
             stringResource(R.string.settings_weather_hint),
-            color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 14.sp,
         )
         // CC BY 4.0 attribution (WEATHER_LICENSING.md). Shown here — where the weather
         // feature is actually presented to the user — rather than on the live TV
@@ -264,7 +264,7 @@ internal fun WeatherSection(state: SlideshowUiState, vm: SlideshowViewModel) {
 
         Text(
             stringResource(R.string.settings_weather_licence),
-            color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 13.sp,
         )
         OutlinedTextField(
             value = endpoint,

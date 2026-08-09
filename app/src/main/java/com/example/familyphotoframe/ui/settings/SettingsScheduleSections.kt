@@ -17,9 +17,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -35,7 +37,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
@@ -78,7 +79,7 @@ internal fun PlaylistScheduleSection(state: SlideshowUiState, vm: SlideshowViewM
     SectionLabel("Scheduled playlist switching")
     ToggleRow("Enable playlist schedule", state.playlistScheduleEnabled, vm::setPlaylistScheduleEnabled)
     state.activePlaylistRuleName?.let {
-        Text("Active rule: $it", color = Color.White.copy(alpha = 0.75f), fontSize = 14.sp)
+        Text("Active rule: $it", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f), fontSize = 14.sp)
     }
     state.playlistScheduleRules.forEach { rule ->
         Row(
@@ -87,14 +88,17 @@ internal fun PlaylistScheduleSection(state: SlideshowUiState, vm: SlideshowViewM
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Column(Modifier.weight(1f)) {
-                Text(rule.name, color = Color.White)
+                Text(rule.name, color = MaterialTheme.colorScheme.onSurface)
                 Text(
                     "${rule.startTime}–${rule.endTime} · ${state.playlists.firstOrNull { it.id == rule.playlistId }?.name ?: rule.playlistId}",
-                    color = Color.White.copy(alpha = 0.65f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                     fontSize = 13.sp,
                 )
             }
-            TextButton(onClick = { vm.deletePlaylistScheduleRule(rule.id) }) { Text("Delete") }
+            TextButton(
+                onClick = { vm.deletePlaylistScheduleRule(rule.id) },
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            ) { Text("Delete") }
         }
     }
     var name by remember { mutableStateOf("") }
@@ -106,7 +110,7 @@ internal fun PlaylistScheduleSection(state: SlideshowUiState, vm: SlideshowViewM
         OutlinedTextField(start, { start = it.take(5) }, label = { Text("Start HH:mm") }, singleLine = true, modifier = Modifier.weight(1f))
         OutlinedTextField(end, { end = it.take(5) }, label = { Text("End HH:mm") }, singleLine = true, modifier = Modifier.weight(1f))
     }
-    Text("Playlist", color = Color.White.copy(alpha = 0.75f), fontSize = 14.sp)
+    Text("Playlist", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f), fontSize = 14.sp)
     state.playlists.filter { it.enabled }.forEach { playlist ->
         FilterChip(
             selected = playlistId == playlist.id,
@@ -126,7 +130,7 @@ internal fun PlaylistScheduleSection(state: SlideshowUiState, vm: SlideshowViewM
 @Composable
 internal fun ScheduleSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     PlaylistScheduleSection(state, vm)
-    HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f))
     SleepSection(state = state, vm = vm)
     AutoRescanSection(state = state, vm = vm)
 }
@@ -138,7 +142,7 @@ internal fun AutoRescanSection(state: SlideshowUiState, vm: SlideshowViewModel) 
         RescanSchedule.parseDays(schedule.autoRescanDays)
     }
 
-    HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
     SectionLabel(stringResource(R.string.settings_autorescan))
     ToggleRow(
         stringResource(R.string.settings_autorescan_enable),
@@ -149,7 +153,7 @@ internal fun AutoRescanSection(state: SlideshowUiState, vm: SlideshowViewModel) 
     if (schedule.autoRescanEnabled) {
         Text(
             stringResource(R.string.settings_autorescan_hint),
-            color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 14.sp,
         )
         OutlinedTextField(
             value = at,
@@ -194,7 +198,7 @@ internal fun AutoRescanSection(state: SlideshowUiState, vm: SlideshowViewModel) 
             // it look like a broken feature.
             Text(
                 stringResource(R.string.settings_autorescan_nodays),
-                color = Color(0xFFE3B23C), fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.primary, fontSize = 14.sp,
             )
         }
     }
@@ -205,14 +209,14 @@ internal fun SleepSection(state: SlideshowUiState, vm: SlideshowViewModel) {
     var start by remember(schedule.sleepStart) { mutableStateOf(schedule.sleepStart) }
     var end by remember(schedule.sleepEnd) { mutableStateOf(schedule.sleepEnd) }
 
-    HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
     SectionLabel(stringResource(R.string.settings_sleep))
     ToggleRow(stringResource(R.string.settings_sleep_enable), schedule.sleepEnabled, vm::setSleepEnabled)
 
     if (schedule.sleepEnabled) {
         Text(
             stringResource(R.string.settings_sleep_hint),
-            color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 14.sp,
         )
         OutlinedTextField(
             value = start,
@@ -245,7 +249,7 @@ internal fun SleepSection(state: SlideshowUiState, vm: SlideshowViewModel) {
         if (state.asleep) {
             Text(
                 stringResource(R.string.settings_sleep_active),
-                color = Color(0xFFE3B23C), fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.primary, fontSize = 14.sp,
             )
         }
     }

@@ -1,5 +1,6 @@
 package com.example.familyphotoframe.ui.settings
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -17,10 +18,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -35,7 +40,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
@@ -75,8 +79,56 @@ import kotlin.math.roundToInt
 /** Refactored settings sections: SectionLabel, ToggleRow, FolderCheckboxRow, OpacityStepper, PositionRow, TransitionDurationControl, IntervalStepper. */
 @Composable
 internal fun SectionLabel(text: String) {
-    Text(text, color = Color(0xFFE3B23C), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+    Text(text, color = MaterialTheme.colorScheme.primary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
 }
+
+/**
+ * Groups a related set of controls into one visually bounded card, so a long settings
+ * page reads as a handful of topics instead of one undifferentiated scrolling list.
+ * [title] renders as the card's own [SectionLabel] header.
+ */
+@Composable
+internal fun SettingsSectionCard(
+    title: String,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    OutlinedCard(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)),
+    ) {
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SectionLabel(title)
+            content()
+        }
+    }
+}
+
+/**
+ * An [OutlinedButton] tinted for actions that remove or revoke something (revoke a
+ * paired browser, delete a playlist, reset shuffle progress) so they read as caution
+ * at a glance instead of looking identical to a routine action like "Refresh".
+ */
+@Composable
+internal fun DestructiveButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
+    ) { Text(text) }
+}
+
 @Composable
 internal fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
@@ -84,7 +136,7 @@ internal fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> U
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(label, color = Color.White, fontSize = 17.sp)
+        Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 17.sp)
         Switch(checked = checked, onCheckedChange = onChange)
     }
 }
@@ -97,7 +149,7 @@ internal fun FolderCheckboxRow(label: String, checked: Boolean, onChange: (Boole
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(label, color = Color.White, fontSize = 17.sp)
+        Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 17.sp)
         Checkbox(checked = checked, onCheckedChange = onChange)
     }
 }
@@ -115,12 +167,12 @@ internal fun OpacityStepper(opacity: Float, onChange: (Float) -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(stringResource(R.string.settings_overlay_opacity), color = Color.White, fontSize = 17.sp)
+        Text(stringResource(R.string.settings_overlay_opacity), color = MaterialTheme.colorScheme.onSurface, fontSize = 17.sp)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { onChange(opacity - 0.1f) }) { Text("\u2212") }
             Text(
                 "${(opacity * 100).toInt()}%",
-                color = Color.White, fontSize = 17.sp,
+                color = MaterialTheme.colorScheme.onSurface, fontSize = 17.sp,
                 modifier = Modifier.widthIn(min = 56.dp),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
@@ -142,7 +194,7 @@ internal fun PositionRow(
     ) {
         Text(
             stringResource(R.string.settings_overlay_position),
-            color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), fontSize = 14.sp,
         )
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { onChange(values[(position.ordinal - 1 + values.size) % values.size]) }) {
@@ -150,7 +202,7 @@ internal fun PositionRow(
             }
             Text(
                 labels[position.ordinal],
-                color = Color.White.copy(alpha = 0.85f), fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f), fontSize = 14.sp,
                 modifier = Modifier.widthIn(min = 104.dp),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
@@ -173,7 +225,7 @@ internal fun TransitionDurationControl(durationMs: Int, onChange: (Int) -> Unit)
 
     Text(
         stringResource(R.string.settings_transition_duration, localDuration),
-        color = Color.White.copy(alpha = 0.75f),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
         fontSize = 14.sp,
     )
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -233,7 +285,7 @@ internal fun IntervalStepper(seconds: Int, onChange: (Int) -> Unit) {
             ) { Text("−${PlaybackInterval.BUTTON_STEP_SECONDS}s") }
             Text(
                 "${localSeconds}s",
-                color = Color.White,
+                color = MaterialTheme.colorScheme.onSurface,
                 fontSize = 20.sp,
                 modifier = Modifier.widthIn(min = 72.dp),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -248,7 +300,7 @@ internal fun IntervalStepper(seconds: Int, onChange: (Int) -> Unit) {
                 PlaybackInterval.MIN_SECONDS,
                 PlaybackInterval.MAX_SECONDS,
             ),
-            color = Color.White.copy(alpha = 0.6f),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             fontSize = 13.sp,
         )
     }

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -24,7 +25,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -64,7 +64,7 @@ internal fun FolderManagementSettings(
     }
 
     Box(
-        modifier.fillMaxSize().background(Color(0xFF0B0A08)),
+        modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface),
         contentAlignment = Alignment.TopCenter,
     ) {
         Column(
@@ -95,7 +95,7 @@ internal fun FolderManagementSettings(
                         FolderSelectionPolicy.selectedCount(folders, selection),
                         folders.size,
                     ),
-                    color = Color.White.copy(alpha = 0.65f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                     fontSize = 14.sp,
                     modifier = Modifier.weight(1f),
                 )
@@ -113,14 +113,14 @@ internal fun FolderManagementSettings(
             }
 
             when {
-                loading -> Text(stringResource(R.string.settings_folders_loading), color = Color.White)
+                loading -> Text(stringResource(R.string.settings_folders_loading), color = MaterialTheme.colorScheme.onSurface)
                 folders.isEmpty() -> Text(
                     stringResource(R.string.settings_folders_none),
-                    color = Color.White.copy(alpha = 0.6f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 )
                 visibleFolders.isEmpty() -> Text(
                     stringResource(R.string.settings_folders_no_match),
-                    color = Color.White.copy(alpha = 0.6f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 )
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxWidth().weight(1f),

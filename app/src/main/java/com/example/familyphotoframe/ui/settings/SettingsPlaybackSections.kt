@@ -18,9 +18,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -106,10 +108,10 @@ internal fun TransitionChip(
 internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     var pendingShuffleReset by remember { mutableStateOf<ShuffleResetAction?>(null) }
     PlaylistSection(state, vm)
-    HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f))
     Text(
         stringResource(R.string.settings_interval),
-        color = Color.White.copy(alpha = 0.75f),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
         fontSize = 14.sp,
     )
     IntervalStepper(
@@ -119,7 +121,7 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
 
     Text(
         stringResource(R.string.settings_aspect),
-        color = Color.White.copy(alpha = 0.75f),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
         fontSize = 14.sp,
     )
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -142,7 +144,7 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
 
     Text(
         stringResource(R.string.settings_transition_mode),
-        color = Color.White.copy(alpha = 0.75f),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
         fontSize = 14.sp,
     )
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -159,7 +161,7 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     if (state.transitionSelectionMode == TransitionSelectionMode.FIXED) {
         Text(
             stringResource(R.string.settings_transition),
-            color = Color.White.copy(alpha = 0.75f),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
             fontSize = 14.sp,
         )
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -217,7 +219,7 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     } else {
         Text(
             stringResource(R.string.settings_transition_ambient_hint),
-            color = Color.White.copy(alpha = 0.6f),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             fontSize = 14.sp,
         )
     }
@@ -233,7 +235,7 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     )
     Text(
         stringResource(R.string.settings_transition_reduce_motion_hint),
-        color = Color.White.copy(alpha = 0.6f),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
         fontSize = 14.sp,
     )
 
@@ -243,15 +245,15 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     ) { enabled -> vm.setMotion(if (enabled) MotionMode.KEN_BURNS else MotionMode.NONE) }
     Text(
         stringResource(R.string.settings_motion_hint),
-        color = Color.White.copy(alpha = 0.6f),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
         fontSize = 14.sp,
     )
 
-    HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
     SectionLabel(stringResource(R.string.settings_portrait_collage))
     Text(
         stringResource(R.string.settings_portrait_collage_hint),
-        color = Color.White.copy(alpha = 0.6f),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
         fontSize = 14.sp,
     )
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -283,7 +285,7 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
 
     Text(
         stringResource(R.string.settings_collage_max),
-        color = Color.White.copy(alpha = 0.75f),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
         fontSize = 14.sp,
     )
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -306,13 +308,13 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     )
     Text(
         stringResource(R.string.settings_collage_animate_three_hint),
-        color = Color.White.copy(alpha = 0.6f),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
         fontSize = 14.sp,
     )
 
     Text(
         stringResource(R.string.settings_collage_fallback),
-        color = Color.White.copy(alpha = 0.75f),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
         fontSize = 14.sp,
     )
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -337,7 +339,7 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
 
     Text(
         stringResource(R.string.settings_collage_gap),
-        color = Color.White.copy(alpha = 0.75f),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
         fontSize = 14.sp,
     )
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -358,12 +360,12 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
         )
     }
 
-    HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
     if (state.configurableKinds.isNotEmpty()) {
         SectionLabel(stringResource(R.string.settings_also_play))
         Text(
             stringResource(R.string.settings_also_play_hint),
-            color = Color.White.copy(alpha = 0.6f),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             fontSize = 14.sp,
         )
         for (kind in state.configurableKinds) {
@@ -409,7 +411,7 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
             val progress = state.engine.shuffleProgress
             Text(
                 stringResource(R.string.selection_folder_balanced_description),
-                color = Color.White.copy(alpha = 0.6f),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 fontSize = 14.sp,
             )
             Text(
@@ -420,7 +422,7 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
                     progress.photoResolved,
                     progress.photoTotal,
                 ),
-                color = Color.White.copy(alpha = 0.75f),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
                 fontSize = 14.sp,
             )
             Text(
@@ -432,7 +434,7 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
                     progress.foldersSkipped,
                     progress.foldersRemoved,
                 ),
-                color = Color.White.copy(alpha = 0.65f),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                 fontSize = 13.sp,
             )
             Text(
@@ -441,7 +443,7 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
                     progress.pendingPhotos,
                     progress.quarantinedPhotos,
                 ),
-                color = Color.White.copy(alpha = 0.65f),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                 fontSize = 13.sp,
             )
             Text(
@@ -450,20 +452,20 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
                 } else {
                     stringResource(R.string.shuffle_source_unavailable, progress.unavailableSourceCount)
                 },
-                color = Color.White.copy(alpha = 0.65f),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                 fontSize = 13.sp,
             )
             progress.activeReservationAgeMs?.let { age ->
                 Text(
                     stringResource(R.string.shuffle_reservation_age, formatShuffleDuration(age)),
-                    color = Color.White.copy(alpha = 0.65f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                     fontSize = 13.sp,
                 )
             }
             val never = stringResource(R.string.shuffle_never)
             Text(
                 stringResource(R.string.shuffle_last_commit, formatShuffleTime(progress.lastCommitEpochMs, never)),
-                color = Color.White.copy(alpha = 0.55f),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 fontSize = 12.sp,
             )
             Text(
@@ -471,12 +473,12 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
                     R.string.shuffle_last_reconciliation,
                     formatShuffleTime(progress.lastReconciliationEpochMs, never),
                 ),
-                color = Color.White.copy(alpha = 0.55f),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 fontSize = 12.sp,
             )
             Text(
                 stringResource(R.string.shuffle_last_recovery, formatShuffleTime(progress.lastRecoveryEpochMs, never)),
-                color = Color.White.copy(alpha = 0.55f),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 fontSize = 12.sp,
             )
             if (progress.unavailableSourceCount > 0) {
@@ -486,12 +488,12 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
                 Text(stringResource(R.string.shuffle_recommend_quarantine), color = Color(0xffffcc80), fontSize = 13.sp)
             }
             if (progress.lastRecoveryEpochMs != null) {
-                Text(stringResource(R.string.shuffle_recommend_recovery), color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp)
+                Text(stringResource(R.string.shuffle_recommend_recovery), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f), fontSize = 13.sp)
             }
             progress.currentFolderKey?.substringAfter('\u001f')?.let { folder ->
                 Text(
                     stringResource(R.string.shuffle_current_folder, folder),
-                    color = Color.White.copy(alpha = 0.6f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     fontSize = 13.sp,
                 )
             }
@@ -502,19 +504,24 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
                         progress.foldersSkipped,
                         progress.quarantinedPhotos,
                     ),
-                    color = Color.White.copy(alpha = 0.65f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                     fontSize = 13.sp,
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = { pendingShuffleReset = ShuffleResetAction.ACTIVE }) {
-                    Text(stringResource(R.string.shuffle_reset_active))
-                }
-                OutlinedButton(onClick = { pendingShuffleReset = ShuffleResetAction.ALL }) {
-                    Text(stringResource(R.string.shuffle_reset_all))
-                }
+                DestructiveButton(
+                    text = stringResource(R.string.shuffle_reset_active),
+                    onClick = { pendingShuffleReset = ShuffleResetAction.ACTIVE },
+                )
+                DestructiveButton(
+                    text = stringResource(R.string.shuffle_reset_all),
+                    onClick = { pendingShuffleReset = ShuffleResetAction.ALL },
+                )
             }
-            TextButton(onClick = { pendingShuffleReset = ShuffleResetAction.ALL_WITH_HISTORY }) {
+            TextButton(
+                onClick = { pendingShuffleReset = ShuffleResetAction.ALL_WITH_HISTORY },
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            ) {
                 Text(stringResource(R.string.shuffle_reset_all_history))
             }
         }
@@ -546,14 +553,20 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
                 )
             },
             confirmButton = {
-                Button(onClick = {
-                    when (action) {
-                        ShuffleResetAction.ACTIVE -> vm.resetActiveShuffleProgress()
-                        ShuffleResetAction.ALL -> vm.resetAllShuffleProgress(clearHistory = false)
-                        ShuffleResetAction.ALL_WITH_HISTORY -> vm.resetAllShuffleProgress(clearHistory = true)
-                    }
-                    pendingShuffleReset = null
-                }) { Text(stringResource(R.string.action_reset)) }
+                Button(
+                    onClick = {
+                        when (action) {
+                            ShuffleResetAction.ACTIVE -> vm.resetActiveShuffleProgress()
+                            ShuffleResetAction.ALL -> vm.resetAllShuffleProgress(clearHistory = false)
+                            ShuffleResetAction.ALL_WITH_HISTORY -> vm.resetAllShuffleProgress(clearHistory = true)
+                        }
+                        pendingShuffleReset = null
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+                ) { Text(stringResource(R.string.action_reset)) }
             },
             dismissButton = {
                 TextButton(onClick = { pendingShuffleReset = null }) {
@@ -574,7 +587,7 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     }
     Text(
         stringResource(R.string.settings_curation_hint),
-        color = Color.White.copy(alpha = 0.6f),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
         fontSize = 14.sp,
     )
 
@@ -603,7 +616,7 @@ internal fun PlaylistSection(state: SlideshowUiState, vm: SlideshowViewModel) {
     SectionLabel("Playlists")
     Text(
         "Active: ${state.activePlaylistName}",
-        color = Color.White.copy(alpha = 0.75f),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
         fontSize = 14.sp,
     )
     state.playlists.filter { it.enabled }.forEach { playlist ->
@@ -619,7 +632,10 @@ internal fun PlaylistSection(state: SlideshowUiState, vm: SlideshowViewModel) {
                 modifier = Modifier.weight(1f),
             )
             if (playlist.id !in com.example.familyphotoframe.data.settings.PlaylistSettings.BUILT_IN_IDS) {
-                TextButton(onClick = { vm.deletePlaylist(playlist.id) }) { Text("Delete") }
+                TextButton(
+                    onClick = { vm.deletePlaylist(playlist.id) },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) { Text("Delete") }
             }
         }
     }

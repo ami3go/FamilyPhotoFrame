@@ -20,6 +20,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -35,7 +36,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
@@ -133,7 +133,7 @@ fun SettingsScreen(
                 ) {
                     Text("← ${stringResource(R.string.settings_back)}", fontSize = 18.sp)
                 }
-                HorizontalDivider(color = Color.White.copy(alpha = 0.16f))
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.16f))
                 SettingsGroupList(onOpenPage)
             }
             SettingsPage.PHOTOS -> PhotosSettings(state, vm) { onOpenPage(SettingsPage.FOLDERS) }
@@ -173,7 +173,7 @@ private fun SettingsPageLayout(
     Box(
         modifier
             .fillMaxSize()
-            .background(Color(0xFF0B0A08)),
+            .background(MaterialTheme.colorScheme.surface),
         contentAlignment = Alignment.TopCenter,
     ) {
         Column(
@@ -199,12 +199,12 @@ internal fun SettingsHeader(title: String, showBackArrow: Boolean, onBack: () ->
     ) {
         if (showBackArrow) {
             TextButton(onClick = onBack) {
-                Text(text = "←", color = Color.White, fontSize = 28.sp)
+                Text(text = "←", color = MaterialTheme.colorScheme.onSurface, fontSize = 28.sp)
             }
         }
         Text(
             title,
-            color = Color.White,
+            color = MaterialTheme.colorScheme.onSurface,
             fontSize = 30.sp,
             fontWeight = FontWeight.Light,
         )
@@ -244,13 +244,16 @@ private fun AboutSettings(
     onShowDiagnostics: () -> Unit,
     onShowNotices: () -> Unit,
 ) {
-    HealthDashboardSection(state, vm)
-    HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
-    OutlinedButton(onClick = onShowDiagnostics, modifier = Modifier.fillMaxWidth()) {
-        Text(stringResource(R.string.settings_diagnostics))
+    SettingsSectionCard("Frame health") {
+        HealthDashboardSection(state, vm)
     }
-    OutlinedButton(onClick = onShowNotices, modifier = Modifier.fillMaxWidth()) {
-        Text(stringResource(R.string.settings_notices))
+    SettingsSectionCard(stringResource(R.string.settings_about)) {
+        OutlinedButton(onClick = onShowDiagnostics, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.settings_diagnostics))
+        }
+        OutlinedButton(onClick = onShowNotices, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.settings_notices))
+        }
     }
 }
 
@@ -263,7 +266,7 @@ private fun DiagnosticsDialog(diagnostics: DiagnosticsLog, onDismiss: () -> Unit
         text = {
             val text = remember { diagnostics.renderRedacted(last = 80) }
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text(text, color = Color.White, fontSize = 11.sp)
+                Text(text, color = MaterialTheme.colorScheme.onSurface, fontSize = 11.sp)
             }
         },
     )
@@ -288,25 +291,25 @@ private fun NoticesDialog(onDismiss: () -> Unit) {
             ) {
                 Text(
                     stringResource(R.string.settings_notices_weather_title),
-                    color = Color(0xFFE3B23C), fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.primary, fontSize = 13.sp, fontWeight = FontWeight.Medium,
                 )
                 Text(
                     stringResource(R.string.settings_notices_weather_body),
-                    color = Color.White, fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp,
                 )
                 TextButton(onClick = { uriHandler.openUri(ThirdPartyLicenses.WEATHER_ATTRIBUTION_URL) }) {
                     Text(ThirdPartyLicenses.WEATHER_ATTRIBUTION_URL, fontSize = 12.sp)
                 }
 
-                HorizontalDivider(color = Color.White.copy(alpha = 0.12f))
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
 
                 ThirdPartyLicenses.entries.forEach { entry ->
                     Column {
                         Text(
                             "${entry.component} — ${entry.licenseName}",
-                            color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium,
                         )
-                        Text(entry.summary, color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                        Text(entry.summary, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), fontSize = 12.sp)
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             TextButton(onClick = { uriHandler.openUri(entry.canonicalTextUrl) }) {
                                 Text(stringResource(R.string.settings_notices_view_license), fontSize = 12.sp)

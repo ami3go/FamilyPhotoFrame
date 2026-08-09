@@ -20,6 +20,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -35,7 +36,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
@@ -77,7 +77,7 @@ import kotlin.math.roundToInt
 internal fun BackupSettings(vm: SlideshowViewModel) {
     Text(
         stringResource(R.string.backup_hint),
-        color = Color.White.copy(alpha = 0.6f),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
         fontSize = 14.sp,
     )
     OutlinedButton(onClick = vm::requestExportConfig, modifier = Modifier.fillMaxWidth()) {
@@ -100,7 +100,7 @@ internal fun EncryptedBackupSection(vm: SlideshowViewModel) {
     SectionLabel(stringResource(R.string.backup_encrypted))
     Text(
         stringResource(R.string.backup_encrypted_hint),
-        color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 14.sp,
     )
     OutlinedTextField(
         value = passphrase,
