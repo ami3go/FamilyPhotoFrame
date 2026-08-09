@@ -21,7 +21,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -108,7 +107,7 @@ internal fun TransitionChip(
 internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     var pendingShuffleReset by remember { mutableStateOf<ShuffleResetAction?>(null) }
     PlaylistSection(state, vm)
-    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f))
+    SettingsSectionCard("Timing & transitions") {
     Text(
         stringResource(R.string.settings_interval),
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
@@ -248,9 +247,9 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
         fontSize = 14.sp,
     )
+    }
 
-    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-    SectionLabel(stringResource(R.string.settings_portrait_collage))
+    SettingsSectionCard(stringResource(R.string.settings_portrait_collage)) {
     Text(
         stringResource(R.string.settings_portrait_collage_hint),
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
@@ -359,10 +358,10 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
             label = { Text(stringResource(R.string.settings_collage_gap_medium)) },
         )
     }
+    }
 
-    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
     if (state.configurableKinds.isNotEmpty()) {
-        SectionLabel(stringResource(R.string.settings_also_play))
+        SettingsSectionCard(stringResource(R.string.settings_also_play)) {
         Text(
             stringResource(R.string.settings_also_play_hint),
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
@@ -381,9 +380,10 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
                 kind in state.alsoPlay,
             ) { enabled -> vm.setAlsoPlay(kind, enabled) }
         }
+        }
     }
 
-    SectionLabel(stringResource(R.string.settings_selection_mode))
+    SettingsSectionCard(stringResource(R.string.settings_selection_mode)) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             FilterChip(
@@ -538,6 +538,7 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
             )
         }
     }
+    }
 
     pendingShuffleReset?.let { action ->
         val clearHistory = action == ShuffleResetAction.ALL_WITH_HISTORY
@@ -576,7 +577,7 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
         )
     }
 
-    SectionLabel(stringResource(R.string.settings_curation))
+    SettingsSectionCard(stringResource(R.string.settings_curation)) {
     ToggleRow(
         stringResource(R.string.settings_favorites_only),
         state.favoritesOnly,
@@ -590,8 +591,9 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
         fontSize = 14.sp,
     )
+    }
 
-    SectionLabel(stringResource(R.string.settings_on_unreachable))
+    SettingsSectionCard(stringResource(R.string.settings_on_unreachable)) {
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         FilterChip(
             selected = state.onUnreachable == UnreachablePolicy.FALLBACK_SAMPLES,
@@ -604,6 +606,7 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
             label = { Text(stringResource(R.string.unreachable_stale_cache)) },
         )
     }
+    }
 }
 
 /**
@@ -613,7 +616,7 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
  */
 @Composable
 internal fun PlaylistSection(state: SlideshowUiState, vm: SlideshowViewModel) {
-    SectionLabel("Playlists")
+    SettingsSectionCard("Playlists") {
     Text(
         "Active: ${state.activePlaylistName}",
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
@@ -663,5 +666,6 @@ internal fun PlaylistSection(state: SlideshowUiState, vm: SlideshowViewModel) {
             },
             modifier = Modifier.weight(1f),
         ) { Text("Local uploads") }
+    }
     }
 }

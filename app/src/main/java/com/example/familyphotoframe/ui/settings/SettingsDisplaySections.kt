@@ -19,7 +19,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -78,7 +77,7 @@ import kotlin.math.roundToInt
 @Composable
 internal fun BrightnessAutomationSection(state: SlideshowUiState, vm: SlideshowViewModel) {
     val settings = state.brightnessAutomation
-    SectionLabel("Brightness and night mode")
+    SettingsSectionCard("Brightness and night mode") {
     Text(
         "Current brightness: ${(state.screenBrightness * 100).roundToInt()}%" +
             (state.activeBrightnessPeriodId?.let { " · $it" } ?: ""),
@@ -149,6 +148,7 @@ internal fun BrightnessAutomationSection(state: SlideshowUiState, vm: SlideshowV
     OutlinedButton(onClick = vm::temporaryWake, modifier = Modifier.fillMaxWidth()) {
         Text("Wake frame temporarily")
     }
+    }
 }
 @Composable
 internal fun HealthDashboardSection(state: SlideshowUiState, vm: SlideshowViewModel) {
@@ -181,8 +181,8 @@ internal fun formatBytes(bytes: Long): String = when {
 @Composable
 internal fun DisplaySettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     BrightnessAutomationSection(state, vm)
-    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f))
-    SectionLabel(stringResource(R.string.settings_overlays))
+
+    SettingsSectionCard(stringResource(R.string.settings_overlays)) {
     OpacityStepper(state.overlays.opacity, vm::setOverlayOpacity)
 
     ToggleRow(stringResource(R.string.settings_clock), state.overlays.clockShow, vm::setShowClock)
@@ -200,6 +200,7 @@ internal fun DisplaySettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     if (state.overlays.captionShow) PositionRow(state.overlays.captionPosition, vm::setCaptionPosition)
     ToggleRow(stringResource(R.string.settings_location), state.overlays.locationShow, vm::setShowLocation)
     if (state.overlays.locationShow) PositionRow(state.overlays.locationPosition, vm::setLocationPosition)
+    }
 
     WeatherSection(state = state, vm = vm)
 }
@@ -211,8 +212,7 @@ internal fun WeatherSection(state: SlideshowUiState, vm: SlideshowViewModel) {
     var endpoint by remember(weather.endpointBaseUrl) { mutableStateOf(weather.endpointBaseUrl) }
     var apiKey by remember { mutableStateOf("") }
 
-    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-    SectionLabel(stringResource(R.string.settings_weather))
+    SettingsSectionCard(stringResource(R.string.settings_weather)) {
     ToggleRow(stringResource(R.string.settings_weather_enable), weather.enabled, vm::setWeatherEnabled)
 
     if (weather.enabled) {
@@ -290,5 +290,6 @@ internal fun WeatherSection(state: SlideshowUiState, vm: SlideshowViewModel) {
         if (state.overlays.weatherShow) {
             PositionRow(state.overlays.weatherPosition, vm::setWeatherPosition)
         }
+    }
     }
 }

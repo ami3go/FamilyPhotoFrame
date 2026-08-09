@@ -20,7 +20,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -76,7 +75,7 @@ import kotlin.math.roundToInt
 /** Refactored settings sections: PlaylistScheduleSection, ScheduleSettings, AutoRescanSection, SleepSection. */
 @Composable
 internal fun PlaylistScheduleSection(state: SlideshowUiState, vm: SlideshowViewModel) {
-    SectionLabel("Scheduled playlist switching")
+    SettingsSectionCard("Scheduled playlist switching") {
     ToggleRow("Enable playlist schedule", state.playlistScheduleEnabled, vm::setPlaylistScheduleEnabled)
     state.activePlaylistRuleName?.let {
         Text("Active rule: $it", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f), fontSize = 14.sp)
@@ -126,11 +125,11 @@ internal fun PlaylistScheduleSection(state: SlideshowUiState, vm: SlideshowViewM
     OutlinedButton(onClick = vm::cancelPlaylistOverride, modifier = Modifier.fillMaxWidth()) {
         Text("Cancel manual playlist override")
     }
+    }
 }
 @Composable
 internal fun ScheduleSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     PlaylistScheduleSection(state, vm)
-    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f))
     SleepSection(state = state, vm = vm)
     AutoRescanSection(state = state, vm = vm)
 }
@@ -142,8 +141,7 @@ internal fun AutoRescanSection(state: SlideshowUiState, vm: SlideshowViewModel) 
         RescanSchedule.parseDays(schedule.autoRescanDays)
     }
 
-    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-    SectionLabel(stringResource(R.string.settings_autorescan))
+    SettingsSectionCard(stringResource(R.string.settings_autorescan)) {
     ToggleRow(
         stringResource(R.string.settings_autorescan_enable),
         schedule.autoRescanEnabled,
@@ -202,6 +200,7 @@ internal fun AutoRescanSection(state: SlideshowUiState, vm: SlideshowViewModel) 
             )
         }
     }
+    }
 }
 @Composable
 internal fun SleepSection(state: SlideshowUiState, vm: SlideshowViewModel) {
@@ -209,8 +208,7 @@ internal fun SleepSection(state: SlideshowUiState, vm: SlideshowViewModel) {
     var start by remember(schedule.sleepStart) { mutableStateOf(schedule.sleepStart) }
     var end by remember(schedule.sleepEnd) { mutableStateOf(schedule.sleepEnd) }
 
-    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-    SectionLabel(stringResource(R.string.settings_sleep))
+    SettingsSectionCard(stringResource(R.string.settings_sleep)) {
     ToggleRow(stringResource(R.string.settings_sleep_enable), schedule.sleepEnabled, vm::setSleepEnabled)
 
     if (schedule.sleepEnabled) {
@@ -252,5 +250,6 @@ internal fun SleepSection(state: SlideshowUiState, vm: SlideshowViewModel) {
                 color = MaterialTheme.colorScheme.primary, fontSize = 14.sp,
             )
         }
+    }
     }
 }

@@ -19,7 +19,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -75,19 +74,21 @@ import kotlin.math.roundToInt
 /** Refactored settings sections: BackupSettings, EncryptedBackupSection. */
 @Composable
 internal fun BackupSettings(vm: SlideshowViewModel) {
-    Text(
-        stringResource(R.string.backup_hint),
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-        fontSize = 14.sp,
-    )
-    OutlinedButton(onClick = vm::requestExportConfig, modifier = Modifier.fillMaxWidth()) {
-        Text(stringResource(R.string.backup_export))
-    }
-    OutlinedButton(onClick = vm::requestImportConfig, modifier = Modifier.fillMaxWidth()) {
-        Text(stringResource(R.string.backup_import))
-    }
-    OutlinedButton(onClick = vm::requestExportSupportBundle, modifier = Modifier.fillMaxWidth()) {
-        Text(stringResource(R.string.backup_support))
+    SettingsSectionCard("Plain backup") {
+        Text(
+            stringResource(R.string.backup_hint),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            fontSize = 14.sp,
+        )
+        OutlinedButton(onClick = vm::requestExportConfig, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.backup_export))
+        }
+        OutlinedButton(onClick = vm::requestImportConfig, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.backup_import))
+        }
+        OutlinedButton(onClick = vm::requestExportSupportBundle, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.backup_support))
+        }
     }
     EncryptedBackupSection(vm = vm)
 }
@@ -97,26 +98,27 @@ internal fun EncryptedBackupSection(vm: SlideshowViewModel) {
     // ViewModel call; it is never placed in persisted settings or UI state (spec §14.4).
     var passphrase by remember { mutableStateOf("") }
 
-    SectionLabel(stringResource(R.string.backup_encrypted))
-    Text(
-        stringResource(R.string.backup_encrypted_hint),
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 14.sp,
-    )
-    OutlinedTextField(
-        value = passphrase,
-        onValueChange = { passphrase = it },
-        label = { Text(stringResource(R.string.backup_passphrase)) },
-        singleLine = true,
-        visualTransformation = PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-        modifier = Modifier.fillMaxWidth(),
-    )
-    OutlinedButton(
-        onClick = { vm.requestExportEncrypted(passphrase); passphrase = "" },
-        modifier = Modifier.fillMaxWidth(),
-    ) { Text(stringResource(R.string.backup_export_encrypted)) }
-    OutlinedButton(
-        onClick = { vm.requestImportEncrypted(passphrase); passphrase = "" },
-        modifier = Modifier.fillMaxWidth(),
-    ) { Text(stringResource(R.string.backup_import_encrypted)) }
+    SettingsSectionCard(stringResource(R.string.backup_encrypted)) {
+        Text(
+            stringResource(R.string.backup_encrypted_hint),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 14.sp,
+        )
+        OutlinedTextField(
+            value = passphrase,
+            onValueChange = { passphrase = it },
+            label = { Text(stringResource(R.string.backup_passphrase)) },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedButton(
+            onClick = { vm.requestExportEncrypted(passphrase); passphrase = "" },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(stringResource(R.string.backup_export_encrypted)) }
+        OutlinedButton(
+            onClick = { vm.requestImportEncrypted(passphrase); passphrase = "" },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(stringResource(R.string.backup_import_encrypted)) }
+    }
 }

@@ -74,26 +74,25 @@ import kotlin.math.roundToInt
 /** Refactored settings sections: DeviceSettings, WebSection, RememberedBrowserSettings, formatRememberedTime. */
 @Composable
 internal fun DeviceSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
-    ToggleRow(stringResource(R.string.settings_autostart), state.autoStartOnBoot, vm::setAutoStartOnBoot)
+    SettingsSectionCard("Startup") {
+        ToggleRow(stringResource(R.string.settings_autostart), state.autoStartOnBoot, vm::setAutoStartOnBoot)
+    }
 
-    Text(
-        stringResource(R.string.settings_perf),
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
-        fontSize = 14.sp,
-    )
-    Text(
-        stringResource(R.string.settings_perf_hint),
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-        fontSize = 14.sp,
-    )
-    ToggleRow(
-        stringResource(R.string.settings_perf_overlay),
-        state.showPerformanceOverlay,
-        vm::setShowPerformanceOverlay,
-    )
-    if (state.showPerformanceOverlay) {
-        OutlinedButton(onClick = vm::capturePerformanceSample, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.settings_perf_capture))
+    SettingsSectionCard(stringResource(R.string.settings_perf)) {
+        Text(
+            stringResource(R.string.settings_perf_hint),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            fontSize = 14.sp,
+        )
+        ToggleRow(
+            stringResource(R.string.settings_perf_overlay),
+            state.showPerformanceOverlay,
+            vm::setShowPerformanceOverlay,
+        )
+        if (state.showPerformanceOverlay) {
+            OutlinedButton(onClick = vm::capturePerformanceSample, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.settings_perf_capture))
+            }
         }
     }
 }
