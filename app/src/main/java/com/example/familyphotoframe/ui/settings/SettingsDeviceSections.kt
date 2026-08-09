@@ -75,10 +75,7 @@ import kotlin.math.roundToInt
 /** Refactored settings sections: DeviceSettings, WebSection, RememberedBrowserSettings, formatRememberedTime. */
 @Composable
 internal fun DeviceSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
-    HealthDashboardSection(state, vm)
-    HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
     ToggleRow(stringResource(R.string.settings_autostart), state.autoStartOnBoot, vm::setAutoStartOnBoot)
-    WebSection(state = state, vm = vm)
 
     Text(
         stringResource(R.string.settings_perf),
@@ -110,8 +107,6 @@ internal fun WebSection(state: SlideshowUiState, vm: SlideshowViewModel) {
         if (state.web.enabled) vm.refreshRememberedBrowsers()
     }
 
-    HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
-    SectionLabel(stringResource(R.string.settings_web))
     ToggleRow(stringResource(R.string.web_enable), state.web.enabled, vm::setWebEnabled)
 
     if (!state.web.enabled) {

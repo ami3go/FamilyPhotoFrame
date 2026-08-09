@@ -167,7 +167,7 @@
     <string name="msg_smb_error">Couldn\u2019t read the share. Check the details and try again.</string>
 
     <!-- Web setup (Phase 1.5) -->
-    <string name="settings_web">Web setup</string>
+    <string name="settings_web">Web control</string>
     <string name="web_enable">Enable web setup on this network</string>
     <string name="web_hint">Open the address below on a phone or computer on the same Wi\u2011Fi, then enter the PIN.</string>
     <string name="web_pin_label">Pairing PIN</string>

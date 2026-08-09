@@ -80,6 +80,7 @@ enum class SettingsPage {
     DISPLAY,
     SCHEDULE,
     DEVICE,
+    WEB,
     BACKUP,
     ABOUT,
 }
@@ -110,6 +111,7 @@ fun SettingsScreen(
         SettingsPage.DISPLAY -> stringResource(R.string.settings_display)
         SettingsPage.SCHEDULE -> stringResource(R.string.settings_schedule)
         SettingsPage.DEVICE -> stringResource(R.string.settings_device)
+        SettingsPage.WEB -> stringResource(R.string.settings_web)
         SettingsPage.BACKUP -> stringResource(R.string.settings_backup)
         SettingsPage.ABOUT -> stringResource(R.string.settings_about)
     }
@@ -140,8 +142,11 @@ fun SettingsScreen(
             SettingsPage.DISPLAY -> DisplaySettings(state, vm)
             SettingsPage.SCHEDULE -> ScheduleSettings(state, vm)
             SettingsPage.DEVICE -> DeviceSettings(state, vm)
+            SettingsPage.WEB -> WebSection(state, vm)
             SettingsPage.BACKUP -> BackupSettings(vm)
             SettingsPage.ABOUT -> AboutSettings(
+                state = state,
+                vm = vm,
                 onShowDiagnostics = { showDiagnostics = true },
                 onShowNotices = { showNotices = true },
             )
@@ -213,6 +218,7 @@ private fun SettingsGroupList(onOpenPage: (SettingsPage) -> Unit) {
     SettingsGroupEntry(stringResource(R.string.settings_display)) { onOpenPage(SettingsPage.DISPLAY) }
     SettingsGroupEntry(stringResource(R.string.settings_schedule)) { onOpenPage(SettingsPage.SCHEDULE) }
     SettingsGroupEntry(stringResource(R.string.settings_device)) { onOpenPage(SettingsPage.DEVICE) }
+    SettingsGroupEntry(stringResource(R.string.settings_web)) { onOpenPage(SettingsPage.WEB) }
     SettingsGroupEntry(stringResource(R.string.settings_backup)) { onOpenPage(SettingsPage.BACKUP) }
     SettingsGroupEntry(stringResource(R.string.settings_about)) { onOpenPage(SettingsPage.ABOUT) }
 }
@@ -233,9 +239,13 @@ private fun SettingsGroupEntry(label: String, onClick: () -> Unit) {
 
 @Composable
 private fun AboutSettings(
+    state: SlideshowUiState,
+    vm: SlideshowViewModel,
     onShowDiagnostics: () -> Unit,
     onShowNotices: () -> Unit,
 ) {
+    HealthDashboardSection(state, vm)
+    HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
     OutlinedButton(onClick = onShowDiagnostics, modifier = Modifier.fillMaxWidth()) {
         Text(stringResource(R.string.settings_diagnostics))
     }
