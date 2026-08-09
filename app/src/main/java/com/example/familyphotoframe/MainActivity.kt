@@ -197,6 +197,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                         imageLoader = services.imageLoader,
                         onOpenSettings = ::openSettings,
                         onOpenPhotoSources = ::openPhotoSources,
+                        localThumbnailCache = services.localThumbnailCache,
                     )
                     if (screen == Screen.SETTINGS) {
                         SettingsScreen(

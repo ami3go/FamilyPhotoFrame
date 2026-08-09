@@ -163,4 +163,11 @@ data class SlideshowUiState(
     val webUpload: com.example.familyphotoframe.data.settings.WebUploadSettings =
         com.example.familyphotoframe.data.settings.WebUploadSettings(),
     val rememberedBrowserRecords: List<RememberedBrowserUi> = emptyList(),
+    val localThumbnailCache: com.example.familyphotoframe.data.settings.LocalThumbnailCacheSettings =
+        com.example.familyphotoframe.data.settings.LocalThumbnailCacheSettings(),
+    /** Populated on demand by `refreshLocalThumbnailCacheInfo()`; null until first refresh. */
+    val localThumbnailCacheUsageBytes: Long? = null,
+    val localThumbnailCacheEffectiveMaxBytes: Long? = null,
+    val localThumbnailCacheRebuildInProgress: Boolean = false,
+    val localThumbnailCacheRebuildCount: Int = 0,
 )

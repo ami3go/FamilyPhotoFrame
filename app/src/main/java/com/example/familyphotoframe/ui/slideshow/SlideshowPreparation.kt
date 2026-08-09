@@ -67,7 +67,11 @@ internal sealed interface PreparedSlide {
     }
 }
 
-private data class ResolvedPhoto(val photo: DisplayPhoto, val model: Any)
+private data class ResolvedPhoto(
+    val photo: DisplayPhoto,
+    val model: Any,
+    val localThumbnailCacheEligible: Boolean = false,
+)
 internal data class PreparedTile(
     val photo: DisplayPhoto,
     val model: Any,
@@ -198,7 +202,9 @@ private suspend fun resolvePhoto(
     resolveModel: suspend (DisplayPhoto) -> PhotoModelResolution,
 ): ResolvePhotoResult = try {
     when (val resolution = resolveModel(photo)) {
-        is PhotoModelResolution.Ready -> ResolvePhotoResult.Ready(ResolvedPhoto(photo, resolution.model))
+        is PhotoModelResolution.Ready -> ResolvePhotoResult.Ready(
+            ResolvedPhoto(photo, resolution.model, resolution.localThumbnailCacheEligible)
+        )
         is PhotoModelResolution.Failed -> ResolvePhotoResult.Failed(resolution.failure)
     }
 } catch (c: CancellationException) {
@@ -327,6 +333,16 @@ internal suspend fun prepareSlide(
     excludedIds: Set<Long>,
     targetW: Int,
     targetH: Int,
+    /**
+     * Optional: when non-null, the anchor's full-frame (non-collage-tile) decode is
+     * served from / populated into this cache. Null for callers that don't want the
+     * local thumbnail cache involved (e.g. tests). See
+     * docs/FPF-FEAT-LOCAL-THUMBNAIL-CACHE-001.md — collage tiles are deliberately not
+     * covered yet (§6 Phase 3).
+     */
+    localThumbnailCache: com.example.familyphotoframe.data.cache.LocalThumbnailCache? = null,
+    /** Photos never evicted from the local thumbnail cache to make room for this write. */
+    localThumbnailCacheProtectedStableIds: Set<String> = emptySet(),
     onRecoverableOom: (DecodeFailure) -> Unit,
     onCollageCandidateFailure: (DecodeFailure) -> Unit,
     onCollageEvent: (
@@ -351,6 +367,31 @@ internal suspend fun prepareSlide(
         height: Int,
     ): DecodePhotoResult = decodePhoto(context, resolved, imageLoader, width, height).also { result ->
         if (result is DecodePhotoResult.Ready) uncommitted += result.tile.bitmap
+    }
+
+    // Full-frame (non-collage-tile) decode of the anchor only, backed by the local
+    // thumbnail cache when eligible. A cache hit decodes the small cached JPEG instead
+    // of the original; a miss decodes the original as usual and then populates the
+    // cache synchronously (see LocalThumbnailCache's kdoc for why this is not
+    // fire-and-forget) before handing the tile back.
+    suspend fun decodeAnchorCacheable(resolved: ResolvedPhoto, width: Int, height: Int): DecodePhotoResult {
+        if (localThumbnailCache == null || !resolved.localThumbnailCacheEligible) {
+            return decodeOwned(resolved, width, height)
+        }
+        val cachedFile = localThumbnailCache.get(resolved.photo.stableId, width, height)
+        if (cachedFile != null) {
+            val fromCache = decodeOwned(resolved.copy(model = cachedFile), width, height)
+            if (fromCache is DecodePhotoResult.Ready) return fromCache
+            // Cache entry existed but its file was unreadable/corrupt; fall through.
+        }
+        val decoded = decodeOwned(resolved, width, height)
+        if (decoded is DecodePhotoResult.Ready) {
+            localThumbnailCache.put(
+                resolved.photo.stableId, width, height, decoded.tile.bitmap,
+                localThumbnailCacheProtectedStableIds,
+            )
+        }
+        return decoded
     }
 
     fun releaseUncommitted() {
@@ -395,7 +436,7 @@ internal suspend fun prepareSlide(
         val knownOrientation = photo.metadataOrientation()
         val collageEnabled = collageMode != PortraitCollageMode.OFF
         if (!collageEnabled || knownOrientation == PhotoOrientation.LANDSCAPE) {
-            return when (val decoded = decodeOwned(resolvedAnchor, targetW, targetH)) {
+            return when (val decoded = decodeAnchorCacheable(resolvedAnchor, targetW, targetH)) {
                 is DecodePhotoResult.Ready -> ready(
                     PreparedSlide.Single(photo, resolvedAnchor.model, decoded.tile.bitmap, decoded.tile.dataSource)
                 )
@@ -416,7 +457,7 @@ internal suspend fun prepareSlide(
             // Metadata was unknown or misleading. Decode at full display size for normal
             // single-photo playback rather than stretching the half-size probe.
             discard(anchorTile)
-            return when (val decoded = decodeOwned(resolvedAnchor, targetW, targetH)) {
+            return when (val decoded = decodeAnchorCacheable(resolvedAnchor, targetW, targetH)) {
                 is DecodePhotoResult.Ready -> ready(
                     PreparedSlide.Single(photo, resolvedAnchor.model, decoded.tile.bitmap, decoded.tile.dataSource)
                 )
@@ -499,7 +540,7 @@ internal suspend fun prepareSlide(
                 requestedFallback == AspectMode.FIT_BLUR && !allowBlurredBackground
             ) AspectMode.FIT_COLOR else requestedFallback
             val fallbackTile = if (fallbackMode == AspectMode.FILL_CROP) {
-                when (val decoded = decodeOwned(resolvedAnchor, targetW, targetH)) {
+                when (val decoded = decodeAnchorCacheable(resolvedAnchor, targetW, targetH)) {
                     is DecodePhotoResult.Ready -> decoded.tile
                     is DecodePhotoResult.Failed -> anchorTile
                 }

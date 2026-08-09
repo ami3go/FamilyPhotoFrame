@@ -21,6 +21,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -108,6 +109,75 @@ internal fun PhotosSettings(
         )
         OutlinedButton(onClick = onManageFolders, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.settings_folders_manage))
+        }
+    }
+
+    LocalThumbnailCacheSection(state, vm)
+}
+
+/**
+ * Persistent on-disk thumbnail cache for local (SAF/fallback) photos — see
+ * docs/FPF-FEAT-LOCAL-THUMBNAIL-CACHE-001.md. Distinct from remote NAS/SMB caching:
+ * this avoids repeated CPU decode work for photos already on local storage, not a
+ * network re-fetch.
+ */
+@Composable
+internal fun LocalThumbnailCacheSection(state: SlideshowUiState, vm: SlideshowViewModel) {
+    LaunchedEffect(Unit) { vm.refreshLocalThumbnailCacheInfo() }
+
+    val cache = state.localThumbnailCache
+    var maxGiB by remember(cache.maxBytes) {
+        mutableStateOf((cache.maxBytes / (1024L * 1024L * 1024L)).coerceAtLeast(1).toString())
+    }
+
+    SettingsSectionCard("Local photo cache") {
+        Text(
+            "Caches decoded, downscaled thumbnails for local photos so showing the same " +
+                "photo again — the next shuffle cycle, or Previous/Next — doesn't re-decode " +
+                "the original from scratch. Does not affect NAS/SMB sources.",
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            fontSize = 14.sp,
+        )
+        ToggleRow("Enable local photo cache", cache.enabled, vm::setLocalThumbnailCacheEnabled)
+
+        if (cache.enabled) {
+            Text(
+                "Using ${formatBytes(state.localThumbnailCacheUsageBytes ?: 0L)} of " +
+                    "${formatBytes(state.localThumbnailCacheEffectiveMaxBytes ?: cache.maxBytes)}",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                fontSize = 14.sp,
+            )
+            OutlinedTextField(
+                value = maxGiB,
+                onValueChange = {
+                    maxGiB = it.filter(Char::isDigit).take(4)
+                    maxGiB.toIntOrNull()?.let(vm::setLocalThumbnailCacheMaxGiB)
+                },
+                label = { Text("Maximum size (GiB) — at least 2 GiB is always kept free for other apps") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = vm::cleanLocalThumbnailCache,
+                    enabled = !state.localThumbnailCacheRebuildInProgress,
+                    modifier = Modifier.weight(1f),
+                ) { Text("Clean") }
+                OutlinedButton(
+                    onClick = vm::rebuildLocalThumbnailCache,
+                    enabled = !state.localThumbnailCacheRebuildInProgress,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(
+                        if (state.localThumbnailCacheRebuildInProgress) {
+                            "Rebuilding… (${state.localThumbnailCacheRebuildCount})"
+                        } else {
+                            "Rebuild"
+                        }
+                    )
+                }
+            }
         }
     }
 }

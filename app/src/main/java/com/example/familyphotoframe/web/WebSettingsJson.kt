@@ -145,6 +145,8 @@ internal object WebSettingsJson {
             put("webUploadMaxFileBytes", s.webUpload.maxFileBytes)
             put("webUploadDuplicatePolicy", s.webUpload.duplicatePolicy.name)
             put("webUploadAllowWhilePlaying", s.webUpload.allowWhilePlaying)
+            put("localThumbnailCacheEnabled", s.localThumbnailCache.enabled)
+            put("localThumbnailCacheMaxGiB", (s.localThumbnailCache.maxBytes / (1024L * 1024L * 1024L)).toInt())
             put("nextScheduleAction", nextScheduleAction)
         }
     }

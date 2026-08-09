@@ -108,6 +108,7 @@ fun SlideshowScreen(
     onOpenSettings: () -> Unit,
     onOpenPhotoSources: () -> Unit,
     modifier: Modifier = Modifier,
+    localThumbnailCache: com.example.familyphotoframe.data.cache.LocalThumbnailCache? = null,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val memoryProtection by vm.memoryProtection.collectAsStateWithLifecycle()
@@ -217,6 +218,7 @@ fun SlideshowScreen(
                 isHostPlaybackTokenCurrent = vm::isHostPlaybackTokenCurrent,
                 targetW = targetW,
                 targetH = targetH,
+                localThumbnailCache = localThumbnailCache,
             )
         }
 
@@ -363,6 +365,7 @@ private fun PlayingContent(
     isHostPlaybackTokenCurrent: (Long) -> Boolean,
     targetW: Int,
     targetH: Int,
+    localThumbnailCache: com.example.familyphotoframe.data.cache.LocalThumbnailCache? = null,
 ) {
     val context = LocalContext.current
     val selected = state.engine.current
@@ -476,6 +479,8 @@ private fun PlayingContent(
             },
             targetW = decodeW,
             targetH = decodeH,
+            localThumbnailCache = localThumbnailCache,
+            localThumbnailCacheProtectedStableIds = setOfNotNull(selected?.stableId, next?.stableId),
             onRecoverableOom = { failure ->
                 onRecoverableOom(photo, failure.reason ?: "slide_preparation_allocation")
             },

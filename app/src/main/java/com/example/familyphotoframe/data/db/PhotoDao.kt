@@ -43,6 +43,27 @@ interface PhotoDao {
         normalizedPaths: List<String>,
     ): List<PhotoItemEntity>
 
+    /** Lightweight projection for [localThumbnailRebuildCandidates]. */
+    data class LocalThumbnailRebuildCandidate(val stableId: String, val openToken: String)
+
+    /**
+     * Local-source (SAF/fallback/local-upload) photos eligible for the on-disk thumbnail
+     * cache, paged so a rebuild over a large library never loads the whole index into
+     * memory at once. `sourceId NOT IN (...)` mirrors
+     * [com.example.familyphotoframe.data.source.BuiltInSourceIds.requiresMediaCache]'s
+     * remote-source list — those are out of scope for this cache (see
+     * docs/FPF-FEAT-LOCAL-THUMBNAIL-CACHE-001.md §3).
+     */
+    @Query(
+        """
+        SELECT stableId, openToken FROM photos
+        WHERE sourceId NOT IN ('smb', 'synology', 'webdav') AND isHidden = 0
+        ORDER BY id ASC
+        LIMIT :limit OFFSET :offset
+        """
+    )
+    suspend fun localThumbnailRebuildCandidates(limit: Int, offset: Int): List<LocalThumbnailRebuildCandidate>
+
     @Query("SELECT COUNT(*) FROM photos")
     suspend fun count(): Int
 

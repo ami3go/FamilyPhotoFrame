@@ -637,6 +637,24 @@ data class WebUploadSettings(
 }
 
 /**
+ * Persistent on-disk thumbnail cache for LOCAL (SAF/fallback) photos — see
+ * `docs/FPF-FEAT-LOCAL-THUMBNAIL-CACHE-001.md`. [maxBytes] is the user's requested
+ * budget; the *effective* ceiling is clamped against live free space at cache-usage
+ * time by [com.example.familyphotoframe.data.cache.LocalThumbnailCache.clampMaxBytes],
+ * since a fixed byte value here can't know how much space is actually free later.
+ * Off by default: this is a new, not-yet-hardware-validated feature.
+ */
+@Serializable
+data class LocalThumbnailCacheSettings(
+    val enabled: Boolean = false,
+    val maxBytes: Long = 1L * 1024L * 1024L * 1024L,
+) {
+    fun normalized(): LocalThumbnailCacheSettings = copy(
+        maxBytes = maxBytes.coerceAtLeast(1L * 1024L * 1024L * 1024L),
+    )
+}
+
+/**
  * Canonical runtime settings (spec §20 subset for Phase 0). [schemaVersion] is
  * carried so import/export can validate compatibility (spec §6.3, §14.1). Stored
  * via a typed DataStore; JSON is used only for import/export.
@@ -690,6 +708,8 @@ data class AppSettings(
     val brightnessAutomation: BrightnessAutomationSettings = BrightnessAutomationSettings(),
     /** Privileged local-library web upload policy. */
     val webUpload: WebUploadSettings = WebUploadSettings(),
+    /** Persistent on-disk thumbnail cache for local (SAF/fallback) photos. */
+    val localThumbnailCache: LocalThumbnailCacheSettings = LocalThumbnailCacheSettings(),
     /**
      * Shows a live frame-timing readout for measuring the §22.4 performance budget on
      * the reference device. Off by default and not a user-facing feature — it exists so
@@ -715,6 +735,7 @@ data class AppSettings(
             brightnessAutomation = brightnessAutomation.normalized(),
             web = web.copy(rememberedBrowsers = web.rememberedBrowsers.normalized()),
             webUpload = webUpload.normalized(),
+            localThumbnailCache = localThumbnailCache.normalized(),
         )
     }
 

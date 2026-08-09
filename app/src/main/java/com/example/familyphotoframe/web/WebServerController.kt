@@ -87,6 +87,7 @@ class WebServerController(
     private val rememberedBrowsers: RememberedBrowserManager? = null,
     private val allowHeif: Boolean = true,
     private val diagnosticRuntimeState: DiagnosticRuntimeState = DiagnosticRuntimeState(),
+    private val localThumbnailCache: com.example.familyphotoframe.data.cache.LocalThumbnailCache? = null,
 ) {
 
     /** Slideshow-dependent operations the web API can trigger. */
@@ -96,6 +97,8 @@ class WebServerController(
         suspend fun previewFolderOnce(folderKey: String): String? = "Folder preview is unavailable"
         suspend fun useFolderInActivePlaylist(folderKey: String): String? = "Playlist folder action is unavailable"
         suspend fun clearMediaCache(): String? = "Media cache control is unavailable"
+        suspend fun clearLocalThumbnailCache(): String? = "Local photo cache control is unavailable"
+        suspend fun rebuildLocalThumbnailCache(): String? = "Local photo cache control is unavailable"
         suspend fun restartApplication(): String? = "Application restart is unavailable"
         suspend fun factoryReset(): String? = "Factory reset is unavailable"
     }
@@ -351,6 +354,11 @@ class WebServerController(
                 put("heapMaxMb", runtime.maxMemory() / MB)
                 put("pssMb", Debug.getPss() / 1024)
                 put("imageCacheMb", 0)
+                put("localThumbnailCacheEnabled", s.localThumbnailCache.enabled)
+                put("localThumbnailCacheUsageBytes", localThumbnailCache?.currentSizeBytes() ?: 0L)
+                put("localThumbnailCacheMaxBytes", localThumbnailCache?.effectiveMaxBytes() ?: s.localThumbnailCache.maxBytes)
+                put("localThumbnailCacheRebuildInProgress", localThumbnailCache?.rebuildInProgress ?: false)
+                put("localThumbnailCacheRebuildCount", localThumbnailCache?.rebuildCount ?: 0)
                 put("webUrl", boundUrl.orEmpty())
                 put("previewAvailable", preview != null)
                 put("previewRevision", preview?.revision.orEmpty())
@@ -580,6 +588,8 @@ class WebServerController(
         override suspend fun maintenance(action: String): String? {
             return when (action) {
             "clear_cache" -> withControls { it.clearMediaCache() }
+            "clear_local_thumbnail_cache" -> withControls { it.clearLocalThumbnailCache() }
+            "rebuild_local_thumbnail_cache" -> withControls { it.rebuildLocalThumbnailCache() }
             "clear_suppression" -> {
                 for (sourceId in sourceIdsFor(settings.settings.first())) photoDao.clearSuppression(sourceId)
                 diagnostics.log(DiagnosticsLog.Category.APP, "WEB_SUPPRESSION_CLEARED")

@@ -331,3 +331,29 @@ val MIGRATION_7_8 = object : Migration(7, 8) {
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_photos_contentSha256` ON `photos` (`contentSha256`)")
     }
 }
+
+/**
+ * v8→v9: persistent on-disk thumbnail cache for local (SAF/fallback) photos, separate
+ * from `cache_index`/MediaCache (which caches remote bytes to avoid a network re-fetch).
+ * This cache avoids repeated CPU decode/downscale work instead, so its key includes a
+ * size bucket alongside the photo's stable id.
+ */
+val MIGRATION_8_9 = object : Migration(8, 9) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `local_thumbnail_cache` (
+                `cacheKey` TEXT NOT NULL,
+                `photoStableId` TEXT NOT NULL,
+                `sizeBucket` TEXT NOT NULL,
+                `localFilePathPrivate` TEXT NOT NULL,
+                `sizeBytes` INTEGER NOT NULL,
+                `createdAtEpochMs` INTEGER NOT NULL,
+                `lastAccessedAtEpochMs` INTEGER NOT NULL,
+                PRIMARY KEY(`cacheKey`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_local_thumbnail_cache_photoStableId` ON `local_thumbnail_cache` (`photoStableId`)")
+    }
+}

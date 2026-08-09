@@ -114,6 +114,7 @@ internal class WebSettingsPatchApplier(
         strings("includeGlobs")?.let { if (it.isEmpty()) return "includeGlobs cannot be empty" }
         int("webPort")?.let { if (it !in 1024..65535) return "webPort must be 1024-65535" }
         int("webIdleTimeoutMinutes")?.let { if (it !in 1..1440) return "webIdleTimeoutMinutes must be 1-1440" }
+        int("localThumbnailCacheMaxGiB")?.let { if (it < 1) return "localThumbnailCacheMaxGiB must be at least 1" }
         str("activePlaylistId")?.let { id ->
             if (settings.settings.first().playlists.playlists.none { it.id == id && it.enabled }) return "Unknown activePlaylistId"
         }
@@ -313,6 +314,14 @@ internal class WebSettingsPatchApplier(
             }
             long("webUploadMaxFileBytes")?.let { value ->
                 next = next.copy(webUpload = next.webUpload.copy(maxFileBytes = value))
+            }
+            bool("localThumbnailCacheEnabled")?.let { value ->
+                next = next.copy(localThumbnailCache = next.localThumbnailCache.copy(enabled = value))
+            }
+            int("localThumbnailCacheMaxGiB")?.let { value ->
+                next = next.copy(localThumbnailCache = next.localThumbnailCache.copy(
+                    maxBytes = value.toLong() * 1024L * 1024L * 1024L,
+                ))
             }
             bool("autoRescanEnabled")?.let {
                 next = next.copy(schedule = next.schedule.copy(autoRescanEnabled = it))

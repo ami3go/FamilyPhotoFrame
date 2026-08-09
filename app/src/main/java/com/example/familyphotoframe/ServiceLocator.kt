@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Debug
 import coil.ImageLoader
 import coil.memory.MemoryCache
+import com.example.familyphotoframe.data.cache.LocalThumbnailCache
 import com.example.familyphotoframe.data.cache.MediaCache
 import com.example.familyphotoframe.data.db.AppDatabase
 import com.example.familyphotoframe.data.db.PhotoDao
@@ -51,6 +52,7 @@ import com.example.familyphotoframe.util.DefaultAppDispatchers
 import com.example.familyphotoframe.util.ImageFormatSupport
 import com.example.familyphotoframe.util.ImageMemoryBudget
 import java.io.File
+import kotlinx.coroutines.flow.first
 
 /**
  * Manual dependency container (spec §3: "Manual DI for Phase 0–1; Hilt later").
@@ -177,6 +179,19 @@ class ServiceLocator(private val appContext: Context) {
 
     val settings: SettingsRepository by lazy { SettingsRepository(appContext) }
 
+    /** Persistent thumbnail cache for local (SAF/fallback) photos; see docs/FPF-FEAT-LOCAL-THUMBNAIL-CACHE-001.md. */
+    val localThumbnailCache: LocalThumbnailCache by lazy {
+        LocalThumbnailCache(
+            appContext, database.localThumbnailCacheDao(), dispatchers.io,
+            enabledProvider = { settings.settings.first().localThumbnailCache.enabled },
+            maxBytesProvider = {
+                LocalThumbnailCache.clampMaxBytes(
+                    settings.settings.first().localThumbnailCache.maxBytes, appContext,
+                )
+            },
+        )
+    }
+
     val indexer: Indexer by lazy { Indexer(photoDao, diagnostics) }
 
     /** Fills in EXIF for photos indexed without it (remote sources); see ExifScanPolicy. */
@@ -221,7 +236,7 @@ class ServiceLocator(private val appContext: Context) {
     val webServer: WebServerController by lazy {
         WebServerController(
             settings, photoDao, engine, diagnostics, webUploadManager, rememberedBrowsers,
-            allowHeifPlayback, diagnosticRuntimeState,
+            allowHeifPlayback, diagnosticRuntimeState, localThumbnailCache,
         )
     }
 

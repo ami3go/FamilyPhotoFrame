@@ -20,9 +20,6 @@ mark when each area was introduced; they are not a claim about current phase.
 
 ## Still not implemented
 
-- **On-disk photo caching only covers remote sources.** `MediaCache` caches SMB/Synology
-  bytes; local SAF/fallback photos rely on Coil's in-memory cache only (current and next
-  bitmaps), with no persistent thumbnail index for them.
 - **EXIF rotation handling beyond Coil defaults is still deferred.** Date-taken *is* now
   used for ordering (see the new `DATE_TAKEN_*` selection modes), but orientation is left
   to Coil.
