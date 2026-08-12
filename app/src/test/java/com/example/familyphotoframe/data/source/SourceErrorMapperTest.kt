@@ -20,6 +20,22 @@ class SourceErrorMapperTest {
         assertEquals(SourceError.HostUnreachable, SourceErrorMapper.map(wrapped))
     }
 
+    @Test fun deeplyWrappedTransportCause_isInspected() {
+        val connect = ConnectException("connection refused")
+        val transport = IOException("transport failed", connect)
+        val protocol = IOException("jcifs request failed", transport)
+        val outer = IllegalStateException("provider error", protocol)
+        assertEquals(SourceError.HostUnreachable, SourceErrorMapper.map(outer))
+        assertEquals(SourceHealth.Unavailable, SourceErrorMapper.toHealth(outer))
+    }
+
+    @Test fun deeplyWrappedTimeout_isUnavailable() {
+        val timeout = SocketTimeoutException("read timed out")
+        val outer = IOException("request failed", IOException("transport", timeout))
+        assertEquals(SourceError.Timeout, SourceErrorMapper.map(outer))
+        assertEquals(SourceHealth.Unavailable, SourceErrorMapper.toHealth(outer))
+    }
+
     @Test fun ntStatusMessages_mapByText() {
         assertEquals(SourceError.AuthFailed, SourceErrorMapper.map(RuntimeException("Logon failure: unknown user or bad password")))
         assertEquals(SourceError.ShareNotFound, SourceErrorMapper.map(RuntimeException("The specified network name cannot be found")))

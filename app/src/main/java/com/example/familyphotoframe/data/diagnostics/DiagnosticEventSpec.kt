@@ -108,7 +108,7 @@ object DiagnosticEventCatalog {
         "removed", "deferred", "recovered", "exhausted", "attempt", "errorClass",
         "errorCode", "format", "width", "height", "motionMode", "amplitude",
         "periodMs", "periodToken", "level", "mode", "offset", "revision",
-        "activeBits", "historyCleared", "sizeBytes",
+        "activeBits", "historyCleared", "sizeBytes", "years", "preview",
     )
 
     private val sourceFields = setOf(
@@ -244,6 +244,7 @@ object DiagnosticEventCatalog {
         "SLIDESHOW_CONTROLS_HOLD", "SLIDESHOW_CONTROLS_RELEASE",
         "PHOTO_FAVORITE_ADDED", "PHOTO_FAVORITE_REMOVED",
         "TRANSITION_LOW_PERFORMANCE_ENTERED", "TRANSITION_LOW_PERFORMANCE_EXITED",
+        "ON_THIS_DAY_SKIPPED_EMPTY", "ON_THIS_DAY_TRIGGERED",
     )
 
     private val legacySourceCodes = setOf(
