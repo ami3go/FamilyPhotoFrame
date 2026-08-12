@@ -48,4 +48,27 @@ t=t.replace(
 p(prep).write_text(t)'''
 if text.count(old_tail_write) != 1:
     raise RuntimeError(f"expected one prepare tail write, got {text.count(old_tail_write)}")
-helper.write_text(text.replace(old_tail_write, new_tail_write, 1))
+text = text.replace(old_tail_write, new_tail_write, 1)
+helper.write_text(text)
+
+# Pre-existing instrumentation fixture drift: EligibleFolder has `key`, not `folderKey`.
+# Keep EligiblePhotoMember.folderKey assertions untouched.
+root = helper.parents[1]
+test = root / "app/src/androidTest/java/com/example/familyphotoframe/slideshow/shuffle/ShuffleEligibilityProviderTest.kt"
+test_text = test.read_text()
+test_text = test_text.replace(
+    'val localTrip = snapshot.folders.single {\n            it.folderKey == FolderKey("local", "Trip")',
+    'val localTrip = snapshot.folders.single {\n            it.key == FolderKey("local", "Trip")',
+    1,
+)
+test_text = test_text.replace(
+    'snapshot.folders.single { it.folderKey == FolderKey("local", "Other") }',
+    'snapshot.folders.single { it.key == FolderKey("local", "Other") }',
+    1,
+)
+test_text = test_text.replace(
+    'snapshot.folders.single { it.folderKey == FolderKey("nas", "Trip") }',
+    'snapshot.folders.single { it.key == FolderKey("nas", "Trip") }',
+    1,
+)
+test.write_text(test_text)
