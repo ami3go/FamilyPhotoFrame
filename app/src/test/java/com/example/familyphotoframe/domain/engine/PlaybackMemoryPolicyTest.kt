@@ -6,7 +6,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlaybackMemoryPolicyTest {
-    private val heap = 256L * 1024L * 1024L
+    // Above the low-heap tier and divisible cleanly at the percentage boundaries below.
+    private val heap = 200L * 1024L * 1024L
     private val lowHeap = 100L * 1024L * 1024L
 
     @Test fun guardedModeStartsAtEightyFivePercentAndDisablesPreloadAndThreePhotoFrames() {
