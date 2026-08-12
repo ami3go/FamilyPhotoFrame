@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.example.familyphotoframe.slideshow.shuffle.FolderIdentityTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-08-07T04:51:48" hostname="aleksu-Vostro-5471" time="0.003">
+<testsuite name="com.example.familyphotoframe.slideshow.shuffle.FolderIdentityTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-08-12T18:54:04" hostname="runnervmvrwv9" time="0.004">
   <properties/>
-  <testcase name="equalPathsFromDifferentSourcesRemainDistinct" classname="com.example.familyphotoframe.slideshow.shuffle.FolderIdentityTest" time="0.001"/>
-  <testcase name="directParentDirectoryDefinesFolder" classname="com.example.familyphotoframe.slideshow.shuffle.FolderIdentityTest" time="0.001"/>
+  <testcase name="equalPathsFromDifferentSourcesRemainDistinct" classname="com.example.familyphotoframe.slideshow.shuffle.FolderIdentityTest" time="0.003"/>
+  <testcase name="directParentDirectoryDefinesFolder" classname="com.example.familyphotoframe.slideshow.shuffle.FolderIdentityTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

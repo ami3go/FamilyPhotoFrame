@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.example.familyphotoframe.data.settings.BoundedTextInputTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-08-07T04:51:38" hostname="aleksu-Vostro-5471" time="0.003">
+<testsuite name="com.example.familyphotoframe.data.settings.BoundedTextInputTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-08-12T18:54:00" hostname="runnervmvrwv9" time="0.001">
   <properties/>
-  <testcase name="readsAtTheConfiguredLimit" classname="com.example.familyphotoframe.data.settings.BoundedTextInputTest" time="0.001"/>
-  <testcase name="rejectsOneBytePastTheConfiguredLimit" classname="com.example.familyphotoframe.data.settings.BoundedTextInputTest" time="0.0"/>
+  <testcase name="readsAtTheConfiguredLimit" classname="com.example.familyphotoframe.data.settings.BoundedTextInputTest" time="0.0"/>
+  <testcase name="rejectsOneBytePastTheConfiguredLimit" classname="com.example.familyphotoframe.data.settings.BoundedTextInputTest" time="0.001"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

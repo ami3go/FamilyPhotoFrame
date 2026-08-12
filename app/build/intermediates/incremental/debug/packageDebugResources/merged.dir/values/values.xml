@@ -268,7 +268,7 @@
     <string name="settings_weather_save_location">Save location</string>
     <string name="settings_weather_show_overlay">Show weather overlay on screen</string>
     <string name="settings_weather_units">Units</string>
-    <string name="settings_web">Web setup</string>
+    <string name="settings_web">Web control</string>
     <string name="showing_samples">Showing sample photos</string>
     <string name="shuffle_current_folder">Current folder: %1$s</string>
     <string name="shuffle_folder_counts">Eligible: %1$d · Presented: %2$d · Pending: %3$d · Skipped: %4$d · Removed: %5$d</string>

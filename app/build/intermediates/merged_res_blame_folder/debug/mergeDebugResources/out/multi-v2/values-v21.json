@@ -4,7 +4,7 @@
             "outputFile": "com.example.familyphotoframe.app-mergeDebugResources-52:/values-v21/values-v21.xml",
             "map": [
                 {
-                    "source": "/home/aleksu/.gradle/caches/8.9/transforms/70b43f5ebe56d72be49397502f139cec/transformed/core-1.13.1/res/values-v21/values-v21.xml",
+                    "source": "/home/runner/.gradle/caches/8.9/transforms/70b43f5ebe56d72be49397502f139cec/transformed/core-1.13.1/res/values-v21/values-v21.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10,13",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4",

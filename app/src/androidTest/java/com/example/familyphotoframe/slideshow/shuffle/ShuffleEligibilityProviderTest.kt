@@ -47,12 +47,12 @@ class ShuffleEligibilityProviderTest {
 
         assertEquals(3, snapshot.folders.size)
         val localTrip = snapshot.folders.single {
-            it.folderKey == FolderKey("local", "Trip")
+            it.key == FolderKey("local", "Trip")
         }
         assertEquals(1, localTrip.members.size)
         assertEquals(setOf(1L, 2L), localTrip.members.single().equivalentPhotoIds)
-        assertTrue(snapshot.folders.single { it.folderKey == FolderKey("local", "Other") }.members.isNotEmpty())
-        assertTrue(snapshot.folders.single { it.folderKey == FolderKey("nas", "Trip") }.members.isNotEmpty())
+        assertTrue(snapshot.folders.single { it.key == FolderKey("local", "Other") }.members.isNotEmpty())
+        assertTrue(snapshot.folders.single { it.key == FolderKey("nas", "Trip") }.members.isNotEmpty())
     }
 
     @Test fun fallbackIdentityKeepsDifferentFilesSeparateUntilHashExists() = runBlocking {

@@ -249,4 +249,49 @@ class ShuffleRepositoryTest {
         assertEquals(remainingId, next.anchorPhotoId)
     }
 
+    @Test fun partialCollageCommitConsumesOnlyDisplayed_andReturnsUnusedCandidatesToPending() = runBlocking {
+        val partialDescriptor = descriptor.copy(scopeKey = "scope:partial-collage")
+        val richSnapshot = ShuffleEligibilitySnapshot(
+            revision = 1L,
+            folders = listOf(
+                EligibleFolder(
+                    folderA,
+                    listOf(
+                        member(101, folderA), member(102, folderA),
+                        member(103, folderA), member(104, folderA),
+                    ),
+                ),
+            ),
+        )
+        val reservation = (repository.reserve(
+            partialDescriptor, richSnapshot, collageLookahead = 3,
+        ) as ShuffleAdvanceResult.Reserved).presentation
+        assertEquals(4, reservation.candidatePhotoIds.size)
+        val photoCycle = repository.progress(partialDescriptor.scopeKey).photoCycle
+        val selected = listOf(reservation.anchorPhotoId, reservation.candidatePhotoIds.last()).distinct()
+        val unused = reservation.candidatePhotoIds.filterNot { it in selected }
+        assertTrue(unused.isNotEmpty())
+
+        val committed = repository.commitPrepared(
+            partialDescriptor.scopeKey,
+            reservation.reservationId,
+            selected,
+            "COLLAGE",
+        )
+        assertNotNull(committed)
+        assertEquals(selected, committed!!.photoIds)
+
+        val entries = db.shuffleDao().photoEntries(
+            partialDescriptor.scopeKey,
+            reservation.folderKey,
+            photoCycle,
+        )
+        selected.forEach { id ->
+            assertEquals(PhotoEntryState.CONSUMED.name, entries.first { it.photoId == id }.state)
+        }
+        unused.forEach { id ->
+            assertEquals(PhotoEntryState.PENDING.name, entries.first { it.photoId == id }.state)
+        }
+    }
+
 }

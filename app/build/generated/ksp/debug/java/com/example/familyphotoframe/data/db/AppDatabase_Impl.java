@@ -39,10 +39,12 @@ public final class AppDatabase_Impl extends AppDatabase {
 
   private volatile ShuffleDao _shuffleDao;
 
+  private volatile LocalThumbnailCacheDao _localThumbnailCacheDao;
+
   @Override
   @NonNull
   protected SupportSQLiteOpenHelper createOpenHelper(@NonNull final DatabaseConfiguration config) {
-    final SupportSQLiteOpenHelper.Callback _openCallback = new RoomOpenHelper(config, new RoomOpenHelper.Delegate(8) {
+    final SupportSQLiteOpenHelper.Callback _openCallback = new RoomOpenHelper(config, new RoomOpenHelper.Delegate(9) {
       @Override
       public void createAllTables(@NonNull final SupportSQLiteDatabase db) {
         db.execSQL("CREATE TABLE IF NOT EXISTS `photos` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `stableId` TEXT NOT NULL, `sourceId` TEXT NOT NULL, `normalizedPath` TEXT NOT NULL, `folderName` TEXT NOT NULL, `fileName` TEXT NOT NULL, `mimeType` TEXT, `sizeBytes` INTEGER NOT NULL, `fileModifiedEpochMs` INTEGER NOT NULL, `openToken` TEXT NOT NULL, `indexedAtEpochMs` INTEGER NOT NULL, `isHidden` INTEGER NOT NULL, `lastShownAtEpochMs` INTEGER, `decodeFailureCount` INTEGER NOT NULL, `lastDecodeFailureAtEpochMs` INTEGER, `width` INTEGER, `height` INTEGER, `exifOrientation` INTEGER NOT NULL DEFAULT 0, `dateTakenEpochMs` INTEGER, `isFavorite` INTEGER NOT NULL DEFAULT 0, `missingSinceEpochMs` INTEGER, `cacheKey` TEXT, `caption` TEXT, `gpsLat` REAL, `gpsLon` REAL, `exifScannedAtEpochMs` INTEGER, `canonicalDirectory` TEXT NOT NULL DEFAULT '@root', `contentSha256` TEXT, `contentHashScannedAtEpochMs` INTEGER)");
@@ -80,8 +82,10 @@ public final class AppDatabase_Impl extends AppDatabase {
         db.execSQL("CREATE TABLE IF NOT EXISTS `presentation_history` (`presentationId` TEXT NOT NULL, `scopeKey` TEXT NOT NULL, `sequence` INTEGER NOT NULL, `folderKey` TEXT NOT NULL, `presentationType` TEXT NOT NULL, `photoIdsJson` TEXT NOT NULL, `committedAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`presentationId`))");
         db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_presentation_history_scopeKey_sequence` ON `presentation_history` (`scopeKey`, `sequence`)");
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_presentation_history_scopeKey_committedAtEpochMs` ON `presentation_history` (`scopeKey`, `committedAtEpochMs`)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS `local_thumbnail_cache` (`cacheKey` TEXT NOT NULL, `photoStableId` TEXT NOT NULL, `sizeBucket` TEXT NOT NULL, `localFilePathPrivate` TEXT NOT NULL, `sizeBytes` INTEGER NOT NULL, `createdAtEpochMs` INTEGER NOT NULL, `lastAccessedAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`cacheKey`))");
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_local_thumbnail_cache_photoStableId` ON `local_thumbnail_cache` (`photoStableId`)");
         db.execSQL("CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)");
-        db.execSQL("INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c77bc30af24f7cb6d9416cea3e47fbf0')");
+        db.execSQL("INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '85486d915a0d0b70091573f8dc064298')");
       }
 
       @Override
@@ -99,6 +103,7 @@ public final class AppDatabase_Impl extends AppDatabase {
         db.execSQL("DROP TABLE IF EXISTS `photo_shuffle_entries`");
         db.execSQL("DROP TABLE IF EXISTS `shuffle_reservations`");
         db.execSQL("DROP TABLE IF EXISTS `presentation_history`");
+        db.execSQL("DROP TABLE IF EXISTS `local_thumbnail_cache`");
         final List<? extends RoomDatabase.Callback> _callbacks = mCallbacks;
         if (_callbacks != null) {
           for (RoomDatabase.Callback _callback : _callbacks) {
@@ -423,9 +428,27 @@ public final class AppDatabase_Impl extends AppDatabase {
                   + " Expected:\n" + _infoPresentationHistory + "\n"
                   + " Found:\n" + _existingPresentationHistory);
         }
+        final HashMap<String, TableInfo.Column> _columnsLocalThumbnailCache = new HashMap<String, TableInfo.Column>(7);
+        _columnsLocalThumbnailCache.put("cacheKey", new TableInfo.Column("cacheKey", "TEXT", true, 1, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsLocalThumbnailCache.put("photoStableId", new TableInfo.Column("photoStableId", "TEXT", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsLocalThumbnailCache.put("sizeBucket", new TableInfo.Column("sizeBucket", "TEXT", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsLocalThumbnailCache.put("localFilePathPrivate", new TableInfo.Column("localFilePathPrivate", "TEXT", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsLocalThumbnailCache.put("sizeBytes", new TableInfo.Column("sizeBytes", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsLocalThumbnailCache.put("createdAtEpochMs", new TableInfo.Column("createdAtEpochMs", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsLocalThumbnailCache.put("lastAccessedAtEpochMs", new TableInfo.Column("lastAccessedAtEpochMs", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        final HashSet<TableInfo.ForeignKey> _foreignKeysLocalThumbnailCache = new HashSet<TableInfo.ForeignKey>(0);
+        final HashSet<TableInfo.Index> _indicesLocalThumbnailCache = new HashSet<TableInfo.Index>(1);
+        _indicesLocalThumbnailCache.add(new TableInfo.Index("index_local_thumbnail_cache_photoStableId", false, Arrays.asList("photoStableId"), Arrays.asList("ASC")));
+        final TableInfo _infoLocalThumbnailCache = new TableInfo("local_thumbnail_cache", _columnsLocalThumbnailCache, _foreignKeysLocalThumbnailCache, _indicesLocalThumbnailCache);
+        final TableInfo _existingLocalThumbnailCache = TableInfo.read(db, "local_thumbnail_cache");
+        if (!_infoLocalThumbnailCache.equals(_existingLocalThumbnailCache)) {
+          return new RoomOpenHelper.ValidationResult(false, "local_thumbnail_cache(com.example.familyphotoframe.data.db.LocalThumbnailCacheEntity).\n"
+                  + " Expected:\n" + _infoLocalThumbnailCache + "\n"
+                  + " Found:\n" + _existingLocalThumbnailCache);
+        }
         return new RoomOpenHelper.ValidationResult(true, null);
       }
-    }, "c77bc30af24f7cb6d9416cea3e47fbf0", "6962fa47a7b3996f74ba5bc41107fc83");
+    }, "85486d915a0d0b70091573f8dc064298", "b14b3d9da06c36094645632caad620e4");
     final SupportSQLiteOpenHelper.Configuration _sqliteConfig = SupportSQLiteOpenHelper.Configuration.builder(config.context).name(config.name).callback(_openCallback).build();
     final SupportSQLiteOpenHelper _helper = config.sqliteOpenHelperFactory.create(_sqliteConfig);
     return _helper;
@@ -436,7 +459,7 @@ public final class AppDatabase_Impl extends AppDatabase {
   protected InvalidationTracker createInvalidationTracker() {
     final HashMap<String, String> _shadowTablesMap = new HashMap<String, String>(0);
     final HashMap<String, Set<String>> _viewTables = new HashMap<String, Set<String>>(0);
-    return new InvalidationTracker(this, _shadowTablesMap, _viewTables, "photos","source_config","smb_source_config","local_saf_source_config","secrets","cache_index","remembered_browsers","shuffle_scopes","folder_shuffle_entries","folder_photo_cycles","photo_shuffle_entries","shuffle_reservations","presentation_history");
+    return new InvalidationTracker(this, _shadowTablesMap, _viewTables, "photos","source_config","smb_source_config","local_saf_source_config","secrets","cache_index","remembered_browsers","shuffle_scopes","folder_shuffle_entries","folder_photo_cycles","photo_shuffle_entries","shuffle_reservations","presentation_history","local_thumbnail_cache");
   }
 
   @Override
@@ -458,6 +481,7 @@ public final class AppDatabase_Impl extends AppDatabase {
       _db.execSQL("DELETE FROM `photo_shuffle_entries`");
       _db.execSQL("DELETE FROM `shuffle_reservations`");
       _db.execSQL("DELETE FROM `presentation_history`");
+      _db.execSQL("DELETE FROM `local_thumbnail_cache`");
       super.setTransactionSuccessful();
     } finally {
       super.endTransaction();
@@ -478,6 +502,7 @@ public final class AppDatabase_Impl extends AppDatabase {
     _typeConvertersMap.put(CacheIndexDao.class, CacheIndexDao_Impl.getRequiredConverters());
     _typeConvertersMap.put(RememberedBrowserDao.class, RememberedBrowserDao_Impl.getRequiredConverters());
     _typeConvertersMap.put(ShuffleDao.class, ShuffleDao_Impl.getRequiredConverters());
+    _typeConvertersMap.put(LocalThumbnailCacheDao.class, LocalThumbnailCacheDao_Impl.getRequiredConverters());
     return _typeConvertersMap;
   }
 
@@ -576,6 +601,20 @@ public final class AppDatabase_Impl extends AppDatabase {
           _shuffleDao = new ShuffleDao_Impl(this);
         }
         return _shuffleDao;
+      }
+    }
+  }
+
+  @Override
+  public LocalThumbnailCacheDao localThumbnailCacheDao() {
+    if (_localThumbnailCacheDao != null) {
+      return _localThumbnailCacheDao;
+    } else {
+      synchronized(this) {
+        if(_localThumbnailCacheDao == null) {
+          _localThumbnailCacheDao = new LocalThumbnailCacheDao_Impl(this);
+        }
+        return _localThumbnailCacheDao;
       }
     }
   }

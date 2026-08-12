@@ -13,6 +13,8 @@ import com.example.familyphotoframe.data.settings.CollageGap
 import com.example.familyphotoframe.data.settings.PortraitCollageMode
 import com.example.familyphotoframe.data.settings.PortraitFallback
 import com.example.familyphotoframe.domain.engine.CollageLayout
+import com.example.familyphotoframe.domain.engine.CollageCandidateMeta
+import com.example.familyphotoframe.domain.engine.CollageDecision
 import com.example.familyphotoframe.domain.engine.DecodeFailure
 import com.example.familyphotoframe.domain.engine.DecodeFailureStage
 import com.example.familyphotoframe.domain.engine.DisplayPhoto
@@ -151,14 +153,11 @@ private suspend fun createTransitionBlur(
                         CollageGap.SMALL -> 4f * scale
                         CollageGap.MEDIUM -> 8f * scale
                     }
-                    val count = slide.tiles.size.coerceAtLeast(1)
-                    val tileWidth = (width - gapPx * (count - 1)).coerceAtLeast(1f) / count
-                    slide.tiles.forEachIndexed { index, tile ->
-                        val left = index * (tileWidth + gapPx)
-                        drawCrop(
-                            tile.bitmap,
-                            android.graphics.RectF(left, 0f, left + tileWidth, height.toFloat()),
-                        )
+                    val destinations = collageDestinationRects(
+                        slide.layout, width.toFloat(), height.toFloat(), gapPx,
+                    )
+                    slide.tiles.zip(destinations).forEach { (tile, destination) ->
+                        drawCrop(tile.bitmap, destination)
                     }
                 }
             }
@@ -314,9 +313,51 @@ private fun portraitFallbackAspect(fallback: PortraitFallback): AspectMode = whe
     PortraitFallback.CROP_TO_FILL -> AspectMode.FILL_CROP
 }
 
+/** One resolved candidate after a bounded orientation/aspect probe. */
+private data class InspectedCollagePhoto(
+    val photo: DisplayPhoto,
+    /** Null when indexed metadata was sufficient and no source/model I/O was needed yet. */
+    val resolved: ResolvedPhoto?,
+    val meta: CollageCandidateMeta,
+)
+
+private fun DisplayPhoto.collageFolderKey(): String {
+    val parent = normalizedPath.substringBeforeLast('/', "").ifBlank { folderName }
+    return "$sourceId\u001f$parent"
+}
+
+private fun DisplayPhoto.collageCaptureTime(): Long = dateTakenEpochMs ?: fileModifiedEpochMs
+
+private fun DisplayPhoto.metadataCollageMeta(order: Int): CollageCandidateMeta? {
+    val (w, h) = PortraitCollagePolicy.effectiveDimensions(width, height, exifOrientation) ?: return null
+    return CollageCandidateMeta(
+        id = id,
+        aspectRatio = PortraitCollagePolicy.aspectRatio(w, h),
+        orientation = PortraitCollagePolicy.classify(w, h),
+        folderKey = collageFolderKey(),
+        captureTimeEpochMs = collageCaptureTime(),
+        lastShownAtEpochMs = lastShownAtEpochMs,
+        candidateOrder = order,
+    )
+}
+
+private fun collageGapPixels(context: android.content.Context, gap: CollageGap): Float {
+    val density = context.resources.displayMetrics.density.coerceAtLeast(0.5f)
+    return when (gap) {
+        CollageGap.NONE -> 0f
+        CollageGap.SMALL -> 4f * density
+        CollageGap.MEDIUM -> 8f * density
+    }
+}
+
+private fun Float.diagnostic4(): String = java.lang.String.format(java.util.Locale.US, "%.4f", this)
+private fun Double.diagnostic2(): String = java.lang.String.format(java.util.Locale.US, "%.2f", this)
+
 /**
- * Build either a single prepared photo or a complete two/three-photo portrait collage.
- * The current slide remains visible while this function resolves and decodes every tile.
+ * Build either a single prepared photo or the best bounded two/three-photo collage.
+ * Candidate probes are deliberately small; only the winning tile geometry is decoded at
+ * display size. Folder-balanced reservations remain authoritative because this function
+ * can choose only from [loadCollageCandidates]' ordered input.
  */
 internal suspend fun prepareSlide(
     context: android.content.Context,
@@ -333,15 +374,7 @@ internal suspend fun prepareSlide(
     excludedIds: Set<Long>,
     targetW: Int,
     targetH: Int,
-    /**
-     * Optional: when non-null, the anchor's full-frame (non-collage-tile) decode is
-     * served from / populated into this cache. Null for callers that don't want the
-     * local thumbnail cache involved (e.g. tests). See
-     * docs/FPF-FEAT-LOCAL-THUMBNAIL-CACHE-001.md — collage tiles are deliberately not
-     * covered yet (§6 Phase 3).
-     */
     localThumbnailCache: com.example.familyphotoframe.data.cache.LocalThumbnailCache? = null,
-    /** Photos never evicted from the local thumbnail cache to make room for this write. */
     localThumbnailCacheProtectedStableIds: Set<String> = emptySet(),
     onRecoverableOom: (DecodeFailure) -> Unit,
     onCollageCandidateFailure: (DecodeFailure) -> Unit,
@@ -353,12 +386,9 @@ internal suspend fun prepareSlide(
         prepareMs: Long?,
         decodedBytes: Long?,
         reason: String?,
+        details: Map<String, String>,
     ) -> Unit,
 ): PrepareSlideResult {
-    // Every decoded bitmap starts as an uncommitted temporary. Only bitmaps placed in
-    // the returned PreparedSlide leave this set. This closes several API-22 leaks:
-    // landscape orientation probes, rejected collage candidates, and a third tile that
-    // the crop scorer downgrades to a two-photo portrait collage.
     val uncommitted = Collections.newSetFromMap(IdentityHashMap<Bitmap, Boolean>())
 
     suspend fun decodeOwned(
@@ -369,11 +399,6 @@ internal suspend fun prepareSlide(
         if (result is DecodePhotoResult.Ready) uncommitted += result.tile.bitmap
     }
 
-    // Full-frame (non-collage-tile) decode of the anchor only, backed by the local
-    // thumbnail cache when eligible. A cache hit decodes the small cached JPEG instead
-    // of the original; a miss decodes the original as usual and then populates the
-    // cache synchronously (see LocalThumbnailCache's kdoc for why this is not
-    // fire-and-forget) before handing the tile back.
     suspend fun decodeAnchorCacheable(resolved: ResolvedPhoto, width: Int, height: Int): DecodePhotoResult {
         if (localThumbnailCache == null || !resolved.localThumbnailCacheEligible) {
             return decodeOwned(resolved, width, height)
@@ -382,12 +407,14 @@ internal suspend fun prepareSlide(
         if (cachedFile != null) {
             val fromCache = decodeOwned(resolved.copy(model = cachedFile), width, height)
             if (fromCache is DecodePhotoResult.Ready) return fromCache
-            // Cache entry existed but its file was unreadable/corrupt; fall through.
         }
         val decoded = decodeOwned(resolved, width, height)
         if (decoded is DecodePhotoResult.Ready) {
             localThumbnailCache.put(
-                resolved.photo.stableId, width, height, decoded.tile.bitmap,
+                resolved.photo.stableId,
+                width,
+                height,
+                decoded.tile.bitmap,
                 localThumbnailCacheProtectedStableIds,
             )
         }
@@ -402,16 +429,27 @@ internal suspend fun prepareSlide(
     }
 
     fun discard(tile: PreparedTile) {
-        if (uncommitted.remove(tile.bitmap) && !tile.bitmap.isRecycled) {
-            tile.bitmap.recycle()
-        }
+        if (uncommitted.remove(tile.bitmap) && !tile.bitmap.isRecycled) tile.bitmap.recycle()
     }
 
-    return try {
+    fun emit(
+        event: String,
+        ids: List<Long> = listOf(photo.id),
+        layout: String? = null,
+        prepareMs: Long? = null,
+        decodedBytes: Long? = null,
+        reason: String? = null,
+        details: Map<String, String> = emptyMap(),
+    ) = onCollageEvent(event, photo.id, ids, layout, prepareMs, decodedBytes, reason, details)
+
+    try {
         val startedAt = SystemClock.elapsedRealtime()
 
-        suspend fun ready(slide: PreparedSlide): PrepareSlideResult.Ready {
-            val blur = if (prepareSoftFocusBlur) {
+        suspend fun ready(
+            slide: PreparedSlide,
+            allowTransitionBlur: Boolean = true,
+        ): PrepareSlideResult.Ready {
+            val blur = if (prepareSoftFocusBlur && allowTransitionBlur) {
                 createTransitionBlur(slide, targetW, targetH, collageGap) {
                     onRecoverableOom(
                         decodeFailure(
@@ -428,164 +466,318 @@ internal suspend fun prepareSlide(
             prepared.allBitmaps().forEach(uncommitted::remove)
             return PrepareSlideResult.Ready(prepared)
         }
+
         val resolvedAnchor = when (val resolved = resolvePhoto(photo, resolveModel)) {
             is ResolvePhotoResult.Ready -> resolved.photo
             is ResolvePhotoResult.Failed -> return PrepareSlideResult.Failed(resolved.failure)
         }
 
-        val knownOrientation = photo.metadataOrientation()
-        val collageEnabled = collageMode != PortraitCollageMode.OFF
-        if (!collageEnabled || knownOrientation == PhotoOrientation.LANDSCAPE) {
+        suspend fun prepareSingle(
+            forcedAspect: AspectMode? = null,
+            eventReason: String? = null,
+            allowTransitionBlur: Boolean = true,
+        ): PrepareSlideResult {
             return when (val decoded = decodeAnchorCacheable(resolvedAnchor, targetW, targetH)) {
-                is DecodePhotoResult.Ready -> ready(
-                    PreparedSlide.Single(photo, resolvedAnchor.model, decoded.tile.bitmap, decoded.tile.dataSource)
-                )
+                is DecodePhotoResult.Ready -> {
+                    val slide = PreparedSlide.Single(
+                        photo,
+                        resolvedAnchor.model,
+                        decoded.tile.bitmap,
+                        decoded.tile.dataSource,
+                        aspectOverride = forcedAspect,
+                    )
+                    val result = ready(slide, allowTransitionBlur)
+                    if (eventReason != null) {
+                        emit(
+                            "COLLAGE_FALLBACK_SINGLE",
+                            prepareMs = SystemClock.elapsedRealtime() - startedAt,
+                            decodedBytes = result.slide.decodedBytes,
+                            reason = eventReason,
+                        )
+                    }
+                    result
+                }
                 is DecodePhotoResult.Failed -> PrepareSlideResult.Failed(decoded.failure)
             }
         }
 
-        // Half-screen is sufficient for both a two-column tile and a fitted single portrait.
-        // Three columns decode slightly larger than strictly necessary, which avoids a second
-        // decode when the automatic scorer chooses two columns after inspecting three photos.
-        val tileW = (targetW / 2).coerceAtLeast(1)
-        val anchorTile = when (val decoded = decodeOwned(resolvedAnchor, tileW, targetH)) {
-            is DecodePhotoResult.Ready -> decoded.tile
-            is DecodePhotoResult.Failed -> return PrepareSlideResult.Failed(decoded.failure)
+        if (collageMode == PortraitCollageMode.OFF) return prepareSingle()
+        if (maxCollagePhotos < 2) {
+            return prepareSingle(
+                forcedAspect = if (photo.metadataOrientation() == PhotoOrientation.PORTRAIT) AspectMode.FIT_COLOR else null,
+                eventReason = "memory_guard_single_photo",
+                allowTransitionBlur = false,
+            )
         }
-        val actualAnchorOrientation = anchorTile.decodedOrientation()
-        if (actualAnchorOrientation != PhotoOrientation.PORTRAIT) {
-            // Metadata was unknown or misleading. Decode at full display size for normal
-            // single-photo playback rather than stretching the half-size probe.
-            discard(anchorTile)
-            return when (val decoded = decodeAnchorCacheable(resolvedAnchor, targetW, targetH)) {
-                is DecodePhotoResult.Ready -> ready(
-                    PreparedSlide.Single(photo, resolvedAnchor.model, decoded.tile.bitmap, decoded.tile.dataSource)
-                )
-                is DecodePhotoResult.Failed -> PrepareSlideResult.Failed(decoded.failure)
+
+        suspend fun probeUnknown(
+            photoToProbe: DisplayPhoto,
+            resolved: ResolvedPhoto,
+            order: Int,
+        ): Pair<InspectedCollagePhoto?, DecodeFailure?> {
+            val probe = decodeOwned(resolved, COLLAGE_PROBE_MAX_PX, COLLAGE_PROBE_MAX_PX)
+            return when (probe) {
+                is DecodePhotoResult.Ready -> {
+                    val tile = probe.tile
+                    val meta = CollageCandidateMeta(
+                        id = photoToProbe.id,
+                        aspectRatio = tile.aspectRatio(),
+                        orientation = tile.decodedOrientation(),
+                        folderKey = photoToProbe.collageFolderKey(),
+                        captureTimeEpochMs = photoToProbe.collageCaptureTime(),
+                        lastShownAtEpochMs = photoToProbe.lastShownAtEpochMs,
+                        candidateOrder = order,
+                    )
+                    discard(tile)
+                    InspectedCollagePhoto(photoToProbe, resolved, meta) to null
+                }
+                is DecodePhotoResult.Failed -> null to probe.failure
             }
         }
 
-        onCollageEvent(
-            "COLLAGE_PRELOAD_STARTED", photo.id, listOf(photo.id), null,
-            null, null, null,
-        )
-
-        val wanted = maxCollagePhotos.coerceIn(2, 3)
-        val candidatePool = loadCollageCandidates(photo, 16)
-            .filter {
-                it.id != photo.id && it.id !in excludedIds &&
-                    it.sourceId == photo.sourceId && it.folderName == photo.folderName
-            }
-        val portraitTiles = mutableListOf(anchorTile)
-
-        fun memoryFallback(reason: String): PrepareSlideResult.Ready {
-            portraitTiles.drop(1).forEach(::discard)
-            val emergency = PreparedSlide.Single(
-                anchor = photo,
-                model = resolvedAnchor.model,
-                bitmap = anchorTile.bitmap,
-                dataSource = anchorTile.dataSource,
-                aspectOverride = AspectMode.FIT_COLOR,
+        val anchorInspected = photo.metadataCollageMeta(-1)?.let { metadata ->
+            InspectedCollagePhoto(photo, resolvedAnchor, metadata)
+        } ?: run {
+            val (inspected, failure) = probeUnknown(photo, resolvedAnchor, -1)
+            inspected ?: return PrepareSlideResult.Failed(
+                failure ?: decodeFailure(photo, DecodeFailureStage.IMAGE_LOADER, reason = "anchor_probe_failed")
             )
-            emergency.allBitmaps().forEach(uncommitted::remove)
-            val result = PrepareSlideResult.Ready(emergency)
-            onCollageEvent(
-                "COLLAGE_FALLBACK_SINGLE", photo.id, listOf(photo.id), null,
-                SystemClock.elapsedRealtime() - startedAt, emergency.decodedBytes, reason,
-            )
-            return result
         }
 
-        for (candidate in candidatePool) {
-            if (portraitTiles.size >= wanted) break
-            if (candidate.metadataOrientation() == PhotoOrientation.LANDSCAPE) continue
+        emit("COLLAGE_PRELOAD_STARTED")
+        val rawCandidates = loadCollageCandidates(photo, MAX_COLLAGE_CANDIDATES)
+            .asSequence()
+            .filter { it.id != photo.id && it.id !in excludedIds }
+            .distinctBy { it.id }
+            .take(MAX_COLLAGE_CANDIDATES)
+            .toList()
+        val inspectedCandidates = mutableListOf<InspectedCollagePhoto>()
+
+        for ((index, candidate) in rawCandidates.withIndex()) {
+            val metadata = candidate.metadataCollageMeta(index)
+            if (metadata != null) {
+                // Indexed dimensions are enough for scoring. Defer source/model I/O until
+                // this candidate is actually chosen; this avoids fetching twelve remote
+                // originals simply to rank them.
+                inspectedCandidates += InspectedCollagePhoto(candidate, null, metadata)
+                continue
+            }
             val resolved = when (val result = resolvePhoto(candidate, resolveModel)) {
                 is ResolvePhotoResult.Ready -> result.photo
                 is ResolvePhotoResult.Failed -> {
                     onCollageCandidateFailure(result.failure)
                     if (result.failure.exceptionClass == "OutOfMemoryError") {
-                        return memoryFallback("candidate_model_oom")
+                        return prepareSingle(
+                            forcedAspect = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) AspectMode.FIT_COLOR else null,
+                            eventReason = "candidate_model_oom",
+                            allowTransitionBlur = false,
+                        )
                     }
                     continue
                 }
             }
-            when (val decoded = decodeOwned(resolved, tileW, targetH)) {
-                is DecodePhotoResult.Ready -> {
-                    if (decoded.tile.decodedOrientation() == PhotoOrientation.PORTRAIT) {
-                        portraitTiles += decoded.tile
-                    } else {
-                        discard(decoded.tile)
-                    }
-                }
-                is DecodePhotoResult.Failed -> {
-                    onCollageCandidateFailure(decoded.failure)
-                    if (decoded.failure.exceptionClass == "OutOfMemoryError") {
-                        return memoryFallback("candidate_decode_oom")
-                    }
+            val (inspected, failure) = probeUnknown(candidate, resolved, index)
+            if (inspected != null) {
+                inspectedCandidates += inspected
+            } else if (failure != null) {
+                onCollageCandidateFailure(failure)
+                if (failure.exceptionClass == "OutOfMemoryError") {
+                    return prepareSingle(
+                        forcedAspect = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) AspectMode.FIT_COLOR else null,
+                        eventReason = "candidate_probe_oom",
+                        allowTransitionBlur = false,
+                    )
                 }
             }
         }
 
-        val layout = PortraitCollagePolicy.chooseLayout(
-            mode = collageMode,
-            screenWidth = targetW,
-            screenHeight = targetH,
-            portraitRatios = portraitTiles.map { it.aspectRatio() },
-            maxPhotos = wanted,
+        val mutableCandidates = inspectedCandidates.toMutableList()
+        val requestedFallback = portraitFallbackAspect(portraitFallback)
+        val allowedFallback = if (requestedFallback == AspectMode.FIT_BLUR && !allowBlurredBackground) {
+            AspectMode.FIT_COLOR
+        } else requestedFallback
+
+        fun diagnosticsFor(decision: CollageDecision): Map<String, String> = mapOf(
+            "candidateCount" to decision.stats.candidateCount.toString(),
+            "sameFolderCandidateCount" to decision.stats.sameFolderCandidateCount.toString(),
+            "portraitCandidateCount" to decision.stats.portraitCandidateCount.toString(),
+            "squareCandidateCount" to decision.stats.squareCandidateCount.toString(),
+            "landscapeCandidateCount" to decision.stats.landscapeCandidateCount.toString(),
+            "evaluatedTwoPhotoCombinations" to decision.stats.evaluatedTwoPhotoCombinations.toString(),
+            "evaluatedThreePhotoCombinations" to decision.stats.evaluatedThreePhotoCombinations.toString(),
+            "evaluatedLayoutCount" to decision.stats.evaluatedLayoutCount.toString(),
+            "folderTier" to decision.folderTier.toString(),
+            "orientationTier" to decision.orientationTier.toString(),
+            "screenCoverage" to decision.screenCoverage.diagnostic4(),
+            "averageCropLoss" to decision.averageCropLoss.diagnostic4(),
+            "maximumCropLoss" to decision.maximumCropLoss.diagnostic4(),
+            "timeDistanceScore" to decision.timeDistanceScore.diagnostic2(),
+            "recentPenalty" to decision.recentPenalty.diagnostic2(),
+            "decisionReason" to decision.decisionReason,
         )
 
-        if (layout == null) {
-            val requestedFallback = portraitFallbackAspect(portraitFallback)
-            val fallbackMode = if (
-                requestedFallback == AspectMode.FIT_BLUR && !allowBlurredBackground
-            ) AspectMode.FIT_COLOR else requestedFallback
-            val fallbackTile = if (fallbackMode == AspectMode.FILL_CROP) {
-                when (val decoded = decodeAnchorCacheable(resolvedAnchor, targetW, targetH)) {
-                    is DecodePhotoResult.Ready -> decoded.tile
-                    is DecodePhotoResult.Failed -> anchorTile
-                }
-            } else anchorTile
-            val preparedSlide = PreparedSlide.Single(
-                anchor = photo,
-                model = resolvedAnchor.model,
-                bitmap = fallbackTile.bitmap,
-                dataSource = fallbackTile.dataSource,
-                aspectOverride = fallbackMode,
+        while (true) {
+            val decision = PortraitCollagePolicy.chooseBestPresentation(
+                mode = collageMode,
+                screenWidth = targetW,
+                screenHeight = targetH,
+                anchor = anchorInspected.meta,
+                candidates = mutableCandidates.map { it.meta },
+                maxPhotos = maxCollagePhotos.coerceIn(1, 3),
+                nowEpochMs = System.currentTimeMillis(),
             )
-            portraitTiles.filter { it.bitmap !== fallbackTile.bitmap }.forEach(::discard)
-            val result = ready(preparedSlide)
-            onCollageEvent(
-                "COLLAGE_FALLBACK_SINGLE", photo.id, listOf(photo.id), null,
-                SystemClock.elapsedRealtime() - startedAt, result.slide.decodedBytes,
-                if (fallbackMode != requestedFallback) {
-                    "memory_guard_solid_background"
-                } else {
-                    "insufficient_same_folder_portraits"
-                },
+            if (decision == null) {
+                val fallbackMode = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) {
+                    allowedFallback
+                } else null
+                return prepareSingle(
+                    forcedAspect = fallbackMode,
+                    eventReason = if (fallbackMode != requestedFallback && fallbackMode != null) {
+                        "memory_guard_solid_background"
+                    } else {
+                        "insufficient_compatible_photos"
+                    },
+                )
+            }
+
+            val inspectedById = buildMap<Long, InspectedCollagePhoto> {
+                put(anchorInspected.meta.id, anchorInspected)
+                mutableCandidates.forEach { put(it.meta.id, it) }
+            }
+            val destinations = collageDestinationRects(
+                decision.layout,
+                targetW.toFloat(),
+                targetH.toFloat(),
+                collageGapPixels(context, collageGap),
+            )
+            if (destinations.size != decision.photoIds.size) {
+                return prepareSingle(
+                    forcedAspect = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) allowedFallback else null,
+                    eventReason = "layout_geometry_mismatch",
+                )
+            }
+
+            val targetById = decision.photoIds.mapIndexed { index, id -> id to destinations[index] }.toMap()
+            val decodedById = linkedMapOf<Long, PreparedTile>()
+            var failedCandidateId: Long? = null
+            var failureForRetry: DecodeFailure? = null
+            val decodeOrder = decision.photoIds.sortedBy { if (it == photo.id) 0 else 1 }
+
+            for (id in decodeOrder) {
+                val inspected = inspectedById[id] ?: continue
+                val resolved = inspected.resolved ?: when (val model = resolvePhoto(inspected.photo, resolveModel)) {
+                    is ResolvePhotoResult.Ready -> model.photo
+                    is ResolvePhotoResult.Failed -> {
+                        if (id == photo.id) return PrepareSlideResult.Failed(model.failure)
+                        onCollageCandidateFailure(model.failure)
+                        if (model.failure.exceptionClass == "OutOfMemoryError") {
+                            decodedById.values.forEach(::discard)
+                            return prepareSingle(
+                                forcedAspect = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) AspectMode.FIT_COLOR else null,
+                                eventReason = "candidate_model_oom",
+                                allowTransitionBlur = false,
+                            )
+                        }
+                        failedCandidateId = id
+                        failureForRetry = model.failure
+                        break
+                    }
+                }
+                val destination = targetById.getValue(id)
+                val width = destination.width().roundToInt().coerceAtLeast(1)
+                val height = destination.height().roundToInt().coerceAtLeast(1)
+                when (val decoded = decodeOwned(resolved, width, height)) {
+                    is DecodePhotoResult.Ready -> decodedById[id] = decoded.tile
+                    is DecodePhotoResult.Failed -> {
+                        if (id == photo.id) {
+                            decodedById.values.forEach(::discard)
+                            return PrepareSlideResult.Failed(decoded.failure)
+                        }
+                        onCollageCandidateFailure(decoded.failure)
+                        if (decoded.failure.exceptionClass == "OutOfMemoryError") {
+                            val anchorTile = decodedById.remove(photo.id)
+                            decodedById.values.forEach(::discard)
+                            if (anchorTile != null) {
+                                val emergency = PreparedSlide.Single(
+                                    anchor = photo,
+                                    model = resolvedAnchor.model,
+                                    bitmap = anchorTile.bitmap,
+                                    dataSource = anchorTile.dataSource,
+                                    aspectOverride = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) AspectMode.FIT_COLOR else null,
+                                )
+                                emergency.allBitmaps().forEach(uncommitted::remove)
+                                emit(
+                                    "COLLAGE_FALLBACK_SINGLE",
+                                    prepareMs = SystemClock.elapsedRealtime() - startedAt,
+                                    decodedBytes = emergency.decodedBytes,
+                                    reason = "candidate_decode_oom",
+                                )
+                                return PrepareSlideResult.Ready(emergency)
+                            }
+                            return prepareSingle(
+                                forcedAspect = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) AspectMode.FIT_COLOR else null,
+                                eventReason = "candidate_decode_oom",
+                                allowTransitionBlur = false,
+                            )
+                        }
+                        failedCandidateId = id
+                        failureForRetry = decoded.failure
+                        break
+                    }
+                }
+            }
+
+            if (failedCandidateId != null) {
+                decodedById.values.forEach(::discard)
+                mutableCandidates.removeAll { it.meta.id == failedCandidateId }
+                if (mutableCandidates.isEmpty()) {
+                    return prepareSingle(
+                        forcedAspect = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) allowedFallback else null,
+                        eventReason = failureForRetry?.reason ?: "insufficient_compatible_photos",
+                    )
+                }
+                continue
+            }
+
+            val chosen = decision.photoIds.mapNotNull(decodedById::get)
+            if (chosen.size != decision.photoIds.size) {
+                chosen.forEach(::discard)
+                return prepareSingle(
+                    forcedAspect = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) allowedFallback else null,
+                    eventReason = "selected_tile_missing",
+                )
+            }
+
+            emit(
+                event = "COLLAGE_SELECTION_EVALUATED",
+                ids = decision.photoIds,
+                layout = decision.layout.name,
+                reason = decision.decisionReason,
+                details = diagnosticsFor(decision),
+            )
+            if (decision.photoIds.size == 2 && maxCollagePhotos >= 3 && collageMode != PortraitCollageMode.ALWAYS_TWO) {
+                emit(
+                    "COLLAGE_DOWNGRADED",
+                    ids = decision.photoIds,
+                    layout = decision.layout.name,
+                    reason = decision.decisionReason,
+                )
+            }
+            val result = ready(PreparedSlide.Collage(photo, chosen, decision.layout))
+            emit(
+                "COLLAGE_READY",
+                ids = result.slide.photos.map { it.id },
+                layout = decision.layout.name,
+                prepareMs = SystemClock.elapsedRealtime() - startedAt,
+                decodedBytes = result.slide.decodedBytes,
+                reason = decision.decisionReason,
             )
             return result
         }
-
-        val count = if (layout == CollageLayout.THREE_COLUMNS) 3 else 2
-        val chosen = portraitTiles.take(count)
-        portraitTiles.drop(count).forEach(::discard)
-        if (count < wanted && wanted == 3) {
-            onCollageEvent(
-                "COLLAGE_DOWNGRADED", photo.id, chosen.map { it.photo.id }, layout.name,
-                null, null,
-                if (portraitTiles.size < 3) "not_enough_compatible_portraits" else "lower_crop_loss",
-            )
-        }
-        val result = ready(PreparedSlide.Collage(photo, chosen, layout))
-        onCollageEvent(
-            "COLLAGE_READY", photo.id, result.slide.photos.map { it.id }, layout.name,
-            SystemClock.elapsedRealtime() - startedAt, result.slide.decodedBytes, null,
-        )
-        result
     } catch (c: CancellationException) {
         throw c
     } catch (_: OutOfMemoryError) {
-        PrepareSlideResult.Failed(
+        return PrepareSlideResult.Failed(
             decodeFailure(
                 photo,
                 DecodeFailureStage.IMAGE_LOADER,
@@ -594,12 +786,13 @@ internal suspend fun prepareSlide(
             )
         )
     } catch (e: Exception) {
-        PrepareSlideResult.Failed(
+        return PrepareSlideResult.Failed(
             decodeFailure(photo, DecodeFailureStage.UNKNOWN, e.javaClass.simpleName)
         )
     } finally {
-        // Immediate recycle is safe here: these allocations were never handed to Compose.
-        // Rendered allocations use LegacyBitmapReclaimer's delayed API-21–25 path instead.
         releaseUncommitted()
     }
 }
+
+private const val MAX_COLLAGE_CANDIDATES = 12
+private const val COLLAGE_PROBE_MAX_PX = 384

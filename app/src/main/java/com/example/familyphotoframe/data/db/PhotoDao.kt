@@ -427,6 +427,45 @@ interface PhotoDao {
         limit: Int,
     ): List<PhotoItemEntity>
 
+    /**
+     * Bounded source-wide pool used only after same-folder candidates have been loaded.
+     * Folder locality is ranked in the pure optimizer; this query deliberately does not
+     * reorder by orientation so deterministic reservation/query order remains available
+     * as the final tie-breaker.
+     */
+    @Query(
+        """
+        SELECT * FROM photos
+        WHERE sourceId = :sourceId
+          AND id != :anchorId AND isHidden = 0 AND decodeFailureCount < :maxFailures
+          AND (:favoritesOnly = 0 OR isFavorite = 1)
+          AND (:cachedOnly = 0 OR cacheKey IS NOT NULL)
+          AND (:allowHeif = 1 OR (
+            lower(fileName) NOT LIKE '%.heic' AND lower(fileName) NOT LIKE '%.heif'
+            AND lower(COALESCE(mimeType, '')) NOT IN
+              ('image/heic','image/heif','image/heic-sequence','image/heif-sequence')
+          ))
+        ORDER BY
+          CASE WHEN :anchorTime > 0
+            THEN ABS(COALESCE(dateTakenEpochMs, fileModifiedEpochMs) - :anchorTime)
+            ELSE 0 END ASC,
+          (lastShownAtEpochMs IS NOT NULL) ASC,
+          lastShownAtEpochMs ASC,
+          id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun collageCandidatesAcrossSource(
+        sourceId: String,
+        anchorId: Long,
+        anchorTime: Long,
+        maxFailures: Int,
+        favoritesOnly: Int,
+        cachedOnly: Int,
+        allowHeif: Int,
+        limit: Int,
+    ): List<PhotoItemEntity>
+
     /** Exact direct-folder preview candidates. This query never touches shuffle state. */
     @Query(
         """

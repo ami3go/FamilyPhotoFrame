@@ -109,6 +109,11 @@ object DiagnosticEventCatalog {
         "errorCode", "format", "width", "height", "motionMode", "amplitude",
         "periodMs", "periodToken", "level", "mode", "offset", "revision",
         "activeBits", "historyCleared", "sizeBytes", "years", "preview",
+        "sameFolderCandidateCount", "portraitCandidateCount", "squareCandidateCount",
+        "landscapeCandidateCount", "evaluatedTwoPhotoCombinations",
+        "evaluatedThreePhotoCombinations", "evaluatedLayoutCount", "folderTier",
+        "orientationTier", "screenCoverage", "averageCropLoss", "maximumCropLoss",
+        "timeDistanceScore", "recentPenalty", "decisionReason",
     )
 
     private val sourceFields = setOf(
@@ -239,7 +244,8 @@ object DiagnosticEventCatalog {
         "ENGINE_PAUSED", "ENGINE_RESUMED", "ENGINE_SLEEP_ENTERED", "ENGINE_SLEEP_EXITED",
         "FAVORITE_CHANGED", "COLLAGE_CANDIDATE_QUARANTINED", "PHOTO_QUARANTINED",
         "COLLAGE_DOWNGRADED", "COLLAGE_FALLBACK_SINGLE", "COLLAGE_PRELOAD_STARTED",
-        "COLLAGE_READY", "COLLAGE_RENDERED", "FAVORITE_ADD", "FAVORITE_REMOVE",
+        "COLLAGE_READY", "COLLAGE_RENDERED", "COLLAGE_SELECTION_EVALUATED",
+        "FAVORITE_ADD", "FAVORITE_REMOVE",
         "FOLDER_RETRY", "PAUSE", "RESUME", "SLEEP_ENTER", "SLEEP_EXIT",
         "SLIDESHOW_CONTROLS_HOLD", "SLIDESHOW_CONTROLS_RELEASE",
         "PHOTO_FAVORITE_ADDED", "PHOTO_FAVORITE_REMOVED",
@@ -283,8 +289,8 @@ object DiagnosticEventCatalog {
         "FOLDER_RESERVED", "PHOTO_RESERVED", "PRESENTATION_RESERVED", "PHOTO_CONSUMED",
         "FOLDER_PRESENTED", "PRESENTATION_COMMITTED", "PRESENTATION_RELEASED",
         "PRESENTATION_PREPARED_COMMIT", "PANEL_MOTION", "COLLAGE_PRELOAD_STARTED",
-        "COLLAGE_READY", "COLLAGE_RENDERED", "COLLAGE_DOWNGRADED",
-        "COLLAGE_FALLBACK_SINGLE",
+        "COLLAGE_READY", "COLLAGE_RENDERED", "COLLAGE_SELECTION_EVALUATED",
+        "COLLAGE_DOWNGRADED", "COLLAGE_FALLBACK_SINGLE",
     )
 
     private val errorCodes = setOf(

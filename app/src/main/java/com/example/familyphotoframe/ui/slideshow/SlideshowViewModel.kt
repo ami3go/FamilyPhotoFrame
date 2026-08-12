@@ -2484,11 +2484,15 @@ class SlideshowViewModel(
     }
 
     /**
-     * Return a bounded, same-source/same-folder candidate pool for portrait collage
-     * planning. The UI still verifies orientation after decode because many remote rows
-     * have no dimensions until first use.
+     * Return the bounded optimizer pool in deterministic order.
+     *
+     * Folder-balanced reservations/history remain absolute: this method never invents an
+     * unreserved companion. Other selection modes may add source-local candidates from
+     * other folders after the exact anchor folder so the optimizer can apply the task's
+     * same-folder > orientation > visual-fit priority.
      */
-    suspend fun portraitCollageCandidates(anchor: DisplayPhoto, limit: Int = 16): List<DisplayPhoto> {
+    suspend fun portraitCollageCandidates(anchor: DisplayPhoto, limit: Int = 12): List<DisplayPhoto> {
+        val cap = limit.coerceIn(1, 12)
         val engineState = engine.ui.value
         val reservedMatches = engineState.reservedCandidateIds.firstOrNull() == anchor.id
         val historyMatches = engineState.historyPhotoIds.firstOrNull() == anchor.id
@@ -2496,33 +2500,36 @@ class SlideshowViewModel(
             reservedMatches -> engineState.reservedCandidateIds.drop(1)
             historyMatches -> engineState.historyPhotoIds.drop(1)
             else -> emptyList()
-        }.take(limit.coerceIn(1, 12))
+        }.take(cap)
         if (reservedMatches || historyMatches) {
-            // Folder-balanced ordering may consume only members explicitly reserved from
-            // the current photo cycle (or recorded in the historical presentation). An
-            // empty explicit companion list therefore means a single-photo presentation;
-            // it must never fall through to the general collage query.
             if (orderedIds.isEmpty()) return emptyList()
             val byId = services.photoDao.byIds(orderedIds).associateBy { it.id }
-            return orderedIds.mapNotNull(byId::get)
-                .map { it.toDisplayPhoto() }
-                .filter {
-                    it.sourceId == anchor.sourceId &&
-                        it.normalizedPath.substringBeforeLast('/', "") ==
-                        anchor.normalizedPath.substringBeforeLast('/', "")
-                }
+            // Do not add or substitute anything here: only reservation/history members
+            // can be committed by folder-balanced shuffle.
+            return orderedIds.mapNotNull(byId::get).map { it.toDisplayPhoto() }
         }
         if (_state.value.selectionMode == SelectionMode.FOLDER_BALANCED_SHUFFLE) {
-            // Missing reservation/history metadata is treated as no companions rather
-            // than silently selecting unreserved photos across a cycle boundary.
+            // A missing reservation at a folder-cycle boundary is a single presentation,
+            // never permission to consume an arbitrary photo from another folder.
             return emptyList()
         }
+
         val favoritesFlag = if (_state.value.favoritesOnly) 1 else 0
         val cachedFlag = if (remotePrimaryCachedOnly && anchor.sourceId == remotePrimarySourceId) 1 else 0
         val anchorTime = anchor.dateTakenEpochMs ?: anchor.fileModifiedEpochMs
         val now = System.currentTimeMillis()
+        val anchorParent = anchor.normalizedPath.substringBeforeLast('/', "")
+        fun parent(photo: DisplayPhoto) = photo.normalizedPath.substringBeforeLast('/', "")
+        fun orientationTier(photo: DisplayPhoto): Int = when (
+            PortraitCollagePolicy.classify(photo.width, photo.height, photo.exifOrientation)
+        ) {
+            com.example.familyphotoframe.domain.engine.PhotoOrientation.PORTRAIT -> 0
+            com.example.familyphotoframe.domain.engine.PhotoOrientation.SQUARE_OR_UNKNOWN -> 1
+            com.example.familyphotoframe.domain.engine.PhotoOrientation.LANDSCAPE -> 2
+        }
+
         return runCatching {
-            services.photoDao.collageCandidates(
+            val sameFolder = services.photoDao.collageCandidates(
                 sourceId = anchor.sourceId,
                 folderName = anchor.folderName,
                 anchorId = anchor.id,
@@ -2531,15 +2538,32 @@ class SlideshowViewModel(
                 favoritesOnly = favoritesFlag,
                 cachedOnly = cachedFlag,
                 allowHeif = if (services.allowHeifPlayback) 1 else 0,
-                // Folder names are not globally unique (two nested folders can both be
-                // called "Camera"), so fetch a wider bounded window and enforce the
-                // exact normalized parent path below.
-                limit = (limit.coerceIn(2, 32) * 4).coerceAtMost(128),
+                limit = (cap * 4).coerceAtMost(64),
             ).map { it.toDisplayPhoto() }
-                .filter { it.normalizedPath.substringBeforeLast('/', "") ==
-                    anchor.normalizedPath.substringBeforeLast('/', "") }
-                .sortedBy { PortraitCollagePolicy.candidateScore(anchorTime, it, now) }
-                .take(limit.coerceIn(2, 32))
+                .filter { parent(it) == anchorParent }
+
+            val sourceWide = services.photoDao.collageCandidatesAcrossSource(
+                sourceId = anchor.sourceId,
+                anchorId = anchor.id,
+                anchorTime = anchorTime,
+                maxFailures = currentMaxFailures(),
+                favoritesOnly = favoritesFlag,
+                cachedOnly = cachedFlag,
+                allowHeif = if (services.allowHeifPlayback) 1 else 0,
+                limit = (cap * 8).coerceAtMost(128),
+            ).map { it.toDisplayPhoto() }
+
+            (sameFolder + sourceWide).asSequence()
+                .filter { it.id != anchor.id }
+                .distinctBy { it.id }
+                .sortedWith(
+                    compareBy<DisplayPhoto> { if (parent(it) == anchorParent) 0 else 1 }
+                        .thenBy(::orientationTier)
+                        .thenBy { PortraitCollagePolicy.candidateScore(anchorTime, it, now) }
+                        .thenBy { it.id },
+                )
+                .take(cap)
+                .toList()
         }.getOrDefault(emptyList())
     }
 
@@ -4749,9 +4773,9 @@ class SlideshowViewModel(
         prepareMs: Long? = null,
         decodedBytes: Long? = null,
         reason: String? = null,
+        details: Map<String, String> = emptyMap(),
     ) {
-        services.diagnostics.log(
-            DiagnosticsLog.Category.ENGINE, event,
+        val fields = mapOf(
             "anchorToken" to diagnosticToken(anchorId.toString(), "photo"),
             "presentationToken" to diagnosticToken(photoIds.joinToString(","), "presentation"),
             "members" to photoIds.size.toString(),
@@ -4759,8 +4783,10 @@ class SlideshowViewModel(
             "durationMs" to prepareMs?.toString().orEmpty(),
             "sizeBytes" to decodedBytes?.toString().orEmpty(),
             "reason" to reason.orEmpty(),
-        )
+        ) + details
+        services.diagnostics.log(DiagnosticsLog.Category.ENGINE, event, "", fields)
     }
+
     fun clearTransientNotice() = _state.update { it.copy(transientNotice = null) }
 
     private companion object {

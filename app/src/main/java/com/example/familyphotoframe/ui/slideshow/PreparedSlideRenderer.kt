@@ -16,6 +16,7 @@ import androidx.compose.ui.layout.ContentScale
 import coil.ImageLoader
 import com.example.familyphotoframe.data.settings.AspectMode
 import com.example.familyphotoframe.data.settings.MotionMode
+import com.example.familyphotoframe.domain.engine.CollageLayout
 import com.example.familyphotoframe.domain.engine.DisplayPhoto
 import com.example.familyphotoframe.domain.engine.PlaybackMemoryState
 import com.example.familyphotoframe.ui.render.KenBurns
@@ -57,14 +58,21 @@ internal fun PreparedPhotoFrame(
             reclaimer,
             onRecoverableOom,
         )
-        is PreparedSlide.Collage -> PreparedCollage(
-            prepared,
-            state.portraitCollage.gap,
-            state,
-            allowDisplayMotion,
-            motionStore,
-            onMotionDiagnostic,
-        )
+        is PreparedSlide.Collage -> if (
+            prepared.layout == CollageLayout.TWO_COLUMNS ||
+            prepared.layout == CollageLayout.THREE_COLUMNS
+        ) {
+            PreparedCollage(
+                prepared,
+                state.portraitCollage.gap,
+                state,
+                allowDisplayMotion,
+                motionStore,
+                onMotionDiagnostic,
+            )
+        } else {
+            PreparedAdaptiveCollage(prepared, state.portraitCollage.gap)
+        }
     }
 }
 

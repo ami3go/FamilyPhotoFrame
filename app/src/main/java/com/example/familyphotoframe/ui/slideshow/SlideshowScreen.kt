@@ -346,6 +346,7 @@ private fun PlayingContent(
         prepareMs: Long?,
         decodedBytes: Long?,
         reason: String?,
+        details: Map<String, String>,
     ) -> Unit,
     onRecoverableOom: (DisplayPhoto, String) -> Unit,
     onTransitionEvent: (TransitionEvent) -> Unit,

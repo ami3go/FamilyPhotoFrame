@@ -1,27 +1,27 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.example.familyphotoframe.data.settings.PortableBundleTest" tests="21" skipped="0" failures="0" errors="0" timestamp="2026-08-07T04:51:38" hostname="aleksu-Vostro-5471" time="9.298">
+<testsuite name="com.example.familyphotoframe.data.settings.PortableBundleTest" tests="21" skipped="0" failures="0" errors="0" timestamp="2026-08-12T18:54:01" hostname="runnervmvrwv9" time="2.65">
   <properties/>
-  <testcase name="passwordIsNotRecoverableFromTheFile" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.995"/>
-  <testcase name="eachExportUsesFreshSaltAndNonce" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.86"/>
-  <testcase name="rejectsNonBundleJson" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.002"/>
-  <testcase name="blankPassphraseIsRefusedBothWays" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.334"/>
-  <testcase name="tamperedCiphertextIsDetected" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.889"/>
-  <testcase name="rejectsInvalidKeyAndTagSizes" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="1.055"/>
-  <testcase name="envelopeCarriesKdfAndCipherMetadata" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.42"/>
-  <testcase name="rejectsUnsupportedKdfBeforeCryptography" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.294"/>
+  <testcase name="passwordIsNotRecoverableFromTheFile" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.439"/>
+  <testcase name="eachExportUsesFreshSaltAndNonce" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.289"/>
+  <testcase name="rejectsNonBundleJson" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.003"/>
+  <testcase name="blankPassphraseIsRefusedBothWays" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.095"/>
+  <testcase name="tamperedCiphertextIsDetected" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.185"/>
+  <testcase name="rejectsInvalidKeyAndTagSizes" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.259"/>
+  <testcase name="envelopeCarriesKdfAndCipherMetadata" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.098"/>
+  <testcase name="rejectsUnsupportedKdfBeforeCryptography" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.088"/>
   <testcase name="suggestedFileNameIsStable" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.0"/>
-  <testcase name="rejectsExcessiveKdfWorkBeforeDerivingAKey" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.273"/>
-  <testcase name="wrongPassphraseAndTamperingAreIndistinguishable" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="1.578"/>
-  <testcase name="sealThenOpenRestoresPayloadIncludingPassword" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.906"/>
+  <testcase name="rejectsExcessiveKdfWorkBeforeDerivingAKey" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.098"/>
+  <testcase name="wrongPassphraseAndTamperingAreIndistinguishable" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.356"/>
+  <testcase name="sealThenOpenRestoresPayloadIncludingPassword" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.201"/>
   <testcase name="base64HandlesEveryPaddingCase" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.0"/>
-  <testcase name="rejectsOversizedEnvelopeBeforeJsonDecoding" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.018"/>
+  <testcase name="rejectsOversizedEnvelopeBeforeJsonDecoding" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.028"/>
   <testcase name="base64RoundTripsAllByteValues" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.0"/>
-  <testcase name="opensVersion1BundleWithoutVersion2SecretFields" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.3"/>
-  <testcase name="rejectsGarbage" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.0"/>
-  <testcase name="kdfParametersAreNotWeakened" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.0"/>
-  <testcase name="payloadWithoutPasswordRoundTrips" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.641"/>
-  <testcase name="rejectsNewerBundleVersion" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.001"/>
-  <testcase name="wrongPassphraseFails" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.729"/>
+  <testcase name="opensVersion1BundleWithoutVersion2SecretFields" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.098"/>
+  <testcase name="rejectsGarbage" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.001"/>
+  <testcase name="kdfParametersAreNotWeakened" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.001"/>
+  <testcase name="payloadWithoutPasswordRoundTrips" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.212"/>
+  <testcase name="rejectsNewerBundleVersion" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.0"/>
+  <testcase name="wrongPassphraseFails" classname="com.example.familyphotoframe.data.settings.PortableBundleTest" time="0.186"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

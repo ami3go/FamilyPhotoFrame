@@ -1,15 +1,26 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-08-07T04:51:48" hostname="aleksu-Vostro-5471" time="0.004">
+<testsuite name="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" tests="20" skipped="0" failures="0" errors="0" timestamp="2026-08-12T18:54:04" hostname="runnervmvrwv9" time="0.068">
   <properties/>
-  <testcase name="fewerThanThreePortraitsNeverYieldsThreeColumns" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.001"/>
-  <testcase name="nearSquarePhotosAreNotTreatedAsPortrait" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.001"/>
-  <testcase name="missingOrInvalidDimensionsAreNotEligible" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.0"/>
-  <testcase name="exifRotationSwapsDimensions" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.0"/>
-  <testcase name="landscapePhotosAreRejected" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.0"/>
-  <testcase name="automaticUsesThreeForVeryNarrowPortraits" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.0"/>
-  <testcase name="disabledOrSingleCandidateReturnsNoCollage" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.0"/>
-  <testcase name="portraitPhotosAreEligible" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.0"/>
-  <testcase name="automaticUsesTwoForTypicalThreeByFourPortraits" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.0"/>
+  <testcase name="lllIsAvailableAsFallback" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.013"/>
+  <testcase name="twelveCandidatePoolEvaluatesAllSixtySixThreePhotoCombinations" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.015"/>
+  <testcase name="enoughSameFolderPortraitsBeatLandscapeCandidates" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.002"/>
+  <testcase name="automaticUsesTwoWhenThreeHasWorseVisualLoss" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.001"/>
+  <testcase name="sameFolderMixedBeatsCrossFolderPortraitOnly" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.001"/>
+  <testcase name="allLayoutGeometryCoversTheScreenWithoutPolicyGaps" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.0"/>
+  <testcase name="laterBetterCandidatesBeatPoorEarlyCandidates" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.002"/>
+  <testcase name="offOrNoCompanionReturnsNull" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.0"/>
+  <testcase name="pplUsesAdaptiveLayout" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.0"/>
+  <testcase name="automaticUsesThreeWhenItFitsSubstantiallyBetter" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.0"/>
+  <testcase name="alwaysTwoSelectsExactlyTwoPhotos" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.0"/>
+  <testcase name="tileFitLossMatchesRetainedFractionDefinition" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.001"/>
+  <testcase name="orientationClassificationAndExifRotationRemainStable" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.0"/>
+  <testcase name="unseenNearEquivalentCandidateBeatsRecentlyShownCandidate" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.0"/>
+  <testcase name="squareCandidateCanParticipateWhenNeeded" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.0"/>
+  <testcase name="bestTwoPhotoLayoutIsEvaluatedAcrossPool" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.001"/>
+  <testcase name="preferThreeUsesSameFolderMixedWhenPortraitsAreInsufficient" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.0"/>
+  <testcase name="pllUsesStackedMixedLayout" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.001"/>
+  <testcase name="compatibilityChooseLayoutRetainsLegacyPortraitBehaviour" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.001"/>
+  <testcase name="deterministicInputAlwaysProducesSameDecision" classname="com.example.familyphotoframe.domain.engine.PortraitCollagePolicyTest" time="0.027"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>
