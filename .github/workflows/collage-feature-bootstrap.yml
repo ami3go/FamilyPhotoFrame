@@ -27,6 +27,9 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Prepare integration patch helper
+        run: python3 tools/fix_collage_patch_helper.py
+
       - name: Apply integration wiring
         run: python3 tools/collage_feature_patch.py
 
@@ -42,6 +45,7 @@ jobs:
       - name: Publish verified production patch
         run: |
           rm tools/collage_feature_patch.py
+          rm tools/fix_collage_patch_helper.py
           rm .github/workflows/collage-feature-bootstrap.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
