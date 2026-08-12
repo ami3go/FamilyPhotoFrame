@@ -6,7 +6,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlaybackMemoryPolicyTest {
-    private val heap = 100L * 1024L * 1024L
+    private val heap = 256L * 1024L * 1024L
+    private val lowHeap = 100L * 1024L * 1024L
 
     @Test fun guardedModeStartsAtEightyFivePercentAndDisablesPreloadAndThreePhotoFrames() {
         val state = PlaybackMemoryPolicy.sample(
@@ -26,6 +27,30 @@ class PlaybackMemoryPolicyTest {
         assertEquals(1, state.maxCollagePhotos)
         assertFalse(state.allowSoftFocus)
         assertFalse(state.allowWebPreview)
+    }
+
+    @Test fun lowHeapDevicesEnterProtectionWithAbsoluteHeadroomRemaining() {
+        val guarded = PlaybackMemoryPolicy.sample(
+            PlaybackMemoryState(), lowHeap * 75L / 100L, lowHeap, 1_000L,
+        )
+        val critical = PlaybackMemoryPolicy.sample(
+            PlaybackMemoryState(), lowHeap * 85L / 100L, lowHeap, 1_000L,
+        )
+
+        assertEquals(PlaybackMemoryLevel.GUARDED, guarded.level)
+        assertFalse(guarded.allowNextPreload)
+        assertEquals(2, guarded.maxCollagePhotos)
+        assertEquals(PlaybackMemoryLevel.CRITICAL, critical.level)
+        assertEquals(1, critical.maxCollagePhotos)
+        assertFalse(critical.allowWebPreview)
+    }
+
+    @Test fun lowHeapThresholdDoesNotApplyAboveOneHundredTwentyEightMiB() {
+        val mediumHeap = 129L * 1024L * 1024L
+        val state = PlaybackMemoryPolicy.sample(
+            PlaybackMemoryState(), mediumHeap * 84L / 100L, mediumHeap, 1_000L,
+        )
+        assertEquals(PlaybackMemoryLevel.NORMAL, state.level)
     }
 
     @Test fun firstOomOpensCircuitAndRepeatedOomsBackOff() {
