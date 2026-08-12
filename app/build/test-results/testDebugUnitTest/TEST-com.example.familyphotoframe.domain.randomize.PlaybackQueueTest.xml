@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.example.familyphotoframe.domain.randomize.PlaybackQueueTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-08-12T18:54:04" hostname="runnervmvrwv9" time="0.004">
+<testsuite name="com.example.familyphotoframe.domain.randomize.PlaybackQueueTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-08-07T04:51:48" hostname="aleksu-Vostro-5471" time="0.003">
   <properties/>
   <testcase name="collageMembersAreConsumedFromTheCurrentCycle" classname="com.example.familyphotoframe.domain.randomize.PlaybackQueueTest" time="0.0"/>
-  <testcase name="emptyPoolYieldsNull" classname="com.example.familyphotoframe.domain.randomize.PlaybackQueueTest" time="0.0"/>
+  <testcase name="emptyPoolYieldsNull" classname="com.example.familyphotoframe.domain.randomize.PlaybackQueueTest" time="0.001"/>
   <testcase name="singlePhotoPoolRepeatsThatPhoto" classname="com.example.familyphotoframe.domain.randomize.PlaybackQueueTest" time="0.0"/>
   <testcase name="shuffleDoesNotReplayTheSamePhotoAcrossTheCycleSeam" classname="com.example.familyphotoframe.domain.randomize.PlaybackQueueTest" time="0.0"/>
-  <testcase name="resetRebuildsOnTheNextSync" classname="com.example.familyphotoframe.domain.randomize.PlaybackQueueTest" time="0.0"/>
+  <testcase name="resetRebuildsOnTheNextSync" classname="com.example.familyphotoframe.domain.randomize.PlaybackQueueTest" time="0.001"/>
   <testcase name="sequentialModePlaysTheOrderTheDaoSupplied" classname="com.example.familyphotoframe.domain.randomize.PlaybackQueueTest" time="0.0"/>
-  <testcase name="shuffleCycleShowsEveryPhotoExactlyOnce" classname="com.example.familyphotoframe.domain.randomize.PlaybackQueueTest" time="0.001"/>
-  <testcase name="rescanKeepsProgressInsteadOfRestartingTheCycle" classname="com.example.familyphotoframe.domain.randomize.PlaybackQueueTest" time="0.0"/>
+  <testcase name="shuffleCycleShowsEveryPhotoExactlyOnce" classname="com.example.familyphotoframe.domain.randomize.PlaybackQueueTest" time="0.0"/>
+  <testcase name="rescanKeepsProgressInsteadOfRestartingTheCycle" classname="com.example.familyphotoframe.domain.randomize.PlaybackQueueTest" time="0.001"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

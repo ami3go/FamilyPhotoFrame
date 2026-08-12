@@ -1,15 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.example.familyphotoframe.domain.engine.PlaybackMemoryPolicyTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-08-12T18:54:04" hostname="runnervmvrwv9" time="0.002">
+<testsuite name="com.example.familyphotoframe.domain.engine.PlaybackMemoryPolicyTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-08-07T04:51:48" hostname="aleksu-Vostro-5471" time="0.004">
   <properties/>
-  <testcase name="criticalModeUsesSinglePhotoPreparation" classname="com.example.familyphotoframe.domain.engine.PlaybackMemoryPolicyTest" time="0.001"/>
+  <testcase name="criticalModeUsesSinglePhotoPreparation" classname="com.example.familyphotoframe.domain.engine.PlaybackMemoryPolicyTest" time="0.002"/>
   <testcase name="runningLowSignalCannotDowngradeAnOpenOomCircuit" classname="com.example.familyphotoframe.domain.engine.PlaybackMemoryPolicyTest" time="0.0"/>
-  <testcase name="criticalRequiresFiveMinutesBelowEightyBeforeRelaxing" classname="com.example.familyphotoframe.domain.engine.PlaybackMemoryPolicyTest" time="0.0"/>
+  <testcase name="criticalRequiresFiveMinutesBelowEightyBeforeRelaxing" classname="com.example.familyphotoframe.domain.engine.PlaybackMemoryPolicyTest" time="0.001"/>
   <testcase name="guardedModeStartsAtEightyFivePercentAndDisablesPreloadAndThreePhotoFrames" classname="com.example.familyphotoframe.domain.engine.PlaybackMemoryPolicyTest" time="0.0"/>
-  <testcase name="guardedModeHasExitHysteresis" classname="com.example.familyphotoframe.domain.engine.PlaybackMemoryPolicyTest" time="0.001"/>
+  <testcase name="guardedModeHasExitHysteresis" classname="com.example.familyphotoframe.domain.engine.PlaybackMemoryPolicyTest" time="0.0"/>
   <testcase name="circuitTransitionsToConservativeRecoveryBeforeNormal" classname="com.example.familyphotoframe.domain.engine.PlaybackMemoryPolicyTest" time="0.0"/>
-  <testcase name="lowHeapDevicesEnterProtectionWithAbsoluteHeadroomRemaining" classname="com.example.familyphotoframe.domain.engine.PlaybackMemoryPolicyTest" time="0.0"/>
-  <testcase name="firstOomOpensCircuitAndRepeatedOomsBackOff" classname="com.example.familyphotoframe.domain.engine.PlaybackMemoryPolicyTest" time="0.0"/>
-  <testcase name="lowHeapThresholdDoesNotApplyAboveOneHundredTwentyEightMiB" classname="com.example.familyphotoframe.domain.engine.PlaybackMemoryPolicyTest" time="0.0"/>
+  <testcase name="firstOomOpensCircuitAndRepeatedOomsBackOff" classname="com.example.familyphotoframe.domain.engine.PlaybackMemoryPolicyTest" time="0.001"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>
