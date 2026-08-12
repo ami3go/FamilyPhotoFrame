@@ -1,0 +1,85 @@
+name: Collage Anchor Order Fix
+
+on:
+  push:
+    branches:
+      - agent/collage-optimizer
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/collage-optimizer
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Preserve reservation anchor ordering
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          policy = Path('app/src/main/java/com/example/familyphotoframe/domain/engine/PortraitCollagePolicy.kt')
+          text = policy.read_text()
+          text = text.replace(
+              '/** Tile order, not consumption order. The anchor can occupy any tile. */',
+              '/** Tile/presentation order. The reservation anchor is always first. */',
+              1,
+          )
+          old = '''        val layouts = compatibleLayouts(photos.map { it.orientation })
+                  val permutations = permutations(photos)
+                  var best: ScoredPresentation? = null'''
+          new = '''        val layouts = compatibleLayouts(photos.map { it.orientation })
+                  // Folder-balanced shuffle requires the reservation anchor to be the first
+                  // presented id. Adaptive layout variants plus companion permutations still
+                  // cover the useful PPL/PLL/LLL arrangements without moving the anchor.
+                  val anchor = photos.first()
+                  val permutations = permutations(photos.drop(1)).map { companions ->
+                      listOf(anchor) + companions
+                  }
+                  var best: ScoredPresentation? = null'''
+          if text.count(old) != 1:
+              raise SystemExit(f'policy anchor block match count={text.count(old)}')
+          policy.write_text(text.replace(old, new, 1))
+
+          test = Path('app/src/test/java/com/example/familyphotoframe/domain/engine/PortraitCollagePolicyTest.kt')
+          t = test.read_text()
+          old_test = '''        assertEquals(3, decision.photoIds.size)
+                  assertTrue(decision.layout in setOf(CollageLayout.FULL_LEFT_TWO_RIGHT, CollageLayout.TWO_LEFT_FULL_RIGHT))'''
+          new_test = '''        assertEquals(3, decision.photoIds.size)
+                  assertEquals(1L, decision.photoIds.first())
+                  assertTrue(decision.layout in setOf(CollageLayout.FULL_LEFT_TWO_RIGHT, CollageLayout.TWO_LEFT_FULL_RIGHT))'''
+          if t.count(old_test) != 2:
+              raise SystemExit(f'expected PPL+PLL assertions, got {t.count(old_test)}')
+          test.write_text(t.replace(old_test, new_test))
+          PY
+
+      - name: Verify source and tests
+        run: |
+          python3 scripts/verify-sql.py
+          ./gradlew --no-daemon testDebugUnitTest assembleDebug compileDebugAndroidTestKotlin
+          git diff --check
+
+      - name: Publish verified fix without build outputs
+        run: |
+          git restore .gradle app/build || true
+          rm .github/workflows/collage-anchor-order-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/example/familyphotoframe/domain/engine/PortraitCollagePolicy.kt \
+                  app/src/test/java/com/example/familyphotoframe/domain/engine/PortraitCollagePolicyTest.kt \
+                  .github/workflows/collage-anchor-order-fix.yml
+          git commit -m "Keep collage reservation anchor first"
+          git push origin HEAD:agent/collage-optimizer
