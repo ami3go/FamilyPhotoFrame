@@ -103,6 +103,7 @@ class PortraitCollagePolicyTest {
             listOf(portrait, landscape), 3, now,
         )!!
         assertEquals(3, decision.photoIds.size)
+        assertEquals(1L, decision.photoIds.first())
         assertTrue(decision.layout in setOf(CollageLayout.FULL_LEFT_TWO_RIGHT, CollageLayout.TWO_LEFT_FULL_RIGHT))
     }
 
@@ -115,6 +116,7 @@ class PortraitCollagePolicyTest {
             listOf(landscapeA, landscapeB), 3, now,
         )!!
         assertEquals(3, decision.photoIds.size)
+        assertEquals(1L, decision.photoIds.first())
         assertTrue(decision.layout in setOf(CollageLayout.FULL_LEFT_TWO_RIGHT, CollageLayout.TWO_LEFT_FULL_RIGHT))
     }
 

@@ -94,7 +94,7 @@ data class CollageSelectionStats(
 )
 
 data class CollageDecision(
-    /** Tile order, not consumption order. The anchor can occupy any tile. */
+    /** Tile/presentation order. The reservation anchor is always first. */
     val photoIds: List<Long>,
     val layout: CollageLayout,
     val folderTier: Int,
@@ -343,7 +343,13 @@ object PortraitCollagePolicy {
         evaluatedLayout: () -> Unit,
     ): ScoredPresentation? {
         val layouts = compatibleLayouts(photos.map { it.orientation })
-        val permutations = permutations(photos)
+        // Folder-balanced shuffle requires the reservation anchor to be the first
+        // presented id. Adaptive layout variants plus companion permutations still
+        // cover the useful PPL/PLL/LLL arrangements without moving the anchor.
+        val anchor = photos.first()
+        val permutations = permutations(photos.drop(1)).map { companions ->
+            listOf(anchor) + companions
+        }
         var best: ScoredPresentation? = null
         for (layout in layouts) {
             val geometry = CollageLayoutGeometry.tiles(layout)
