@@ -18,6 +18,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 
 /**
  * Slideshow-level regression coverage for the decode -> classify -> optimize -> prepare
@@ -25,6 +26,7 @@ import org.robolectric.RuntimeEnvironment
  * tests; these tests deliberately stop at the PreparedSlide ownership boundary.
  */
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
 class SlideshowPreparationIntegrationTest {
     private val context: Context = RuntimeEnvironment.getApplication()
     private val imageLoader = ImageLoader.Builder(context).build()
