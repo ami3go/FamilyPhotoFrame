@@ -141,10 +141,9 @@ class PortraitCollagePolicyTest {
         )
 
         assertEquals(3, result.orientationTier)
-        assertTrue(
-            result.layout == CollageLayout.FULL_TOP_SPLIT_BOTTOM ||
-                result.layout == CollageLayout.SPLIT_TOP_FULL_BOTTOM,
-        )
+        assertEquals(3, result.photoIds.size)
+        assertEquals(setOf(1L, 2L, 3L), result.photoIds.toSet())
+        assertTrue(result.averageCropLoss < 0.25f)
     }
 
     @Test fun squareCandidateIsPreferredToLandscapeWhenPortraitsAreInsufficient() {
