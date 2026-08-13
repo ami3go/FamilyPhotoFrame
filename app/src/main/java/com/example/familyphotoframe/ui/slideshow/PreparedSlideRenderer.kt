@@ -57,7 +57,7 @@ internal fun PreparedPhotoFrame(
             reclaimer,
             onRecoverableOom,
         )
-        is PreparedSlide.Collage -> PreparedCollage(
+        is PreparedSlide.Collage -> AdaptivePreparedCollage(
             prepared,
             state.portraitCollage.gap,
             state,
