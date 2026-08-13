@@ -15,12 +15,15 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import com.example.familyphotoframe.data.settings.CollageGap
 import com.example.familyphotoframe.domain.engine.CollageLayout
+import com.example.familyphotoframe.domain.engine.PhotoOrientation
+import com.example.familyphotoframe.domain.engine.PortraitCollagePolicy
 import com.example.familyphotoframe.ui.render.PanelMotionStore
 import kotlin.math.roundToInt
 
 /**
- * Preserve the mature animated PPP renderer unchanged, while all new mixed-orientation
- * layouts start static as required by the collage-improvement task.
+ * Preserve the mature animated PPP renderer unchanged, while all mixed-orientation
+ * presentations remain static. A mixed presentation may legitimately score best in
+ * THREE_COLUMNS, so layout shape alone is not sufficient to decide whether motion is safe.
  */
 @Composable
 internal fun AdaptivePreparedCollage(
@@ -31,7 +34,13 @@ internal fun AdaptivePreparedCollage(
     motionStore: PanelMotionStore,
     onMotionDiagnostic: (List<Long>, String) -> Unit,
 ) {
-    if (prepared.layout == CollageLayout.THREE_COLUMNS) {
+    val isAnimatedPpp = prepared.layout == CollageLayout.THREE_COLUMNS &&
+        prepared.tiles.size == 3 &&
+        prepared.tiles.all { tile ->
+            PortraitCollagePolicy.classify(tile.bitmap.width, tile.bitmap.height) ==
+                PhotoOrientation.PORTRAIT
+        }
+    if (isAnimatedPpp) {
         PreparedCollage(
             prepared = prepared,
             gap = gap,
