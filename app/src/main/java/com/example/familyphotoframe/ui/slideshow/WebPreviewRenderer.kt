@@ -108,11 +108,17 @@ internal suspend fun createWebPreviewFrame(
                     CollageGap.SMALL -> 4f
                     CollageGap.MEDIUM -> 8f
                 }
-                val count = slide.tiles.size.coerceAtLeast(1)
-                val tileWidth = (width - gapPx * (count - 1)).coerceAtLeast(1f) / count
-                slide.tiles.forEachIndexed { index, tile ->
-                    val left = index * (tileWidth + gapPx)
-                    drawCrop(tile.bitmap, android.graphics.RectF(left, 0f, left + tileWidth, height.toFloat()))
+                val rects = collageTileRects(
+                    layout = slide.layout,
+                    width = width.toFloat(),
+                    height = height.toFloat(),
+                    gap = gapPx,
+                )
+                slide.tiles.zip(rects).forEach { (tile, rect) ->
+                    drawCrop(
+                        tile.bitmap,
+                        android.graphics.RectF(rect.left, rect.top, rect.right, rect.bottom),
+                    )
                 }
             }
         }
@@ -129,6 +135,7 @@ internal suspend fun createWebPreviewFrame(
         val revisionKey = buildString {
             append(slide.anchor.id).append('|')
             append(photoIds.joinToString(",")).append('|')
+            append((slide as? PreparedSlide.Collage)?.layout?.name.orEmpty()).append('|')
             append(aspectMode.name).append('|')
             append(backgroundColorArgb).append('|')
             append(collageGap.name).append('|')
