@@ -72,7 +72,7 @@ import com.example.familyphotoframe.ui.slideshow.SlideshowViewModel
 import com.example.familyphotoframe.web.QrCodes
 import kotlin.math.roundToInt
 
-/** Refactored settings sections: PlaylistScheduleSection, ScheduleSettings, AutoRescanSection, SleepSection. */
+/** Refactored settings sections: PlaylistScheduleSection, ScheduleSettings, AutoRescanSection. */
 @Composable
 internal fun PlaylistScheduleSection(state: SlideshowUiState, vm: SlideshowViewModel) {
     SettingsSectionCard("Scheduled playlist switching") {
@@ -131,7 +131,6 @@ internal fun PlaylistScheduleSection(state: SlideshowUiState, vm: SlideshowViewM
 internal fun ScheduleSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     PlaylistScheduleSection(state, vm)
     OnThisDaySection(state, vm)
-    SleepSection(state = state, vm = vm)
     AutoRescanSection(state = state, vm = vm)
 }
 
@@ -260,57 +259,6 @@ internal fun AutoRescanSection(state: SlideshowUiState, vm: SlideshowViewModel) 
             // it look like a broken feature.
             Text(
                 stringResource(R.string.settings_autorescan_nodays),
-                color = MaterialTheme.colorScheme.primary, fontSize = 14.sp,
-            )
-        }
-    }
-    }
-}
-@Composable
-internal fun SleepSection(state: SlideshowUiState, vm: SlideshowViewModel) {
-    val schedule = state.schedule
-    var start by remember(schedule.sleepStart) { mutableStateOf(schedule.sleepStart) }
-    var end by remember(schedule.sleepEnd) { mutableStateOf(schedule.sleepEnd) }
-
-    SettingsSectionCard(stringResource(R.string.settings_sleep)) {
-    ToggleRow(stringResource(R.string.settings_sleep_enable), schedule.sleepEnabled, vm::setSleepEnabled)
-
-    if (schedule.sleepEnabled) {
-        Text(
-            stringResource(R.string.settings_sleep_hint),
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 14.sp,
-        )
-        OutlinedTextField(
-            value = start,
-            onValueChange = { start = it; vm.setSleepStart(it) },
-            label = { Text(stringResource(R.string.settings_sleep_start)) },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = end,
-            onValueChange = { end = it; vm.setSleepEnd(it) },
-            label = { Text(stringResource(R.string.settings_sleep_end)) },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        // Presets rather than a slider: a slider is awkward to hit with a D-pad (§12.2).
-        SectionLabel(stringResource(R.string.settings_sleep_brightness))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            listOf(0.05f to "5%", 0.15f to "15%", 0.30f to "30%", 0.60f to "60%").forEach { (value, label) ->
-                FilterChip(
-                    selected = kotlin.math.abs(schedule.brightnessNight - value) < 0.01f,
-                    onClick = { vm.setNightBrightness(value) },
-                    label = { Text(label) },
-                )
-            }
-        }
-        if (state.asleep) {
-            Text(
-                stringResource(R.string.settings_sleep_active),
                 color = MaterialTheme.colorScheme.primary, fontSize = 14.sp,
             )
         }

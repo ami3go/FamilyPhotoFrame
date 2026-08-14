@@ -23,7 +23,7 @@ import java.io.OutputStream
 object AppSettingsSerializer : Serializer<AppSettings> {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = false }
 
-    override val defaultValue: AppSettings = AppSettings()
+    override val defaultValue: AppSettings = AppSettings().withCurrentDefaults()
 
     override suspend fun readFrom(input: InputStream): AppSettings =
         try {
@@ -45,7 +45,7 @@ class SettingsRepository(context: Context) {
     private val dataStore: DataStore<AppSettings> = DataStoreFactory.create(
         serializer = AppSettingsSerializer,
         corruptionHandler = androidx.datastore.core.handlers.ReplaceFileCorruptionHandler {
-            AppSettings() // recover to defaults; never crash on corrupt config
+            AppSettings().withCurrentDefaults() // recover to current defaults; never crash
         },
         produceFile = { File(context.filesDir, "datastore/app_settings.json") },
     )

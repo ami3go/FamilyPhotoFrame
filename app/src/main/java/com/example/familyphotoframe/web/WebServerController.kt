@@ -1125,7 +1125,7 @@ class WebServerController(
     }
 
     private fun nextScheduleDescription(settings: AppSettings): String = when {
-        settings.schedule.sleepEnabled -> "Quiet hours ${settings.schedule.sleepStart}-${settings.schedule.sleepEnd}"
+        settings.brightnessAutomation.mode.name.startsWith("SCHEDULED") -> "Brightness schedule configured"
         settings.schedule.autoRescanEnabled -> "Rescan ${settings.schedule.autoRescanAt} on ${settings.schedule.autoRescanDays}"
         else -> "No scheduled action"
     }

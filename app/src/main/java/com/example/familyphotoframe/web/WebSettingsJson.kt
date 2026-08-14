@@ -15,6 +15,9 @@ internal object WebSettingsJson {
         nextScheduleAction: String,
     ): JsonObject {
         val s = settings
+        val dayPeriod = s.brightnessAutomation.periods.firstOrNull { it.id == "day" }
+        val nightPeriod = s.brightnessAutomation.periods.firstOrNull { it.id == "night" }
+        val scheduledBrightness = s.brightnessAutomation.mode.name.startsWith("SCHEDULED")
         return buildJsonObject {
             put("schemaVersion", s.schemaVersion)
             put("intervalSeconds", s.intervalSecondsClamped)
@@ -58,9 +61,10 @@ internal object WebSettingsJson {
             put("autoRescanDays", s.schedule.autoRescanDays)
             put("onUnreachable", s.onUnreachable.name)
             put("autoStartOnBoot", s.autoStartOnBoot)
-            put("sleepEnabled", s.schedule.sleepEnabled)
-            put("sleepStart", s.schedule.sleepStart)
-            put("sleepEnd", s.schedule.sleepEnd)
+            // Backward-compatible aliases for pre-unification web clients.
+            put("sleepEnabled", scheduledBrightness)
+            put("sleepStart", nightPeriod?.startTime ?: s.schedule.sleepStart)
+            put("sleepEnd", dayPeriod?.startTime ?: s.schedule.sleepEnd)
             put("sourceKind", s.source.kind.name)
             put("smbHost", s.source.smb?.host ?: "")
             put("smbShare", s.source.smb?.share ?: "")
@@ -87,8 +91,8 @@ internal object WebSettingsJson {
             put("excludeGlobs", buildJsonArray { s.filters.cleanExcludes.forEach { add(JsonPrimitive(it)) } })
             put("excludeFolders", buildJsonArray { s.filters.cleanExcludeFolders.forEach { add(JsonPrimitive(it)) } })
             put("includeSubfolders", s.filters.includeSubfolders)
-            put("brightnessDay", s.schedule.brightnessDay)
-            put("brightnessNight", s.schedule.brightnessNight)
+            put("brightnessDay", dayPeriod?.brightness ?: s.brightnessAutomation.manualBrightness)
+            put("brightnessNight", nightPeriod?.brightness ?: s.schedule.brightnessNight)
             put("weatherEnabled", s.weather.enabled)
             put("weatherLatitude", s.weather.latitude)
             put("weatherLongitude", s.weather.longitude)

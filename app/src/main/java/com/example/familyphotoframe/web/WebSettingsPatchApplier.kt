@@ -187,8 +187,53 @@ internal class WebSettingsPatchApplier(
             }
         }
 
+        val hasLegacyBrightnessPatch = listOf(
+            "sleepEnabled", "sleepStart", "sleepEnd", "brightnessDay", "brightnessNight",
+        ).any(patch::containsKey)
+
         settings.update { cur ->
             var next = cur
+            if (hasLegacyBrightnessPatch) {
+                val base = next.brightnessAutomation
+                val periods = base.periods.toMutableList()
+
+                fun replacePeriod(period: BrightnessPeriod) {
+                    val index = periods.indexOfFirst { it.id == period.id }
+                    if (index >= 0) periods[index] = period else periods += period
+                }
+
+                val day = periods.firstOrNull { it.id == "day" } ?: BrightnessPeriod(
+                    id = "day",
+                    startTime = "07:00",
+                    brightness = base.manualBrightness,
+                    action = NightAction.DIM_ONLY,
+                )
+                val night = periods.firstOrNull { it.id == "night" } ?: BrightnessPeriod(
+                    id = "night",
+                    startTime = "23:00",
+                    brightness = 0.30f,
+                    action = NightAction.PAUSE_SLIDESHOW,
+                )
+                replacePeriod(day.copy(
+                    startTime = str("sleepEnd")?.trim() ?: day.startTime,
+                    brightness = float("brightnessDay") ?: day.brightness,
+                ))
+                replacePeriod(night.copy(
+                    startTime = str("sleepStart")?.trim() ?: night.startTime,
+                    brightness = float("brightnessNight") ?: night.brightness,
+                    action = if (bool("sleepEnabled") == true) NightAction.PAUSE_SLIDESHOW else night.action,
+                ))
+                val mode = when (bool("sleepEnabled")) {
+                    true -> BrightnessMode.SCHEDULED
+                    false -> BrightnessMode.MANUAL
+                    null -> base.mode
+                }
+                next = next.copy(brightnessAutomation = base.copy(
+                    mode = mode,
+                    manualBrightness = float("brightnessDay") ?: base.manualBrightness,
+                    periods = periods,
+                ).normalized())
+            }
             int("intervalSeconds")?.let { next = next.copy(intervalSeconds = it) }
             int("transitionDurationMs")?.let { next = next.copy(transitionDurationMs = it.coerceIn(300, 2000)) }
             str("aspectMode")?.let { v -> next = next.copy(aspectMode = AspectMode.valueOf(v)) }
@@ -284,12 +329,6 @@ internal class WebSettingsPatchApplier(
             bool("includeSubfolders")?.let { value ->
                 next = next.copy(filters = next.filters.copy(includeSubfolders = value))
             }
-            float("brightnessDay")?.let { value ->
-                next = next.copy(schedule = next.schedule.copy(brightnessDay = value))
-            }
-            float("brightnessNight")?.let { value ->
-                next = next.copy(schedule = next.schedule.copy(brightnessNight = value))
-            }
             bool("webEnabled")?.let { value -> next = next.copy(web = next.web.copy(enabled = value)) }
             int("webPort")?.let { value -> next = next.copy(web = next.web.copy(port = value)) }
             int("webIdleTimeoutMinutes")?.let { value ->
@@ -360,17 +399,6 @@ internal class WebSettingsPatchApplier(
                 )
             }
             bool("autoStartOnBoot")?.let { next = next.copy(autoStartOnBoot = it) }
-            bool("sleepEnabled")?.let { next = next.copy(schedule = next.schedule.copy(sleepEnabled = it)) }
-            str("sleepStart")?.let { v ->
-                if (SleepSchedule.parseMinutes(v) != null) {
-                    next = next.copy(schedule = next.schedule.copy(sleepStart = v.trim()))
-                }
-            }
-            str("sleepEnd")?.let { v ->
-                if (SleepSchedule.parseMinutes(v) != null) {
-                    next = next.copy(schedule = next.schedule.copy(sleepEnd = v.trim()))
-                }
-            }
 
             // Non-secret SMB fields only; the password stays device-only (§15.6).
             // If the endpoint/account changes, clear the credential reference so an

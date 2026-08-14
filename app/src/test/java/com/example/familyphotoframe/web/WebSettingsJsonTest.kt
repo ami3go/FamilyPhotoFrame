@@ -1,6 +1,10 @@
 package com.example.familyphotoframe.web
 
 import com.example.familyphotoframe.data.settings.AppSettings
+import com.example.familyphotoframe.data.settings.BrightnessAutomationSettings
+import com.example.familyphotoframe.data.settings.BrightnessMode
+import com.example.familyphotoframe.data.settings.BrightnessPeriod
+import com.example.familyphotoframe.data.settings.NightAction
 import com.example.familyphotoframe.data.settings.FilterSettings
 import com.example.familyphotoframe.data.settings.PlaylistScheduleRule
 import com.example.familyphotoframe.data.settings.PlaylistSettings
@@ -61,5 +65,27 @@ class WebSettingsJsonTest {
             listOf(1, 3, 5),
             firstRule.jsonObject.getValue("daysOfWeek").jsonArray.map { it.jsonPrimitive.content.toInt() },
         )
+    }
+
+    @Test
+    fun legacyBrightnessAliasesReflectUnifiedAutomation() {
+        val settings = AppSettings(
+            brightnessAutomation = BrightnessAutomationSettings(
+                mode = BrightnessMode.SCHEDULED,
+                manualBrightness = 0.65f,
+                periods = listOf(
+                    BrightnessPeriod("day", "06:30", 0.65f, NightAction.DIM_ONLY),
+                    BrightnessPeriod("night", "22:15", 0.10f, NightAction.PAUSE_SLIDESHOW),
+                ),
+            ),
+        )
+
+        val json = WebSettingsJson.redactedConfig(settings, nextScheduleAction = "none")
+
+        assertEquals("true", json.getValue("sleepEnabled").jsonPrimitive.content)
+        assertEquals("22:15", json.getValue("sleepStart").jsonPrimitive.content)
+        assertEquals("06:30", json.getValue("sleepEnd").jsonPrimitive.content)
+        assertEquals(0.65f, json.getValue("brightnessDay").jsonPrimitive.content.toFloat(), 0.0001f)
+        assertEquals(0.10f, json.getValue("brightnessNight").jsonPrimitive.content.toFloat(), 0.0001f)
     }
 }

@@ -17,9 +17,11 @@ import kotlinx.serialization.encoding.Encoder
 enum class AspectMode { FIT_COLOR, FILL_CROP, FIT_BLUR }
 
 /**
- * Quiet hours (spec §20 `schedule`). Times are `"HH:mm"` local wall clock; the window
- * may wrap past midnight. Brightness is a 0..1 window brightness, never a system-wide
- * setting, so no permission is required.
+ * Schedule settings unrelated to display brightness plus legacy quiet-hours fields.
+ *
+ * The sleep/brightness fields are retained only so installations created before the
+ * unified brightness automation can be migrated without losing their timetable. New
+ * runtime code must use [BrightnessAutomationSettings] as the single source of truth.
  */
 @Serializable
 data class ScheduleSettings(
@@ -751,6 +753,8 @@ data class AppSettings(
     /** Scan include/exclude filters (spec §20). */
     val filters: FilterSettings = FilterSettings(),
     val schedule: ScheduleSettings = ScheduleSettings(),
+    /** One-time migration marker for legacy ScheduleSettings sleep/dimming controls. */
+    val brightnessAutomationMigrationVersion: Int = 0,
     val weather: WeatherSettings = WeatherSettings(),
     /** Named playback collections and local-time switching rules. */
     val playlists: PlaylistSettings = PlaylistSettings(),
@@ -777,14 +781,55 @@ data class AppSettings(
             playbackOrderMigrationVersion < PLAYBACK_ORDER_MIGRATION_V1 &&
             selectionMode == SelectionMode.LEAST_RECENT_RANDOM
         ) SelectionMode.SHUFFLE_NO_REPEAT else selectionMode
+
+        // The old Schedule -> Sleep UI and the newer Display -> Brightness automation
+        // used separate fields. Migrate the legacy timetable only when the newer model
+        // is still untouched; otherwise the explicitly configured newer model wins.
+        val migrationPending =
+            brightnessAutomationMigrationVersion < BRIGHTNESS_AUTOMATION_MIGRATION_V1
+        val shouldImportLegacySleep =
+            migrationPending && schedule.sleepEnabled &&
+                brightnessAutomation == BrightnessAutomationSettings()
+        val migratedBrightness = if (shouldImportLegacySleep) {
+            brightnessAutomation.copy(
+                mode = BrightnessMode.SCHEDULED,
+                manualBrightness = schedule.brightnessDay,
+                periods = listOf(
+                    BrightnessPeriod(
+                        id = "day",
+                        startTime = schedule.sleepEnd,
+                        brightness = schedule.brightnessDay,
+                        action = NightAction.DIM_ONLY,
+                    ),
+                    BrightnessPeriod(
+                        id = "night",
+                        startTime = schedule.sleepStart,
+                        brightness = schedule.brightnessNight,
+                        action = NightAction.PAUSE_SLIDESHOW,
+                    ),
+                ),
+            ).normalized()
+        } else {
+            brightnessAutomation.normalized()
+        }
+        val migratedSchedule = if (migrationPending) {
+            // Disable the legacy runtime switch after migration. The fields remain in
+            // the schema for backward-compatible import/export only.
+            schedule.copy(sleepEnabled = false)
+        } else {
+            schedule
+        }
+
         return copy(
             selectionMode = migratedSelection,
             playbackOrderMigrationVersion = PLAYBACK_ORDER_MIGRATION_V1,
+            brightnessAutomationMigrationVersion = BRIGHTNESS_AUTOMATION_MIGRATION_V1,
+            schedule = migratedSchedule,
             filters = filters.withCurrentDefaultFormats(),
             transition = transition,
             transitionDurationMs = transitionDurationMs.coerceIn(300, 2_000),
             playlists = playlists.withCurrentDefaults(),
-            brightnessAutomation = brightnessAutomation.normalized(),
+            brightnessAutomation = migratedBrightness,
             web = web.copy(rememberedBrowsers = web.rememberedBrowsers.normalized()),
             webUpload = webUpload.normalized(),
             localThumbnailCache = localThumbnailCache.normalized(),
@@ -794,5 +839,6 @@ data class AppSettings(
 
     companion object {
         private const val PLAYBACK_ORDER_MIGRATION_V1 = 1
+        private const val BRIGHTNESS_AUTOMATION_MIGRATION_V1 = 1
     }
 }

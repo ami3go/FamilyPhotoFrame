@@ -288,13 +288,6 @@ class SlideshowViewModel(
     private val recoveryRuntimes = mutableMapOf<String, RecoveryRuntime>()
     private var sourceApplyJob: Job? = null
     private var settingsCollectorJob: Job? = null
-    private var scheduleJob: kotlinx.coroutines.Job? = null
-
-    /**
-     * Kept separate from [scheduleJob]: the sleep watcher returns early when quiet hours
-     * are off, and sharing a job would silently disable automatic rescans for anyone who
-     * does not use quiet hours.
-     */
     private var rescanScheduleJob: kotlinx.coroutines.Job? = null
     private var playlistScheduleJob: kotlinx.coroutines.Job? = null
     private var brightnessJob: kotlinx.coroutines.Job? = null
@@ -538,7 +531,6 @@ class SlideshowViewModel(
 
         cancelObsoleteIndexWork("factory-reset")
         val backgroundJobs = listOfNotNull(
-            scheduleJob,
             rescanScheduleJob,
             playlistScheduleJob,
             brightnessJob,
@@ -548,7 +540,6 @@ class SlideshowViewModel(
         )
         backgroundJobs.forEach { it.cancel() }
         backgroundJobs.forEach { it.join() }
-        scheduleJob = null
         rescanScheduleJob = null
         playlistScheduleJob = null
         brightnessJob = null
@@ -582,8 +573,8 @@ class SlideshowViewModel(
         if (playlistScheduleConfig(lastSettings?.playlists) != playlistScheduleConfig(s.playlists)) {
             restartPlaylistScheduleWatcher()
         }
-        if (lastSettings?.schedule != s.schedule || lastSettings?.brightnessAutomation != s.brightnessAutomation) {
-            restartBrightnessWatcher(s.schedule, s.brightnessAutomation)
+        if (lastSettings?.brightnessAutomation != s.brightnessAutomation) {
+            restartBrightnessWatcher(s.brightnessAutomation)
         }
         // Deliberately compares only the configuration fields. Including
         // lastAutoRescanAtEpochMs would make the watcher cancel itself the instant it
@@ -4087,32 +4078,13 @@ class SlideshowViewModel(
         return null
     }
 
-    private fun restartBrightnessWatcher(
-        schedule: ScheduleSettings,
-        automation: BrightnessAutomationSettings,
-    ) {
-        scheduleJob?.cancel()
+    private fun restartBrightnessWatcher(automation: BrightnessAutomationSettings) {
         brightnessJob?.cancel()
         brightnessJob = viewModelScope.launch {
             while (isActive) {
                 val nowMs = System.currentTimeMillis()
                 val now = nowMinutes()
-                val useLegacyQuietHours = automation.mode == BrightnessMode.MANUAL && schedule.sleepEnabled
-                val decision = if (useLegacyQuietHours) {
-                    val start = SleepSchedule.parseMinutes(schedule.sleepStart)
-                    val end = SleepSchedule.parseMinutes(schedule.sleepEnd)
-                    val legacyAsleep = start != null && end != null && SleepSchedule.isAsleep(now, start, end)
-                    BrightnessPolicy.Decision(
-                        brightness = SleepSchedule.brightnessFor(
-                            legacyAsleep, schedule.brightnessDay, schedule.brightnessNight,
-                        ),
-                        action = if (legacyAsleep) NightAction.PAUSE_SLIDESHOW else NightAction.DIM_ONLY,
-                        periodId = if (legacyAsleep) "legacy_quiet_hours" else "legacy_day",
-                        temporaryWake = false,
-                    )
-                } else {
-                    BrightnessPolicy.decide(automation, nowMs, now)
-                }
+                val decision = BrightnessPolicy.decide(automation, nowMs, now)
                 val brightness = applyAmbientBrightness(decision.brightness, automation)
                 val asleep = decision.action == NightAction.PAUSE_SLIDESHOW ||
                     decision.action == NightAction.BLACK_SCREEN
