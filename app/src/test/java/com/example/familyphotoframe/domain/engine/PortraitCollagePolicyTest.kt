@@ -267,4 +267,30 @@ class PortraitCollagePolicyTest {
             assertTrue(tiles.all { it.left >= 0f && it.top >= 0f && it.right <= 1f && it.bottom <= 1f })
         }
     }
+
+    @Test fun automaticMaxTwoDoesNotClaimThreeWasCompared() {
+        val anchor = meta(1, .60f, PhotoOrientation.PORTRAIT, order = -1)
+        val candidates = listOf(
+            meta(2, .61f, PhotoOrientation.PORTRAIT, order = 0),
+            meta(3, .62f, PhotoOrientation.PORTRAIT, order = 1),
+        )
+        val decision = PortraitCollagePolicy.chooseBestPresentation(
+            PortraitCollageMode.AUTOMATIC, screenW, screenH, anchor, candidates, 2, now,
+        )!!
+        assertEquals(0, decision.stats.evaluatedThreePhotoCombinations)
+        assertEquals("MAX_PHOTOS_LIMIT", decision.decisionReason)
+    }
+
+    @Test fun preferThreeMaxTwoReportsEffectiveLimit() {
+        val anchor = meta(1, .60f, PhotoOrientation.PORTRAIT, order = -1)
+        val candidates = listOf(
+            meta(2, .61f, PhotoOrientation.PORTRAIT, order = 0),
+            meta(3, .62f, PhotoOrientation.PORTRAIT, order = 1),
+        )
+        val decision = PortraitCollagePolicy.chooseBestPresentation(
+            PortraitCollageMode.PREFER_THREE, screenW, screenH, anchor, candidates, 2, now,
+        )!!
+        assertEquals(0, decision.stats.evaluatedThreePhotoCombinations)
+        assertEquals("MAX_PHOTOS_LIMIT", decision.decisionReason)
+    }
 }

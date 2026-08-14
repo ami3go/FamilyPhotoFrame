@@ -71,6 +71,8 @@ import com.example.familyphotoframe.ui.slideshow.transition.SlideshowTransitionR
 import com.example.familyphotoframe.ui.slideshow.transition.ResolvedTransition
 import com.example.familyphotoframe.ui.slideshow.transition.TransitionEvent
 import com.example.familyphotoframe.ui.slideshow.transition.TransitionFrameSampler
+import com.example.familyphotoframe.ui.slideshow.transition.TransitionCancellationAction
+import com.example.familyphotoframe.ui.slideshow.transition.TransitionCancellationPolicy
 import com.example.familyphotoframe.ui.slideshow.transition.TransitionPerformanceController
 import com.example.familyphotoframe.ui.slideshow.transition.TransitionPerformanceStateChange
 import com.example.familyphotoframe.ui.slideshow.transition.TransitionSelector
@@ -452,10 +454,9 @@ private fun PlayingContent(
     suspend fun build(photo: DisplayPhoto): PrepareSlideResult = preparationMutex.withLock {
         val decodeW = (targetW * memoryProtection.decodeScale).roundToInt().coerceAtLeast(1)
         val decodeH = (targetH * memoryProtection.decodeScale).roundToInt().coerceAtLeast(1)
-        val maxPhotos = minOf(
-            state.portraitCollage.maxPhotosClamped,
-            memoryProtection.maxCollagePhotos,
-        )
+        val configuredMaxPhotos = state.portraitCollage.maxPhotosClamped
+        val memoryMaxPhotos = memoryProtection.maxCollagePhotos
+        val maxPhotos = minOf(configuredMaxPhotos, memoryMaxPhotos)
         prepareSlide(
             context = context,
             photo = photo,
@@ -468,6 +469,8 @@ private fun PlayingContent(
                 PortraitCollageMode.OFF
             },
             maxCollagePhotos = maxPhotos.coerceAtLeast(2),
+            configuredMaxCollagePhotos = configuredMaxPhotos,
+            memoryMaxCollagePhotos = memoryMaxPhotos,
             portraitFallback = state.portraitCollage.fallback,
             collageGap = state.portraitCollage.gap,
             prepareSoftFocusBlur = softFocusNeeded,
@@ -813,6 +816,50 @@ private fun PlayingContent(
                     publishBitmapInventory()
                     return@withContext
                 }
+                val cancellation = TransitionCancellationPolicy.decide(
+                    completed = completed,
+                    targetStillDesired = candidateHandle == targetHandle &&
+                        selected?.id == target.anchor.id,
+                    paused = state.engine.paused,
+                )
+                if (cancellation.action == TransitionCancellationAction.KEEP_OUTGOING) {
+                    // A newer candidate cancelled this animation. The historical path
+                    // snapped the obsolete target visible from NonCancellable, producing
+                    // two-frame "transitions" and briefly rendering stale selections.
+                    // Keep the last committed frame and let the new candidate start its
+                    // own transition instead.
+                    transitionProgress.snapTo(1f)
+                    outgoingHandle = null
+                    incomingHandle = null
+                    transitionState = if (previous != null) {
+                        TransitionState.Committed(previous.anchor.id)
+                    } else {
+                        TransitionState.Preparing(
+                            currentPresentationId = null,
+                            requestedPresentationId = selected?.id ?: target.anchor.id,
+                        )
+                    }
+                    onTransitionEvent(
+                        event(
+                            "TRANSITION_CANCELLED",
+                            cancellation.reason,
+                            metrics,
+                            startLatencyMs,
+                        )
+                    )
+                    registry.retain(
+                        setOfNotNull(
+                            committedHandle,
+                            candidateHandle,
+                            if (memoryProtection.allowNextPreload) {
+                                next?.id?.let { registry.latest(it) }
+                            } else null,
+                        )
+                    )
+                    publishBitmapInventory()
+                    return@withContext
+                }
+
                 transitionProgress.snapTo(1f)
                 committedHandle = targetHandle
                 outgoingHandle = null
@@ -830,7 +877,7 @@ private fun PlayingContent(
                 onTransitionEvent(
                     event(
                         if (completed) "TRANSITION_COMPLETED" else "TRANSITION_CANCELLED",
-                        if (completed) null else "superseded_or_paused",
+                        if (completed) null else cancellation.reason,
                         metrics,
                         startLatencyMs,
                     )

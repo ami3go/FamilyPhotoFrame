@@ -242,7 +242,7 @@ object PortraitCollagePolicy {
             2 -> bestThree
             else -> bestTwo
         }
-        val reason = decisionReason(mode, selected, alternative, bestThree)
+        val reason = decisionReason(mode, selected, alternative, bestThree, maxPhotos)
         return CollageDecision(
             photoIds = selected.photos.map { it.id },
             layout = selected.layout,
@@ -475,6 +475,7 @@ object PortraitCollagePolicy {
         selected: ScoredPresentation,
         alternative: ScoredPresentation?,
         bestThree: ScoredPresentation?,
+        maxPhotos: Int,
     ): String {
         if (alternative != null && selected.folderTier < alternative.folderTier) return "SAME_FOLDER_PRIORITY"
         if (alternative != null && selected.orientationTier < alternative.orientationTier && selected.orientationTier == 0) {
@@ -484,17 +485,17 @@ object PortraitCollagePolicy {
         return when (mode) {
             PortraitCollageMode.OFF -> "INSUFFICIENT_COMPATIBLE_PHOTOS"
             PortraitCollageMode.ALWAYS_TWO -> "ALWAYS_TWO"
-            PortraitCollageMode.PREFER_THREE -> if (selected.photos.size == 3) {
-                "PREFER_THREE"
-            } else if (bestThree == null) {
-                "ONLY_TWO_AVAILABLE"
-            } else {
-                "TWO_LOWER_VISUAL_LOSS"
+            PortraitCollageMode.PREFER_THREE -> when {
+                selected.photos.size == 3 -> "PREFER_THREE"
+                maxPhotos < 3 -> "MAX_PHOTOS_LIMIT"
+                bestThree == null -> "ONLY_TWO_AVAILABLE"
+                else -> "TWO_LOWER_VISUAL_LOSS"
             }
-            PortraitCollageMode.AUTOMATIC -> if (selected.photos.size == 3) {
-                "THREE_LOWER_VISUAL_LOSS"
-            } else {
-                "TWO_LOWER_VISUAL_LOSS"
+            PortraitCollageMode.AUTOMATIC -> when {
+                selected.photos.size == 3 -> "THREE_LOWER_VISUAL_LOSS"
+                maxPhotos < 3 -> "MAX_PHOTOS_LIMIT"
+                bestThree == null -> "ONLY_TWO_AVAILABLE"
+                else -> "TWO_LOWER_VISUAL_LOSS"
             }
         }
     }

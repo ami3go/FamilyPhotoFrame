@@ -2,6 +2,7 @@ package com.example.familyphotoframe.ui.slideshow
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
@@ -1097,6 +1098,51 @@ class SlideshowViewModel(
      * broken co-primary is logged and skipped, because taking the frame off a working
      * source would be a worse outcome than quietly playing fewer photos.
      */
+    @Suppress("DEPRECATION")
+    private fun hasConnectedNetwork(): Boolean {
+        val manager = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        return manager?.activeNetworkInfo?.isConnected == true
+    }
+
+    /**
+     * Android can launch the frame several seconds before Wi-Fi/Ethernet is usable after
+     * boot. Do not turn that platform race into a false SMB/WebDAV/Synology host failure.
+     * Manual tests and user-initiated source changes stay immediate; only the initial
+     * settings application receives this bounded network-ready grace period.
+     */
+    private suspend fun awaitInitialRemoteNetwork(
+        request: SourceApplyRequest,
+        kind: ActiveSourceKind,
+    ) {
+        if (request.trigger != SourceRefreshTrigger.INITIAL_SETTINGS_LOAD) return
+        if (kind !in setOf(ActiveSourceKind.SMB, ActiveSourceKind.SYNOLOGY, ActiveSourceKind.WEBDAV)) return
+        if (hasConnectedNetwork()) return
+
+        val started = SystemClock.elapsedRealtime()
+        diagnostics.logEvent(
+            "SOURCE_HEALTH_DEFERRED_NETWORK",
+            sourceRequestFields(request, "WAITING_FOR_NETWORK") + mapOf(
+                "sourceKind" to kind.name,
+                "maxWaitMs" to INITIAL_REMOTE_NETWORK_WAIT_MS.toString(),
+            ),
+            request.operation.context(),
+        )
+        while (viewModelScope.isActive && !hasConnectedNetwork() &&
+            SystemClock.elapsedRealtime() - started < INITIAL_REMOTE_NETWORK_WAIT_MS
+        ) {
+            delay(INITIAL_REMOTE_NETWORK_POLL_MS)
+        }
+        diagnostics.logEvent(
+            "SOURCE_HEALTH_NETWORK_GATE_RELEASED",
+            sourceRequestFields(request, "NETWORK_GATE_RELEASED") + mapOf(
+                "sourceKind" to kind.name,
+                "networkConnected" to hasConnectedNetwork().toString(),
+                "waitedMs" to (SystemClock.elapsedRealtime() - started).coerceAtLeast(0L).toString(),
+            ),
+            request.operation.context(),
+        )
+    }
+
     private suspend fun activateSlot(
         kind: ActiveSourceKind,
         source: ActiveSource,
@@ -1150,6 +1196,7 @@ class SlideshowViewModel(
         }
 
         ActiveSourceKind.SMB -> {
+            awaitInitialRemoteNetwork(request, kind)
             val smb = source.smb
             if (smb == null || smb.host.isBlank() || smb.share.isBlank()) {
                 if (isChosen) fallBackToFirstRun()
@@ -1177,6 +1224,7 @@ class SlideshowViewModel(
         }
 
         ActiveSourceKind.SYNOLOGY -> {
+            awaitInitialRemoteNetwork(request, kind)
             val syn = source.synology
             if (syn == null || syn.baseUrl.isBlank()) {
                 if (isChosen) fallBackToFirstRun()
@@ -1222,6 +1270,7 @@ class SlideshowViewModel(
         }
 
         ActiveSourceKind.WEBDAV -> {
+            awaitInitialRemoteNetwork(request, kind)
             val dav = source.webdav
             if (dav == null || dav.baseUrl.isBlank()) {
                 if (isChosen) fallBackToFirstRun()
@@ -4807,6 +4856,8 @@ class SlideshowViewModel(
         /** Cap on a single wait so clock/timezone changes are noticed promptly. */
         const val MAX_SCHEDULE_WAIT_MINUTES = 15
         const val WEATHER_RECHECK_MS = 5 * 60_000L
+        const val INITIAL_REMOTE_NETWORK_WAIT_MS = 60_000L
+        const val INITIAL_REMOTE_NETWORK_POLL_MS = 500L
         const val WEATHER_KEY_REF = CredentialPolicy.WEATHER_API_KEY_REF
     }
 

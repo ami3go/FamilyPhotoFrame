@@ -367,6 +367,8 @@ internal suspend fun prepareSlide(
     loadCollageCandidates: suspend (DisplayPhoto, Int) -> List<DisplayPhoto>,
     collageMode: PortraitCollageMode,
     maxCollagePhotos: Int,
+    configuredMaxCollagePhotos: Int = maxCollagePhotos,
+    memoryMaxCollagePhotos: Int = maxCollagePhotos,
     portraitFallback: PortraitFallback,
     collageGap: CollageGap,
     prepareSoftFocusBlur: Boolean,
@@ -552,15 +554,37 @@ internal suspend fun prepareSlide(
             .take(MAX_COLLAGE_CANDIDATES)
             .toList()
         val inspectedCandidates = mutableListOf<InspectedCollagePhoto>()
+        var metadataCandidateCount = 0
+        var localProbeCount = 0
+        var remoteUnknownSkippedCount = 0
+        var probeBudgetSkippedCount = 0
 
         for ((index, candidate) in rawCandidates.withIndex()) {
             val metadata = candidate.metadataCollageMeta(index)
-            if (metadata != null) {
-                // Indexed dimensions are enough for scoring. Defer source/model I/O until
-                // this candidate is actually chosen; this avoids fetching twelve remote
-                // originals simply to rank them.
-                inspectedCandidates += InspectedCollagePhoto(candidate, null, metadata)
-                continue
+            when (CollageCandidateInspectionPolicy.decide(
+                hasMetadata = metadata != null,
+                needsRemoteCache = candidate.needsCache,
+                localProbesUsed = localProbeCount,
+                maxLocalProbes = MAX_LOCAL_COLLAGE_PROBES,
+            )) {
+                CollageCandidateInspectionAction.USE_METADATA -> {
+                    // Indexed dimensions are enough for scoring. Defer source/model I/O
+                    // until this candidate is actually chosen.
+                    metadataCandidateCount++
+                    inspectedCandidates += InspectedCollagePhoto(candidate, null, metadata!!)
+                    continue
+                }
+                CollageCandidateInspectionAction.SKIP_REMOTE_UNKNOWN -> {
+                    // resolveModel() would fetch the complete remote original merely to
+                    // discover orientation; field diagnostics showed this can take minutes.
+                    remoteUnknownSkippedCount++
+                    continue
+                }
+                CollageCandidateInspectionAction.SKIP_PROBE_BUDGET -> {
+                    probeBudgetSkippedCount++
+                    continue
+                }
+                CollageCandidateInspectionAction.PROBE_LOCAL -> localProbeCount++
             }
             val resolved = when (val result = resolvePhoto(candidate, resolveModel)) {
                 is ResolvePhotoResult.Ready -> result.photo
@@ -597,7 +621,34 @@ internal suspend fun prepareSlide(
             AspectMode.FIT_COLOR
         } else requestedFallback
 
-        fun diagnosticsFor(decision: CollageDecision): Map<String, String> = mapOf(
+        fun diagnosticsFor(decision: CollageDecision): Map<String, String> {
+            val effectiveMaxPhotos = maxCollagePhotos.coerceIn(1, 3)
+            val threePhotoSkipReason = when {
+                decision.stats.evaluatedThreePhotoCombinations > 0 -> ""
+                collageMode == PortraitCollageMode.ALWAYS_TWO -> "mode_always_two"
+                configuredMaxCollagePhotos < 3 -> "configured_max_two"
+                memoryMaxCollagePhotos < 3 -> "memory_guard"
+                effectiveMaxPhotos < 3 -> "effective_max_two"
+                decision.stats.candidateCount < 2 -> "insufficient_candidates"
+                else -> "not_evaluated"
+            }
+            return mapOf(
+            "collageMode" to collageMode.name,
+            "configuredMaxCollagePhotos" to configuredMaxCollagePhotos.toString(),
+            "memoryMaxCollagePhotos" to memoryMaxCollagePhotos.toString(),
+            "effectiveMaxCollagePhotos" to effectiveMaxPhotos.toString(),
+            "threePhotoEvaluationAllowed" to (
+                collageMode != PortraitCollageMode.ALWAYS_TWO && effectiveMaxPhotos >= 3
+            ).toString(),
+            "threePhotoEvaluationPerformed" to (
+                decision.stats.evaluatedThreePhotoCombinations > 0
+            ).toString(),
+            "threePhotoSkipReason" to threePhotoSkipReason,
+            "rawCandidateCount" to rawCandidates.size.toString(),
+            "metadataCandidateCount" to metadataCandidateCount.toString(),
+            "localProbeCount" to localProbeCount.toString(),
+            "remoteUnknownSkippedCount" to remoteUnknownSkippedCount.toString(),
+            "probeBudgetSkippedCount" to probeBudgetSkippedCount.toString(),
             "candidateCount" to decision.stats.candidateCount.toString(),
             "sameFolderCandidateCount" to decision.stats.sameFolderCandidateCount.toString(),
             "portraitCandidateCount" to decision.stats.portraitCandidateCount.toString(),
@@ -614,7 +665,8 @@ internal suspend fun prepareSlide(
             "timeDistanceScore" to decision.timeDistanceScore.diagnostic2(),
             "recentPenalty" to decision.recentPenalty.diagnostic2(),
             "decisionReason" to decision.decisionReason,
-        )
+            )
+        }
 
         while (true) {
             val decision = PortraitCollagePolicy.chooseBestPresentation(
@@ -795,4 +847,5 @@ internal suspend fun prepareSlide(
 }
 
 private const val MAX_COLLAGE_CANDIDATES = 12
-private const val COLLAGE_PROBE_MAX_PX = 384
+private const val MAX_LOCAL_COLLAGE_PROBES = 4
+private const val COLLAGE_PROBE_MAX_PX = 256
