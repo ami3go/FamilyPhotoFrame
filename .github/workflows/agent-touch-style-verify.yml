@@ -1,0 +1,23 @@
+name: Verify touch control style
+on:
+  push:
+    branches: [agent/fix-touch-navigation-style-ci]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify control layout source
+        run: |
+          grep -q 'ControlDockButton' app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowTouchControls.kt
+          grep -q 'Previous' app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowTouchControls.kt
+          grep -q 'Favorite' app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowTouchControls.kt
+          grep -q 'Hide' app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowTouchControls.kt
+          grep -q 'Next' app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowTouchControls.kt
+          grep -q 'height(84.dp)' app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowTouchControls.kt
+      - name: Unit tests and debug build
+        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
