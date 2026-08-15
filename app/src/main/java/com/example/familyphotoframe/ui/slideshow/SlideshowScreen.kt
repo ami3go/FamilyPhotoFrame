@@ -197,6 +197,7 @@ fun SlideshowScreen(
                 onBitmapInventory = vm::onBitmapInventory,
                 onMemoryCleanup = vm::onMemoryCleanup,
                 onMotionDiagnostic = vm::logThreePhotoMotion,
+                manualNavigationActive = controlsVisible,
                 memoryProtection = memoryProtection,
                 hostActive = hostActive,
                 hostGeneration = hostGeneration,
@@ -266,7 +267,9 @@ fun SlideshowScreen(
                                 else if (controlsVisible) controlsVisible = false
                                 else showControls()
                             },
-                            onDoubleTap = { vm.onTogglePause("double_tap") },
+                            onDoubleTap = {
+                                if (!controlsVisible) vm.onTogglePause("double_tap")
+                            },
                             onLongPress = {
                                 controlsVisible = false
                                 onOpenSettings()
@@ -372,6 +375,7 @@ private fun PlayingContent(
     onMemoryCleanup: (Int, Long, Long) -> Unit,
     /** Task §16: panel-motion detail for one three-photo frame. */
     onMotionDiagnostic: (List<Long>, String) -> Unit,
+    manualNavigationActive: Boolean,
     memoryProtection: PlaybackMemoryState,
     hostActive: Boolean,
     hostGeneration: Long,
@@ -437,6 +441,7 @@ private fun PlayingContent(
     var committedHandle by remember { mutableStateOf<PreparedSlideHandle?>(null) }
     var outgoingHandle by remember { mutableStateOf<PreparedSlideHandle?>(null) }
     var incomingHandle by remember { mutableStateOf<PreparedSlideHandle?>(null) }
+    var manualCandidateHandle by remember { mutableStateOf<PreparedSlideHandle?>(null) }
     var transitionState by remember {
         mutableStateOf<TransitionState>(TransitionState.Idle)
     }
@@ -462,20 +467,23 @@ private fun PlayingContent(
 
     // Serialize current/next preparation. This prevents startup races from selecting the
     // same collage companions while still giving the full dwell interval to prepare next.
-    suspend fun build(photo: DisplayPhoto): PrepareSlideResult = preparationMutex.withLock {
+    suspend fun build(photo: DisplayPhoto, fastManual: Boolean = false): PrepareSlideResult {
+        suspend fun prepare(): PrepareSlideResult {
         val decodeW = (targetW * memoryProtection.decodeScale).roundToInt().coerceAtLeast(1)
         val decodeH = (targetH * memoryProtection.decodeScale).roundToInt().coerceAtLeast(1)
         val configuredMaxPhotos = state.portraitCollage.maxPhotosClamped
         val memoryMaxPhotos = memoryProtection.maxCollagePhotos
         val maxPhotos = minOf(configuredMaxPhotos, memoryMaxPhotos)
-        prepareSlide(
+        return prepareSlide(
             context = context,
             photo = photo,
             imageLoader = imageLoader,
             resolveModel = resolveModel,
             loadCollageCandidates = loadCollageCandidates,
             probeRemoteDimensions = probeRemoteDimensions,
-            collageMode = if (maxPhotos >= 2) {
+            collageMode = if (fastManual) {
+                PortraitCollageMode.OFF
+            } else if (maxPhotos >= 2) {
                 state.portraitCollage.mode
             } else {
                 PortraitCollageMode.OFF
@@ -487,8 +495,8 @@ private fun PlayingContent(
             collageGap = state.portraitCollage.gap,
             collageOrientationFilter = state.portraitCollage.orientationFilter,
             collageLayoutPreference = state.portraitCollage.layoutPreference,
-            prepareSoftFocusBlur = softFocusNeeded,
-            allowBlurredBackground = memoryProtection.allowBlurredBackdrop,
+            prepareSoftFocusBlur = softFocusNeeded && !fastManual,
+            allowBlurredBackground = memoryProtection.allowBlurredBackdrop && !fastManual,
             excludedIds = buildSet {
                 addAll(registry.photoIds())
                 selected?.id?.let(::add)
@@ -508,6 +516,12 @@ private fun PlayingContent(
             },
             onCollageEvent = onCollageEvent,
         )
+        }
+
+        // A manual skip has higher priority than speculative collage preload.
+        // Use a single-anchor decode when no prepared target exists instead of
+        // queueing behind remote collage probes and companion decodes.
+        return if (fastManual) prepare() else preparationMutex.withLock { prepare() }
     }
 
     // A complete presentation becomes a candidate, but does not replace the currently
@@ -525,6 +539,7 @@ private fun PlayingContent(
         var uncommittedHandle: PreparedSlideHandle? = null
         try {
             val photo = selected ?: return@LaunchedEffect
+            val fastManual = manualNavigationActive && committedHandle != null
             val lifecycleToken = hostPlaybackToken() ?: return@LaunchedEffect
             if (!hostActive || !isHostPlaybackTokenCurrent(lifecycleToken)) return@LaunchedEffect
             if (!memoryProtection.allowSelectedDecode) return@LaunchedEffect
@@ -540,7 +555,7 @@ private fun PlayingContent(
                     !softFocusNeeded || it.transitionBlurredBitmap != null
                 } == true
             }
-            val handle = existingHandle ?: when (val result = build(photo)) {
+            val handle = existingHandle ?: when (val result = build(photo, fastManual = fastManual)) {
                 is PrepareSlideResult.Ready -> {
                     // Some Android 5/network decode calls are not cooperatively cancellable.
                     // Revalidate after the blocking boundary before admitting their bitmap
@@ -583,6 +598,7 @@ private fun PlayingContent(
                 return@LaunchedEffect
             }
             candidateHandle = handle
+            manualCandidateHandle = if (fastManual) handle else null
             // The Compose-visible handle now owns this registry entry.
             uncommittedHandle = null
             publishBitmapInventory()
@@ -718,6 +734,7 @@ private fun PlayingContent(
 
         val previousHandle = committedHandle
         val previous = slide(previousHandle)
+        val manualNavigation = targetHandle == manualCandidateHandle
         val supportedEffects = TransitionMode.selectableValues.toMutableSet().apply {
             if (previous?.transitionBlurredBitmap == null || target.transitionBlurredBitmap == null) {
                 remove(TransitionMode.SOFT_FOCUS_FADE)
@@ -725,6 +742,8 @@ private fun PlayingContent(
         }
         val resolved = if (previous == null) {
             ResolvedTransition(TransitionMode.CROSSFADE, fallbackReason = "cold_start")
+        } else if (manualNavigation) {
+            ResolvedTransition(TransitionMode.CROSSFADE, fallbackReason = "manual_navigation")
         } else {
             transitionSelector.select(
                 mode = state.transitionSelectionMode,
@@ -737,6 +756,8 @@ private fun PlayingContent(
         }
         val durationMs = if (previous == null) {
             TransitionTiming.COLD_START_DURATION_MS
+        } else if (manualNavigation) {
+            120
         } else {
             TransitionTiming.resolvedDurationMs(state.transitionDurationMs, resolved.effect)
         }
@@ -882,6 +903,7 @@ private fun PlayingContent(
                             } else null,
                         )
                     )
+                    if (manualCandidateHandle == targetHandle) manualCandidateHandle = null
                     publishBitmapInventory()
                     return@withContext
                 }
@@ -900,6 +922,7 @@ private fun PlayingContent(
                     target.dataSources,
                     (target as? PreparedSlide.Collage)?.layout?.name,
                 )
+                if (manualCandidateHandle == targetHandle) manualCandidateHandle = null
                 onTransitionEvent(
                     event(
                         if (completed) "TRANSITION_COMPLETED" else "TRANSITION_CANCELLED",
