@@ -20,12 +20,15 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Apply refactor patch
-        run: python3 tools/agent_stability_refactor.py
+        run: |
+          python3 tools/agent_stability_refactor.py
+          python3 tools/agent_stability_refactor_fix1.py
       - name: Check whitespace
         run: git diff --check
       - name: Verify obsolete runtime code is gone
         run: |
           ! grep -R "FolderCycleQueue\|LeastRecentRandom\|FolderBalancedPlaybackQueue" app/src/main
+          ! grep -R "SelectionMode.LEAST_RECENT_RANDOM" app/src/main
           ! grep -n "fun setSleepEnabled\|fun setSleepStart\|fun setSleepEnd" app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowViewModel.kt
       - name: Verify DAO SQL
         run: python3 scripts/verify-sql.py
