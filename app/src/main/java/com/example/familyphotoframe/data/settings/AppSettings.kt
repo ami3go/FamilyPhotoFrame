@@ -87,22 +87,14 @@ data class WeatherSettings(
 /**
  * How the next photo is chosen (spec §9.6).
  *
- * [LEAST_RECENT_RANDOM] is the original MVP mode: sample randomly inside a window of
- * least-recently-shown photos. It is cheap and needs no state, but cannot promise that
- * every photo is shown before any repeats.
- *
- * [SHUFFLE_NO_REPEAT] is a global photo bag: every displayable photo exactly once
- * per cycle, regardless of folder. [FOLDER_BALANCED_SHUFFLE] first shuffles folders
- * without replacement and then consumes each folder's independent photo bag.
- *
- * The date modes play in EXIF date-taken order (photos with no date-taken sort last, by
- * file-modified time) so a frame can walk a trip or a year in sequence.
+ * Historical `LEAST_RECENT_RANDOM` values are translated at the persistence/web
+ * boundary to [SHUFFLE_NO_REPEAT]. Keeping that old strategy out of the runtime enum
+ * prevents new code from accidentally reactivating the pre-v52 implementation.
  */
+@Serializable(with = SelectionModeSerializer::class)
 enum class SelectionMode {
     /** Stable indexed path order; repeats only after reaching the end. */
     SEQUENTIAL,
-    /** Legacy pre-v52 random mode; migrated once to [SHUFFLE_NO_REPEAT]. */
-    LEAST_RECENT_RANDOM,
     SHUFFLE_NO_REPEAT,
     FOLDER_BALANCED_SHUFFLE,
     DATE_TAKEN_NEWEST,
@@ -110,12 +102,34 @@ enum class SelectionMode {
     /**
      * System-managed only — the pool is an explicit id list pushed by
      * `SlideshowViewModel`'s "on this day" trigger, not a SQL predicate. Never valid as
-     * a directly user-chosen value for the global selection mode (see
-     * [WebSettingsPatchApplier][com.example.familyphotoframe.web.WebSettingsPatchApplier]);
-     * only reachable via the built-in `PlaylistSettings.PLAYLIST_ON_THIS_DAY` playlist,
-     * which is not user-selectable either (docs/FPF-FEAT-ON-THIS-DAY-001.md §4.2).
+     * a directly user-chosen value for the global selection mode.
      */
     ON_THIS_DAY,
+    ;
+
+    companion object {
+        private const val LEGACY_LEAST_RECENT_RANDOM = "LEAST_RECENT_RANDOM"
+
+        fun fromStorage(value: String): SelectionMode? {
+            val normalized = value.trim()
+            if (normalized.equals(LEGACY_LEAST_RECENT_RANDOM, ignoreCase = true)) {
+                return SHUFFLE_NO_REPEAT
+            }
+            return entries.firstOrNull { it.name.equals(normalized, ignoreCase = true) }
+        }
+    }
+}
+
+object SelectionModeSerializer : KSerializer<SelectionMode> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("SelectionMode", PrimitiveKind.STRING)
+
+    override fun serialize(encoder: Encoder, value: SelectionMode) {
+        encoder.encodeString(value.name)
+    }
+
+    override fun deserialize(decoder: Decoder): SelectionMode =
+        SelectionMode.fromStorage(decoder.decodeString()) ?: SelectionMode.FOLDER_BALANCED_SHUFFLE
 }
 
 /**
@@ -272,6 +286,11 @@ data class PortraitCollageSettings(
 ) {
     val maxPhotosClamped: Int get() = maxPhotos.coerceIn(2, 3)
     val cornerRadiusDpClamped: Int get() = cornerRadiusDp.coerceIn(0, 32)
+
+    fun normalized(): PortraitCollageSettings = copy(
+        maxPhotos = maxPhotosClamped,
+        cornerRadiusDp = cornerRadiusDpClamped,
+    )
 }
 
 /** 9-grid overlay anchor (spec §11). */
@@ -742,8 +761,6 @@ data class AppSettings(
     val portraitCollage: PortraitCollageSettings = PortraitCollageSettings(),
     /** New installations use the task-recommended folder-balanced mode. */
     val selectionMode: SelectionMode = SelectionMode.FOLDER_BALANCED_SHUFFLE,
-    /** One-time compatibility migration: legacy random becomes global no-repeat. */
-    val playbackOrderMigrationVersion: Int = 0,
     /** Restrict playback to photos the user marked as favourites (spec §9.4 curation). */
     val favoritesOnly: Boolean = false,
     /**
@@ -787,70 +804,6 @@ data class AppSettings(
 ) {
     val intervalSecondsClamped: Int get() = PlaybackInterval.clamp(intervalSeconds)
 
-    /** Apply non-destructive defaults migrations after deserialization/import. */
-    fun withCurrentDefaults(): AppSettings {
-        val migratedSelection = if (
-            playbackOrderMigrationVersion < PLAYBACK_ORDER_MIGRATION_V1 &&
-            selectionMode == SelectionMode.LEAST_RECENT_RANDOM
-        ) SelectionMode.SHUFFLE_NO_REPEAT else selectionMode
-
-        // The old Schedule -> Sleep UI and the newer Display -> Brightness automation
-        // used separate fields. Migrate the legacy timetable only when the newer model
-        // is still untouched; otherwise the explicitly configured newer model wins.
-        val migrationPending =
-            brightnessAutomationMigrationVersion < BRIGHTNESS_AUTOMATION_MIGRATION_V1
-        val shouldImportLegacySleep =
-            migrationPending && schedule.sleepEnabled &&
-                brightnessAutomation == BrightnessAutomationSettings()
-        val migratedBrightness = if (shouldImportLegacySleep) {
-            brightnessAutomation.copy(
-                mode = BrightnessMode.SCHEDULED,
-                manualBrightness = schedule.brightnessDay,
-                periods = listOf(
-                    BrightnessPeriod(
-                        id = "day",
-                        startTime = schedule.sleepEnd,
-                        brightness = schedule.brightnessDay,
-                        action = NightAction.DIM_ONLY,
-                    ),
-                    BrightnessPeriod(
-                        id = "night",
-                        startTime = schedule.sleepStart,
-                        brightness = schedule.brightnessNight,
-                        action = NightAction.PAUSE_SLIDESHOW,
-                    ),
-                ),
-            ).normalized()
-        } else {
-            brightnessAutomation.normalized()
-        }
-        val migratedSchedule = if (migrationPending) {
-            // Disable the legacy runtime switch after migration. The fields remain in
-            // the schema for backward-compatible import/export only.
-            schedule.copy(sleepEnabled = false)
-        } else {
-            schedule
-        }
-
-        return copy(
-            selectionMode = migratedSelection,
-            playbackOrderMigrationVersion = PLAYBACK_ORDER_MIGRATION_V1,
-            brightnessAutomationMigrationVersion = BRIGHTNESS_AUTOMATION_MIGRATION_V1,
-            schedule = migratedSchedule,
-            filters = filters.withCurrentDefaultFormats(),
-            transition = transition,
-            transitionDurationMs = transitionDurationMs.coerceIn(300, 2_000),
-            playlists = playlists.withCurrentDefaults(),
-            brightnessAutomation = migratedBrightness,
-            web = web.copy(rememberedBrowsers = web.rememberedBrowsers.normalized()),
-            webUpload = webUpload.normalized(),
-            localThumbnailCache = localThumbnailCache.normalized(),
-            onThisDay = onThisDay.normalized(),
-        )
-    }
-
-    companion object {
-        private const val PLAYBACK_ORDER_MIGRATION_V1 = 1
-        private const val BRIGHTNESS_AUTOMATION_MIGRATION_V1 = 1
-    }
+    /** Apply compatibility migrations and canonical bounds after deserialization/import. */
+    fun withCurrentDefaults(): AppSettings = AppSettingsCanonicalizer.normalize(this)
 }

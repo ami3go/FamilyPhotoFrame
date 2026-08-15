@@ -3910,28 +3910,6 @@ class SlideshowViewModel(
         _state.update { it.copy(weatherText = if (settings.enabled) text else null) }
     }
 
-    // ---- sleep schedule (spec §20 `schedule`) ----
-
-    fun setSleepEnabled(value: Boolean) {
-        viewModelScope.launch {
-            services.settings.update { it.copy(schedule = it.schedule.copy(sleepEnabled = value)) }
-        }
-    }
-
-    /** Accepts "HH:mm"; ignores malformed input so a half-typed time cannot break the schedule. */
-    fun setSleepStart(text: String) {
-        if (SleepSchedule.parseMinutes(text) == null) return
-        viewModelScope.launch {
-            services.settings.update { it.copy(schedule = it.schedule.copy(sleepStart = text.trim())) }
-        }
-    }
-
-    fun setSleepEnd(text: String) {
-        if (SleepSchedule.parseMinutes(text) == null) return
-        viewModelScope.launch {
-            services.settings.update { it.copy(schedule = it.schedule.copy(sleepEnd = text.trim())) }
-        }
-    }
 
     fun setNightBrightness(value: Float) {
         viewModelScope.launch {

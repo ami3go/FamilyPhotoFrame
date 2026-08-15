@@ -6,8 +6,6 @@ import com.example.familyphotoframe.data.diagnostics.DiagnosticsLog
 import com.example.familyphotoframe.data.diagnostics.diagnosticToken
 import com.example.familyphotoframe.data.source.BuiltInSourceIds
 import com.example.familyphotoframe.data.settings.SelectionMode
-import com.example.familyphotoframe.domain.randomize.FolderCycleQueue
-import com.example.familyphotoframe.domain.randomize.LeastRecentRandom
 import com.example.familyphotoframe.domain.randomize.PlaybackQueue
 import com.example.familyphotoframe.slideshow.shuffle.FolderBalancedShuffleCoordinator
 import com.example.familyphotoframe.slideshow.shuffle.FolderKey
@@ -73,7 +71,6 @@ class SlideshowEngine(
     @Volatile private var asleep: Boolean = false
     /** Temporary UI hold: pauses only the automatic dwell timer, not playback state. */
     @Volatile private var interactionHold: Boolean = false
-    @Volatile private var windowSize: Int = 50
     @Volatile private var selectionMode: SelectionMode = SelectionMode.FOLDER_BALANCED_SHUFFLE
     @Volatile private var favoritesOnly: Boolean = false
     @Volatile private var activePlaylistId: String = "builtin_all"
@@ -100,10 +97,6 @@ class SlideshowEngine(
     /** Sequential queues for the date-ordered modes. */
     private val primaryQueue = PlaybackQueue()
     private val fallbackQueue = PlaybackQueue()
-
-    /** Independent outer folder cycles for least-recent random playback. */
-    private val primaryFolderCycle = FolderCycleQueue()
-    private val fallbackFolderCycle = FolderCycleQueue()
 
     /** The already-selected and preloaded next photo; consuming it prevents queue skips. */
     private var reservedNext: Pick? = null
@@ -650,18 +643,10 @@ class SlideshowEngine(
     private fun resetSelectionState() {
         primaryQueue.reset()
         fallbackQueue.reset()
-        primaryFolderCycle.reset()
-        fallbackFolderCycle.reset()
         reservedNext = null
         previewReturnPick = null
     }
 
-    private fun publishFolderCycleProgress(queue: FolderCycleQueue) {
-        _ui.value = _ui.value.copy(
-            cycleShown = queue.poolSize - queue.remainingInCycle,
-            cycleTotal = queue.poolSize,
-        )
-    }
 
     private suspend fun cancelActiveReservation(reason: String) {
         val reservation = activeReservation ?: return
@@ -860,7 +845,7 @@ class SlideshowEngine(
         )
         val canPreselect = computeNextPreview && selectionMode != SelectionMode.FOLDER_BALANCED_SHUFFLE
         val preview = if (canPreselect) {
-            pick(excludeId = photo.id).also { reservedNext = it }?.item?.toDisplayPhoto()
+            pick().also { reservedNext = it }?.item?.toDisplayPhoto()
         } else null
         val progress = pick.scopeKey?.let { folderBalancedShuffle.progress(it) }
             ?.copy(unavailableSourceCount = unavailableSourceIds.size)
@@ -896,16 +881,13 @@ class SlideshowEngine(
     )
 
     /** Prefer a displayable primary photo; fall back to the fallback pool (spec §9.3 on_empty). */
-    private suspend fun pick(excludeId: Long? = null): Pick? {
-        val current = excludeId ?: _ui.value.current?.id
+    private suspend fun pick(): Pick? {
         if (primaryIds.isNotEmpty() ||
             (selectionMode == SelectionMode.FOLDER_BALANCED_SHUFFLE && unavailableSourceIds.isNotEmpty())
         ) {
             pickFrom(
                 sourceIds = primaryIds,
                 queue = primaryQueue,
-                folderCycle = primaryFolderCycle,
-                currentId = current,
                 cachedOnly = primaryCachedOnly,
                 poolRole = "primary",
                 fromFallback = false,
@@ -915,8 +897,6 @@ class SlideshowEngine(
             pickFrom(
                 sourceIds = fallbackIds,
                 queue = fallbackQueue,
-                folderCycle = fallbackFolderCycle,
-                currentId = current,
                 cachedOnly = false,
                 poolRole = "fallback",
                 fromFallback = true,
@@ -928,8 +908,6 @@ class SlideshowEngine(
     private suspend fun pickFrom(
         sourceIds: List<String>,
         queue: PlaybackQueue,
-        folderCycle: FolderCycleQueue,
-        currentId: Long?,
         cachedOnly: Boolean,
         poolRole: String,
         fromFallback: Boolean,
@@ -1033,31 +1011,6 @@ class SlideshowEngine(
             }
         }
 
-        if (selectionMode == SelectionMode.LEAST_RECENT_RANDOM) {
-            val eligibleFolders = dao.displayableFolderNames(
-                sourceIds, maxFailures, favFlag, cacheFlag, if (allowHeif) 1 else 0,
-                allFolders, folderArg,
-            )
-            folderCycle.sync(eligibleFolders, random)
-            repeat(eligibleFolders.size.coerceAtMost(MAX_FOLDER_MISSES)) {
-                val folder = folderCycle.next(random) ?: return null
-                val window = dao.leastRecentWindowInFolder(
-                    sourceIds = sourceIds,
-                    folderName = folder,
-                    maxFailures = maxFailures,
-                    window = windowSize,
-                    favoritesOnly = favFlag,
-                    cachedOnly = cacheFlag,
-                    allowHeif = if (allowHeif) 1 else 0,
-                )
-                val row = LeastRecentRandom.pick(window, currentId, random)
-                if (row != null) {
-                    publishFolderCycleProgress(folderCycle)
-                    return Pick(row, fromFallback)
-                }
-            }
-            return null
-        }
 
         val pool = when (selectionMode) {
             SelectionMode.SEQUENTIAL ->
@@ -1070,7 +1023,9 @@ class SlideshowEngine(
                 dao.displayableIdsByDateTakenAsc(sourceIds, maxFailures, favFlag, cacheFlag, if (allowHeif) 1 else 0, allFolders, folderArg)
             // Explicit id list, not a SQL predicate — see setOnThisDayPool.
             SelectionMode.ON_THIS_DAY -> onThisDayIds
-            else -> emptyList()
+            // Returned earlier; explicit branch keeps this when-expression exhaustive
+            // so adding another mode becomes a compiler-visible change.
+            SelectionMode.FOLDER_BALANCED_SHUFFLE -> emptyList()
         }
         if (pool.isEmpty()) return null
         queue.sync(pool, shuffleMode = selectionMode == SelectionMode.SHUFFLE_NO_REPEAT, random = random)
@@ -1093,7 +1048,7 @@ class SlideshowEngine(
         !row.isHidden && row.decodeFailureCount < maxFailures &&
             (allowHeif || !ImageFormatSupport.isHeif(row.fileName, row.mimeType))
 
-    /** Only used for legacy in-memory history; all database fields are preserved. */
+    /** Placeholder used by the bounded in-memory Previous/Next history. */
     private fun DisplayPhoto.toEntityPlaceholder() = PhotoItemEntity(
         id = id,
         stableId = stableId,
@@ -1152,7 +1107,6 @@ class SlideshowEngine(
          * times in a row is better re-synced on the next selection than spun on here.
          */
         const val MAX_QUEUE_MISSES = 8
-        const val MAX_FOLDER_MISSES = 256
         const val HISTORY_SKIP_LIMIT = 100
 
         /** Never-matching placeholder that keeps the bound list non-empty; see [pickFrom]. */
