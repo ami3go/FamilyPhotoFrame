@@ -5,7 +5,12 @@ import com.example.familyphotoframe.data.settings.ActiveSourceKind
 import com.example.familyphotoframe.data.settings.AspectMode
 import com.example.familyphotoframe.data.settings.BrightnessMode
 import com.example.familyphotoframe.data.settings.BrightnessPeriod
+import com.example.familyphotoframe.data.settings.CollageAlignment
+import com.example.familyphotoframe.data.settings.CollageBackground
 import com.example.familyphotoframe.data.settings.CollageGap
+import com.example.familyphotoframe.data.settings.CollageLayoutPreference
+import com.example.familyphotoframe.data.settings.CollageOrientationFilter
+import com.example.familyphotoframe.data.settings.CollageScaleMode
 import com.example.familyphotoframe.data.settings.CredentialPolicy
 import com.example.familyphotoframe.data.settings.MotionMode
 import com.example.familyphotoframe.data.settings.NightAction
@@ -103,6 +108,12 @@ internal class WebSettingsPatchApplier(
         str("portraitCollageGap")?.let { v ->
             if (CollageGap.entries.none { it.name == v }) return "Unknown portraitCollageGap"
         }
+        str("portraitCollageOrientationFilter")?.let { v -> if (CollageOrientationFilter.entries.none { it.name == v }) return "Unknown portraitCollageOrientationFilter" }
+        str("portraitCollageLayoutPreference")?.let { v -> if (CollageLayoutPreference.entries.none { it.name == v }) return "Unknown portraitCollageLayoutPreference" }
+        str("portraitCollageScaleMode")?.let { v -> if (CollageScaleMode.entries.none { it.name == v }) return "Unknown portraitCollageScaleMode" }
+        str("portraitCollageAlignment")?.let { v -> if (CollageAlignment.entries.none { it.name == v }) return "Unknown portraitCollageAlignment" }
+        str("portraitCollageBackground")?.let { v -> if (CollageBackground.entries.none { it.name == v }) return "Unknown portraitCollageBackground" }
+        int("portraitCollageCornerRadiusDp")?.let { if (it !in 0..32) return "portraitCollageCornerRadiusDp must be 0-32" }
         str("selectionMode")?.let { v ->
             // ON_THIS_DAY is system-managed only (empty pool otherwise) — never a valid
             // direct choice for the global selection mode. See SelectionMode.ON_THIS_DAY.
@@ -264,6 +275,12 @@ internal class WebSettingsPatchApplier(
                     gap = CollageGap.valueOf(v),
                 ))
             }
+            str("portraitCollageOrientationFilter")?.let { v -> next = next.copy(portraitCollage = next.portraitCollage.copy(orientationFilter = CollageOrientationFilter.valueOf(v))) }
+            str("portraitCollageLayoutPreference")?.let { v -> next = next.copy(portraitCollage = next.portraitCollage.copy(layoutPreference = CollageLayoutPreference.valueOf(v))) }
+            str("portraitCollageScaleMode")?.let { v -> next = next.copy(portraitCollage = next.portraitCollage.copy(scaleMode = CollageScaleMode.valueOf(v))) }
+            str("portraitCollageAlignment")?.let { v -> next = next.copy(portraitCollage = next.portraitCollage.copy(alignment = CollageAlignment.valueOf(v))) }
+            str("portraitCollageBackground")?.let { v -> next = next.copy(portraitCollage = next.portraitCollage.copy(background = CollageBackground.valueOf(v))) }
+            int("portraitCollageCornerRadiusDp")?.let { v -> next = next.copy(portraitCollage = next.portraitCollage.copy(cornerRadiusDp = v)) }
             bool("portraitCollageAnimateThree")?.let { v ->
                 next = next.copy(portraitCollage = next.portraitCollage.copy(
                     animateThreePhotoFrames = v,

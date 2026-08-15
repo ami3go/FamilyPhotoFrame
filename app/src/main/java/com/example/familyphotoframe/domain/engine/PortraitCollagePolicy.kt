@@ -1,5 +1,7 @@
 package com.example.familyphotoframe.domain.engine
 
+import com.example.familyphotoframe.data.settings.CollageLayoutPreference
+import com.example.familyphotoframe.data.settings.CollageOrientationFilter
 import com.example.familyphotoframe.data.settings.PortraitCollageMode
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -12,6 +14,7 @@ enum class CollageLayout(val tileCount: Int) {
     TWO_COLUMNS(2),
     TWO_ROWS(2),
     THREE_COLUMNS(3),
+    THREE_ROWS(3),
     FULL_TOP_TWO_BOTTOM(3),
     TWO_TOP_FULL_BOTTOM(3),
     FULL_LEFT_TWO_RIGHT(3),
@@ -44,6 +47,11 @@ object CollageLayoutGeometry {
             tile(0f, 0f, 1f / 3f, 1f),
             tile(1f / 3f, 0f, 2f / 3f, 1f),
             tile(2f / 3f, 0f, 1f, 1f),
+        )
+        CollageLayout.THREE_ROWS -> listOf(
+            tile(0f, 0f, 1f, 1f / 3f),
+            tile(0f, 1f / 3f, 1f, 2f / 3f),
+            tile(0f, 2f / 3f, 1f, 1f),
         )
         CollageLayout.FULL_TOP_TWO_BOTTOM -> listOf(
             tile(0f, 0f, 1f, .5f),
@@ -170,12 +178,16 @@ object PortraitCollagePolicy {
         candidates: List<CollageCandidateMeta>,
         maxPhotos: Int,
         nowEpochMs: Long,
+        orientationFilter: CollageOrientationFilter = CollageOrientationFilter.ANY,
+        layoutPreference: CollageLayoutPreference = CollageLayoutPreference.AUTO,
     ): CollageDecision? {
         if (mode == PortraitCollageMode.OFF || maxPhotos < 2 || screenWidth <= 0 || screenHeight <= 0) {
             return null
         }
+        if (!orientationAllowed(anchor.orientation, anchor.orientation, orientationFilter)) return null
         val bounded = candidates.asSequence()
             .filter { it.id != anchor.id }
+            .filter { orientationAllowed(it.orientation, anchor.orientation, orientationFilter) }
             .distinctBy { it.id }
             .take(MAX_OPTIMIZER_CANDIDATES)
             .toList()
@@ -199,6 +211,7 @@ object PortraitCollagePolicy {
                     screenWidth = screenWidth,
                     screenHeight = screenHeight,
                     nowEpochMs = nowEpochMs,
+                    layoutPreference = layoutPreference,
                     evaluatedLayout = { statsBuilder.evaluatedLayoutCount++ },
                 )?.let(two::add)
             }
@@ -212,6 +225,7 @@ object PortraitCollagePolicy {
                         screenWidth = screenWidth,
                         screenHeight = screenHeight,
                         nowEpochMs = nowEpochMs,
+                    layoutPreference = layoutPreference,
                         evaluatedLayout = { statsBuilder.evaluatedLayoutCount++ },
                     )?.let(three::add)
                 }
@@ -340,9 +354,10 @@ object PortraitCollagePolicy {
         screenWidth: Int,
         screenHeight: Int,
         nowEpochMs: Long,
+        layoutPreference: CollageLayoutPreference = CollageLayoutPreference.AUTO,
         evaluatedLayout: () -> Unit,
     ): ScoredPresentation? {
-        val layouts = compatibleLayouts(photos.map { it.orientation })
+        val layouts = compatibleLayouts(photos.map { it.orientation }, layoutPreference)
         // Folder-balanced shuffle requires the reservation anchor to be the first
         // presented id. Adaptive layout variants plus companion permutations still
         // cover the useful PPL/PLL/LLL arrangements without moving the anchor.
@@ -389,38 +404,45 @@ object PortraitCollagePolicy {
         return best
     }
 
-    private fun compatibleLayouts(orientations: List<PhotoOrientation>): List<CollageLayout> {
-        if (orientations.size == 2) {
-            return if (orientations.all { it == PhotoOrientation.PORTRAIT }) {
-                listOf(CollageLayout.TWO_COLUMNS)
-            } else {
-                listOf(CollageLayout.TWO_COLUMNS, CollageLayout.TWO_ROWS)
-            }
+    private fun compatibleLayouts(
+        orientations: List<PhotoOrientation>,
+        preference: CollageLayoutPreference,
+    ): List<CollageLayout> {
+        if (orientations.size == 2) return when (preference) {
+            CollageLayoutPreference.COLUMNS -> listOf(CollageLayout.TWO_COLUMNS)
+            CollageLayoutPreference.ROWS -> listOf(CollageLayout.TWO_ROWS)
+            CollageLayoutPreference.FEATURED, CollageLayoutPreference.AUTO ->
+                if (orientations.all { it == PhotoOrientation.PORTRAIT }) listOf(CollageLayout.TWO_COLUMNS)
+                else listOf(CollageLayout.TWO_COLUMNS, CollageLayout.TWO_ROWS)
         }
         if (orientations.size != 3) return emptyList()
+        if (preference == CollageLayoutPreference.COLUMNS) return listOf(CollageLayout.THREE_COLUMNS)
+        if (preference == CollageLayoutPreference.ROWS) return listOf(CollageLayout.THREE_ROWS)
+        val featured = listOf(
+            CollageLayout.FULL_TOP_TWO_BOTTOM, CollageLayout.TWO_TOP_FULL_BOTTOM,
+            CollageLayout.FULL_LEFT_TWO_RIGHT, CollageLayout.TWO_LEFT_FULL_RIGHT,
+        )
+        if (preference == CollageLayoutPreference.FEATURED) return featured
         val portrait = orientations.count { it == PhotoOrientation.PORTRAIT }
         val landscape = orientations.count { it == PhotoOrientation.LANDSCAPE }
         val square = orientations.size - portrait - landscape
         return when {
             portrait == 3 -> listOf(CollageLayout.THREE_COLUMNS)
-            landscape == 3 -> listOf(
-                CollageLayout.FULL_TOP_TWO_BOTTOM,
-                CollageLayout.TWO_TOP_FULL_BOTTOM,
-            )
-            square > 0 -> listOf(
-                CollageLayout.THREE_COLUMNS,
-                CollageLayout.FULL_TOP_TWO_BOTTOM,
-                CollageLayout.TWO_TOP_FULL_BOTTOM,
-                CollageLayout.FULL_LEFT_TWO_RIGHT,
-                CollageLayout.TWO_LEFT_FULL_RIGHT,
-            )
-            else -> listOf(
-                CollageLayout.FULL_TOP_TWO_BOTTOM,
-                CollageLayout.TWO_TOP_FULL_BOTTOM,
-                CollageLayout.FULL_LEFT_TWO_RIGHT,
-                CollageLayout.TWO_LEFT_FULL_RIGHT,
-            )
+            landscape == 3 -> listOf(CollageLayout.FULL_TOP_TWO_BOTTOM, CollageLayout.TWO_TOP_FULL_BOTTOM)
+            square > 0 -> listOf(CollageLayout.THREE_COLUMNS) + featured
+            else -> featured
         }
+    }
+
+    private fun orientationAllowed(
+        orientation: PhotoOrientation,
+        anchorOrientation: PhotoOrientation,
+        filter: CollageOrientationFilter,
+    ): Boolean = when (filter) {
+        CollageOrientationFilter.ANY -> true
+        CollageOrientationFilter.PORTRAIT_ONLY -> orientation == PhotoOrientation.PORTRAIT
+        CollageOrientationFilter.LANDSCAPE_ONLY -> orientation == PhotoOrientation.LANDSCAPE
+        CollageOrientationFilter.SAME_AS_ANCHOR -> orientation == anchorOrientation
     }
 
     private fun orientationTier(orientations: List<PhotoOrientation>): Int {

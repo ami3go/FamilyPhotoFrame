@@ -55,7 +55,12 @@ import com.example.familyphotoframe.data.settings.ActiveSourceKind
 import com.example.familyphotoframe.data.settings.AspectMode
 import com.example.familyphotoframe.data.settings.FilterSettings
 import com.example.familyphotoframe.data.settings.MotionMode
+import com.example.familyphotoframe.data.settings.CollageAlignment
+import com.example.familyphotoframe.data.settings.CollageBackground
 import com.example.familyphotoframe.data.settings.CollageGap
+import com.example.familyphotoframe.data.settings.CollageLayoutPreference
+import com.example.familyphotoframe.data.settings.CollageOrientationFilter
+import com.example.familyphotoframe.data.settings.CollageScaleMode
 import com.example.familyphotoframe.data.settings.PortraitCollageMode
 import com.example.familyphotoframe.data.settings.PortraitFallback
 import com.example.familyphotoframe.data.settings.OverlayPosition
@@ -300,6 +305,48 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
         )
     }
 
+    Text(stringResource(R.string.settings_collage_orientation))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(state.portraitCollage.orientationFilter == CollageOrientationFilter.ANY, { vm.setCollageOrientationFilter(CollageOrientationFilter.ANY) }, { Text(stringResource(R.string.settings_collage_orientation_any)) })
+        FilterChip(state.portraitCollage.orientationFilter == CollageOrientationFilter.PORTRAIT_ONLY, { vm.setCollageOrientationFilter(CollageOrientationFilter.PORTRAIT_ONLY) }, { Text(stringResource(R.string.settings_collage_orientation_vertical)) })
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(state.portraitCollage.orientationFilter == CollageOrientationFilter.LANDSCAPE_ONLY, { vm.setCollageOrientationFilter(CollageOrientationFilter.LANDSCAPE_ONLY) }, { Text(stringResource(R.string.settings_collage_orientation_horizontal)) })
+        FilterChip(state.portraitCollage.orientationFilter == CollageOrientationFilter.SAME_AS_ANCHOR, { vm.setCollageOrientationFilter(CollageOrientationFilter.SAME_AS_ANCHOR) }, { Text(stringResource(R.string.settings_collage_orientation_match)) })
+    }
+    Text(stringResource(R.string.settings_collage_layout))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(state.portraitCollage.layoutPreference == CollageLayoutPreference.AUTO, { vm.setCollageLayoutPreference(CollageLayoutPreference.AUTO) }, { Text(stringResource(R.string.settings_collage_layout_auto)) })
+        FilterChip(state.portraitCollage.layoutPreference == CollageLayoutPreference.COLUMNS, { vm.setCollageLayoutPreference(CollageLayoutPreference.COLUMNS) }, { Text(stringResource(R.string.settings_collage_layout_columns)) })
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(state.portraitCollage.layoutPreference == CollageLayoutPreference.ROWS, { vm.setCollageLayoutPreference(CollageLayoutPreference.ROWS) }, { Text(stringResource(R.string.settings_collage_layout_rows)) })
+        FilterChip(state.portraitCollage.layoutPreference == CollageLayoutPreference.FEATURED, { vm.setCollageLayoutPreference(CollageLayoutPreference.FEATURED) }, { Text(stringResource(R.string.settings_collage_layout_featured)) })
+    }
+    Text(stringResource(R.string.settings_collage_scaling))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(state.portraitCollage.scaleMode == CollageScaleMode.CROP, { vm.setCollageScaleMode(CollageScaleMode.CROP) }, { Text(stringResource(R.string.settings_collage_scaling_crop)) })
+        FilterChip(state.portraitCollage.scaleMode == CollageScaleMode.FIT, { vm.setCollageScaleMode(CollageScaleMode.FIT) }, { Text(stringResource(R.string.settings_collage_scaling_fit)) })
+    }
+    Text(stringResource(R.string.settings_collage_alignment))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(state.portraitCollage.alignment == CollageAlignment.LEFT, { vm.setCollageAlignment(CollageAlignment.LEFT) }, { Text(stringResource(R.string.settings_collage_left)) })
+        FilterChip(state.portraitCollage.alignment == CollageAlignment.CENTER, { vm.setCollageAlignment(CollageAlignment.CENTER) }, { Text(stringResource(R.string.settings_collage_center)) })
+        FilterChip(state.portraitCollage.alignment == CollageAlignment.RIGHT, { vm.setCollageAlignment(CollageAlignment.RIGHT) }, { Text(stringResource(R.string.settings_collage_right)) })
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(state.portraitCollage.alignment == CollageAlignment.TOP, { vm.setCollageAlignment(CollageAlignment.TOP) }, { Text(stringResource(R.string.settings_collage_top)) })
+        FilterChip(state.portraitCollage.alignment == CollageAlignment.BOTTOM, { vm.setCollageAlignment(CollageAlignment.BOTTOM) }, { Text(stringResource(R.string.settings_collage_bottom)) })
+    }
+    Text(stringResource(R.string.settings_collage_background))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(state.portraitCollage.background == CollageBackground.APP_BACKGROUND, { vm.setCollageBackground(CollageBackground.APP_BACKGROUND) }, { Text(stringResource(R.string.settings_collage_background_frame)) })
+        FilterChip(state.portraitCollage.background == CollageBackground.BLACK, { vm.setCollageBackground(CollageBackground.BLACK) }, { Text(stringResource(R.string.settings_collage_background_black)) })
+        FilterChip(state.portraitCollage.background == CollageBackground.WHITE, { vm.setCollageBackground(CollageBackground.WHITE) }, { Text(stringResource(R.string.settings_collage_background_white)) })
+    }
+    Text(stringResource(R.string.settings_collage_corner_radius, state.portraitCollage.cornerRadiusDpClamped))
+    Slider(value = state.portraitCollage.cornerRadiusDpClamped.toFloat(), onValueChange = { vm.setCollageCornerRadiusDp(it.roundToInt()) }, valueRange = 0f..32f, steps = 7)
+
     ToggleRow(
         label = stringResource(R.string.settings_collage_animate_three),
         checked = state.portraitCollage.animateThreePhotoFrames,
@@ -356,6 +403,11 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
             selected = state.portraitCollage.gap == CollageGap.MEDIUM,
             onClick = { vm.setCollageGap(CollageGap.MEDIUM) },
             label = { Text(stringResource(R.string.settings_collage_gap_medium)) },
+        )
+        FilterChip(
+            selected = state.portraitCollage.gap == CollageGap.LARGE,
+            onClick = { vm.setCollageGap(CollageGap.LARGE) },
+            label = { Text(stringResource(R.string.settings_collage_gap_large)) },
         )
     }
     }
