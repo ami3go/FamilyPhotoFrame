@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.example.familyphotoframe.data.settings.TransitionModeTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-08-07T04:51:47" hostname="aleksu-Vostro-5471" time="0.002">
+<testsuite name="com.example.familyphotoframe.data.settings.TransitionModeTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-08-15T06:27:21" hostname="runnervmzvulz" time="0.005">
   <properties/>
   <testcase name="allTenEffectsHaveStableIdentifiers" classname="com.example.familyphotoframe.data.settings.TransitionModeTest" time="0.001"/>
   <testcase name="unknownValueFallsBackToCrossfade" classname="com.example.familyphotoframe.data.settings.TransitionModeTest" time="0.0"/>
-  <testcase name="serializerReadsLegacyEnumNames" classname="com.example.familyphotoframe.data.settings.TransitionModeTest" time="0.0"/>
-  <testcase name="serializerWritesStableLowercaseIdentifier" classname="com.example.familyphotoframe.data.settings.TransitionModeTest" time="0.001"/>
+  <testcase name="serializerReadsLegacyEnumNames" classname="com.example.familyphotoframe.data.settings.TransitionModeTest" time="0.001"/>
+  <testcase name="serializerWritesStableLowercaseIdentifier" classname="com.example.familyphotoframe.data.settings.TransitionModeTest" time="0.002"/>
   <testcase name="selectionModeSerializerUsesStableIdentifiers" classname="com.example.familyphotoframe.data.settings.TransitionModeTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>

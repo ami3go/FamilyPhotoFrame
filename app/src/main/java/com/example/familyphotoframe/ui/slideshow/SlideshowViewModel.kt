@@ -44,7 +44,12 @@ import com.example.familyphotoframe.data.settings.BrightnessMode
 import com.example.familyphotoframe.data.settings.BrightnessPeriod
 import com.example.familyphotoframe.data.settings.NightAction
 import com.example.familyphotoframe.data.settings.MotionMode
+import com.example.familyphotoframe.data.settings.CollageAlignment
+import com.example.familyphotoframe.data.settings.CollageBackground
 import com.example.familyphotoframe.data.settings.CollageGap
+import com.example.familyphotoframe.data.settings.CollageLayoutPreference
+import com.example.familyphotoframe.data.settings.CollageOrientationFilter
+import com.example.familyphotoframe.data.settings.CollageScaleMode
 import com.example.familyphotoframe.data.settings.PortraitCollageMode
 import com.example.familyphotoframe.data.settings.PortraitFallback
 import com.example.familyphotoframe.data.settings.OverlayPosition
@@ -3661,6 +3666,13 @@ class SlideshowViewModel(
             services.settings.update { it.copy(portraitCollage = it.portraitCollage.copy(gap = gap)) }
         }
     }
+
+    fun setCollageOrientationFilter(filter: CollageOrientationFilter) = viewModelScope.launch { services.settings.update { it.copy(portraitCollage = it.portraitCollage.copy(orientationFilter = filter)) } }
+    fun setCollageLayoutPreference(preference: CollageLayoutPreference) = viewModelScope.launch { services.settings.update { it.copy(portraitCollage = it.portraitCollage.copy(layoutPreference = preference)) } }
+    fun setCollageScaleMode(mode: CollageScaleMode) = viewModelScope.launch { services.settings.update { it.copy(portraitCollage = it.portraitCollage.copy(scaleMode = mode)) } }
+    fun setCollageAlignment(alignment: CollageAlignment) = viewModelScope.launch { services.settings.update { it.copy(portraitCollage = it.portraitCollage.copy(alignment = alignment)) } }
+    fun setCollageBackground(background: CollageBackground) = viewModelScope.launch { services.settings.update { it.copy(portraitCollage = it.portraitCollage.copy(background = background)) } }
+    fun setCollageCornerRadiusDp(radiusDp: Int) = viewModelScope.launch { services.settings.update { it.copy(portraitCollage = it.portraitCollage.copy(cornerRadiusDp = radiusDp.coerceIn(0, 32))) } }
 
     // ---- display-time EXIF backfill (Phase 2 increment 8) ----
 

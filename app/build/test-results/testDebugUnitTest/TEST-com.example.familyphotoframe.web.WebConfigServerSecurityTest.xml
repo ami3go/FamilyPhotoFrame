@@ -1,26 +1,26 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.example.familyphotoframe.web.WebConfigServerSecurityTest" tests="20" skipped="0" failures="0" errors="0" timestamp="2026-08-07T04:51:49" hostname="aleksu-Vostro-5471" time="2.634">
+<testsuite name="com.example.familyphotoframe.web.WebConfigServerSecurityTest" tests="20" skipped="0" failures="0" errors="0" timestamp="2026-08-15T06:27:23" hostname="runnervmzvulz" time="1.725">
   <properties/>
-  <testcase name="stateChangeWithSessionAndCsrfSucceeds" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.36"/>
-  <testcase name="versionedSettingsRequireAuthenticationAndCsrf" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.224"/>
-  <testcase name="qrTokenPairsOnceThenIsConsumed" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.09"/>
-  <testcase name="stateChangeWithoutCsrfIsRejected" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.185"/>
-  <testcase name="staticAssetsArePublicButPreviewRequiresPairing" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.081"/>
-  <testcase name="browserKeepAliveSocketsCannotStarveBoundedWorkers" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.13"/>
-  <testcase name="forgedSessionTokenIsRejected" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.13"/>
-  <testcase name="staleSettingsRevisionIsRejectedStructurally" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.152"/>
-  <testcase name="unauthenticated_cannotReadStatusOrDiagnostics" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.082"/>
-  <testcase name="setupPageIsServedWithoutAuth" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.014"/>
-  <testcase name="logoutRevokesTheSession" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.1"/>
-  <testcase name="unauthenticated_cannotWriteConfig" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.076"/>
-  <testcase name="correctPinGrantsAccess" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.17"/>
-  <testcase name="wrongPinIsRejected" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.148"/>
-  <testcase name="unauthenticated_cannotReadConfig" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.087"/>
-  <testcase name="configResponseContainsNoSecrets" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.153"/>
-  <testcase name="stateChangeWithWrongCsrfIsRejected" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.15"/>
-  <testcase name="unauthenticated_cannotControlTheFrame" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.073"/>
-  <testcase name="crossSiteOriginIsRejected" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.107"/>
-  <testcase name="authenticatedDiagnosticsBundleIsStreamedCompletely" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.121"/>
+  <testcase name="stateChangeWithSessionAndCsrfSucceeds" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.304"/>
+  <testcase name="versionedSettingsRequireAuthenticationAndCsrf" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.203"/>
+  <testcase name="qrTokenPairsOnceThenIsConsumed" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.053"/>
+  <testcase name="stateChangeWithoutCsrfIsRejected" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.08"/>
+  <testcase name="staticAssetsArePublicButPreviewRequiresPairing" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.095"/>
+  <testcase name="browserKeepAliveSocketsCannotStarveBoundedWorkers" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.149"/>
+  <testcase name="forgedSessionTokenIsRejected" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.08"/>
+  <testcase name="staleSettingsRevisionIsRejectedStructurally" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.068"/>
+  <testcase name="unauthenticated_cannotReadStatusOrDiagnostics" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.053"/>
+  <testcase name="setupPageIsServedWithoutAuth" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.022"/>
+  <testcase name="logoutRevokesTheSession" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.079"/>
+  <testcase name="unauthenticated_cannotWriteConfig" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.044"/>
+  <testcase name="correctPinGrantsAccess" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.06"/>
+  <testcase name="wrongPinIsRejected" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.063"/>
+  <testcase name="unauthenticated_cannotReadConfig" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.041"/>
+  <testcase name="configResponseContainsNoSecrets" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.069"/>
+  <testcase name="stateChangeWithWrongCsrfIsRejected" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.072"/>
+  <testcase name="unauthenticated_cannotControlTheFrame" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.04"/>
+  <testcase name="crossSiteOriginIsRejected" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.075"/>
+  <testcase name="authenticatedDiagnosticsBundleIsStreamedCompletely" classname="com.example.familyphotoframe.web.WebConfigServerSecurityTest" time="0.073"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

@@ -10,6 +10,8 @@ import coil.request.ImageRequest
 import coil.request.SuccessResult
 import com.example.familyphotoframe.data.settings.AspectMode
 import com.example.familyphotoframe.data.settings.CollageGap
+import com.example.familyphotoframe.data.settings.CollageLayoutPreference
+import com.example.familyphotoframe.data.settings.CollageOrientationFilter
 import com.example.familyphotoframe.data.settings.PortraitCollageMode
 import com.example.familyphotoframe.data.settings.PortraitFallback
 import com.example.familyphotoframe.domain.engine.CollageLayout
@@ -152,6 +154,7 @@ private suspend fun createTransitionBlur(
                         CollageGap.NONE -> 0f
                         CollageGap.SMALL -> 4f * scale
                         CollageGap.MEDIUM -> 8f * scale
+        CollageGap.LARGE -> 16f * scale
                     }
                     val destinations = collageDestinationRects(
                         slide.layout, width.toFloat(), height.toFloat(), gapPx,
@@ -347,6 +350,7 @@ private fun collageGapPixels(context: android.content.Context, gap: CollageGap):
         CollageGap.NONE -> 0f
         CollageGap.SMALL -> 4f * density
         CollageGap.MEDIUM -> 8f * density
+        CollageGap.LARGE -> 16f * density
     }
 }
 
@@ -372,6 +376,8 @@ internal suspend fun prepareSlide(
     memoryMaxCollagePhotos: Int = maxCollagePhotos,
     portraitFallback: PortraitFallback,
     collageGap: CollageGap,
+    collageOrientationFilter: CollageOrientationFilter = CollageOrientationFilter.ANY,
+    collageLayoutPreference: CollageLayoutPreference = CollageLayoutPreference.AUTO,
     prepareSoftFocusBlur: Boolean,
     allowBlurredBackground: Boolean,
     excludedIds: Set<Long>,
@@ -669,6 +675,8 @@ internal suspend fun prepareSlide(
             }
             return mapOf(
             "collageMode" to collageMode.name,
+            "collageOrientationFilter" to collageOrientationFilter.name,
+            "collageLayoutPreference" to collageLayoutPreference.name,
             "configuredMaxCollagePhotos" to configuredMaxCollagePhotos.toString(),
             "memoryMaxCollagePhotos" to memoryMaxCollagePhotos.toString(),
             "effectiveMaxCollagePhotos" to effectiveMaxPhotos.toString(),
@@ -716,6 +724,8 @@ internal suspend fun prepareSlide(
                 candidates = mutableCandidates.map { it.meta },
                 maxPhotos = maxCollagePhotos.coerceIn(1, 3),
                 nowEpochMs = System.currentTimeMillis(),
+                orientationFilter = collageOrientationFilter,
+                layoutPreference = collageLayoutPreference,
             )
             if (decision == null) {
                 val fallbackMode = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) {

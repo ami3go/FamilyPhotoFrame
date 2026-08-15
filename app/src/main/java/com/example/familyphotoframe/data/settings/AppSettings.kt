@@ -242,8 +242,18 @@ enum class PortraitCollageMode { OFF, AUTOMATIC, ALWAYS_TWO, PREFER_THREE }
 /** Fallback used when a portrait photo has no compatible same-folder companions. */
 enum class PortraitFallback { BLURRED_BACKGROUND, SOLID_BACKGROUND, CROP_TO_FILL }
 
+/** Which photo orientations are allowed to participate in a collage. */
+enum class CollageOrientationFilter { ANY, PORTRAIT_ONLY, LANDSCAPE_ONLY, SAME_AS_ANCHOR }
+/** How the optimizer may arrange selected photos. */
+enum class CollageLayoutPreference { AUTO, COLUMNS, ROWS, FEATURED }
+/** Whether a tile crops to fill or keeps the full photo visible. */
+enum class CollageScaleMode { CROP, FIT }
+/** Focal placement used for crop anchoring and fitted-image positioning. */
+enum class CollageAlignment { CENTER, TOP, BOTTOM, LEFT, RIGHT }
+/** Background for tile letterboxing and visible gaps. */
+enum class CollageBackground { APP_BACKGROUND, BLACK, WHITE }
 /** Visual gap between collage tiles. */
-enum class CollageGap { NONE, SMALL, MEDIUM }
+enum class CollageGap { NONE, SMALL, MEDIUM, LARGE }
 
 @Serializable
 data class PortraitCollageSettings(
@@ -251,15 +261,17 @@ data class PortraitCollageSettings(
     val maxPhotos: Int = 3,
     val fallback: PortraitFallback = PortraitFallback.BLURRED_BACKGROUND,
     val gap: CollageGap = CollageGap.SMALL,
-    /**
-     * Task §12: subtle continuous motion on three-portrait-photo frames.
-     *
-     * Only the on/off switch is public; the internal OFF/SUBTLE/NORMAL profiles exist so
-     * accessibility settings can reduce amplitude (task §13) without a second code path.
-     */
+    val orientationFilter: CollageOrientationFilter = CollageOrientationFilter.ANY,
+    val layoutPreference: CollageLayoutPreference = CollageLayoutPreference.AUTO,
+    val scaleMode: CollageScaleMode = CollageScaleMode.CROP,
+    val alignment: CollageAlignment = CollageAlignment.CENTER,
+    val background: CollageBackground = CollageBackground.APP_BACKGROUND,
+    val cornerRadiusDp: Int = 0,
+    /** Subtle continuous motion on equal three-photo portrait frames. */
     val animateThreePhotoFrames: Boolean = true,
 ) {
     val maxPhotosClamped: Int get() = maxPhotos.coerceIn(2, 3)
+    val cornerRadiusDpClamped: Int get() = cornerRadiusDp.coerceIn(0, 32)
 }
 
 /** 9-grid overlay anchor (spec §11). */

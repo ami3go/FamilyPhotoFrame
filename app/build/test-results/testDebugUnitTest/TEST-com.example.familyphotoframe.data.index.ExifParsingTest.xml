@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.example.familyphotoframe.data.index.ExifParsingTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-08-07T04:51:38" hostname="aleksu-Vostro-5471" time="0.052">
+<testsuite name="com.example.familyphotoframe.data.index.ExifParsingTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-08-15T06:27:18" hostname="runnervmzvulz" time="0.041">
   <properties/>
-  <testcase name="parsesStandardExifDateTimeWithoutOffset_usingGivenZone" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.009"/>
-  <testcase name="cleanCaptionRejectsBlankAndPlaceholderJunk" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.001"/>
-  <testcase name="parsesStandardExifDateTimeWithExplicitOffset" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.021"/>
-  <testcase name="cleanCaptionTrimsAndKeepsRealText" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.0"/>
-  <testcase name="formatsGpsCoordinateForAllQuadrants" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.007"/>
-  <testcase name="gpsCoordinateFormattingIsLocaleIndependent" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.001"/>
-  <testcase name="malformedDateReturnsNullInsteadOfThrowing" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.004"/>
+  <testcase name="parsesStandardExifDateTimeWithoutOffset_usingGivenZone" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.02"/>
+  <testcase name="cleanCaptionRejectsBlankAndPlaceholderJunk" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.0"/>
+  <testcase name="parsesStandardExifDateTimeWithExplicitOffset" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.009"/>
+  <testcase name="cleanCaptionTrimsAndKeepsRealText" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.001"/>
+  <testcase name="formatsGpsCoordinateForAllQuadrants" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.004"/>
+  <testcase name="gpsCoordinateFormattingIsLocaleIndependent" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.002"/>
+  <testcase name="malformedDateReturnsNullInsteadOfThrowing" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.0"/>
   <testcase name="garbageOffsetFallsBackToZoneInterpretation" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.0"/>
-  <testcase name="cleanCaptionTruncatesVeryLongText" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.002"/>
+  <testcase name="cleanCaptionTruncatesVeryLongText" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.0"/>
   <testcase name="zeroedPlaceholderDateReturnsNull" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.0"/>
   <testcase name="blankOrNullDateReturnsNull" classname="com.example.familyphotoframe.data.index.ExifParsingTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>

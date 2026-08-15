@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-08-07T04:51:48" hostname="aleksu-Vostro-5471" time="0.009">
+<testsuite name="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-08-15T06:27:22" hostname="runnervmzvulz" time="0.02">
   <properties/>
-  <testcase name="minutesUntilChangeWhenAwake" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.001"/>
-  <testcase name="minutesUntilChangeWhenAsleep" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.0"/>
+  <testcase name="minutesUntilChangeWhenAwake" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.003"/>
+  <testcase name="minutesUntilChangeWhenAsleep" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.005"/>
   <testcase name="formatRoundTrips" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.001"/>
   <testcase name="parsesValidTimes" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.0"/>
   <testcase name="zeroLengthWindowNeverSleeps" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.0"/>
   <testcase name="brightnessFollowsState" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.0"/>
   <testcase name="rejectsMalformedTimes" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.0"/>
   <testcase name="wrappingWindowCoversBothSidesOfMidnight" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.0"/>
-  <testcase name="minutesUntilChangeIsAlwaysPositive" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.002"/>
+  <testcase name="minutesUntilChangeIsAlwaysPositive" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.009"/>
   <testcase name="sameDayWindow" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.0"/>
   <testcase name="brightnessNeverFullyBlack" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.0"/>
-  <testcase name="evaluationIsStatelessAcrossRestart" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.003"/>
+  <testcase name="evaluationIsStatelessAcrossRestart" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.001"/>
   <testcase name="windowLengthMatchesConfiguredHours" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.0"/>
-  <testcase name="outOfRangeMinutesWrapSafely" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.0"/>
+  <testcase name="outOfRangeMinutesWrapSafely" classname="com.example.familyphotoframe.domain.schedule.SleepScheduleTest" time="0.001"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

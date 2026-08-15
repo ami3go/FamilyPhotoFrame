@@ -5,6 +5,13 @@ import com.example.familyphotoframe.data.settings.BrightnessAutomationSettings
 import com.example.familyphotoframe.data.settings.BrightnessMode
 import com.example.familyphotoframe.data.settings.BrightnessPeriod
 import com.example.familyphotoframe.data.settings.NightAction
+import com.example.familyphotoframe.data.settings.CollageAlignment
+import com.example.familyphotoframe.data.settings.CollageBackground
+import com.example.familyphotoframe.data.settings.CollageGap
+import com.example.familyphotoframe.data.settings.CollageLayoutPreference
+import com.example.familyphotoframe.data.settings.CollageOrientationFilter
+import com.example.familyphotoframe.data.settings.CollageScaleMode
+import com.example.familyphotoframe.data.settings.PortraitCollageSettings
 import com.example.familyphotoframe.data.settings.FilterSettings
 import com.example.familyphotoframe.data.settings.PlaylistScheduleRule
 import com.example.familyphotoframe.data.settings.PlaylistSettings
@@ -88,4 +95,25 @@ class WebSettingsJsonTest {
         assertEquals(0.65f, json.getValue("brightnessDay").jsonPrimitive.content.toFloat(), 0.0001f)
         assertEquals(0.10f, json.getValue("brightnessNight").jsonPrimitive.content.toFloat(), 0.0001f)
     }
+    @Test
+    fun collageCustomizationIsProjectedForWebParity() {
+        val settings=AppSettings(portraitCollage=PortraitCollageSettings(
+            gap=CollageGap.LARGE,
+            orientationFilter=CollageOrientationFilter.LANDSCAPE_ONLY,
+            layoutPreference=CollageLayoutPreference.ROWS,
+            scaleMode=CollageScaleMode.FIT,
+            alignment=CollageAlignment.TOP,
+            background=CollageBackground.BLACK,
+            cornerRadiusDp=24,
+        ))
+        val json=WebSettingsJson.redactedConfig(settings,nextScheduleAction="none")
+        assertEquals("LANDSCAPE_ONLY",json.getValue("portraitCollageOrientationFilter").jsonPrimitive.content)
+        assertEquals("ROWS",json.getValue("portraitCollageLayoutPreference").jsonPrimitive.content)
+        assertEquals("FIT",json.getValue("portraitCollageScaleMode").jsonPrimitive.content)
+        assertEquals("TOP",json.getValue("portraitCollageAlignment").jsonPrimitive.content)
+        assertEquals("BLACK",json.getValue("portraitCollageBackground").jsonPrimitive.content)
+        assertEquals("24",json.getValue("portraitCollageCornerRadiusDp").jsonPrimitive.content)
+        assertEquals("LARGE",json.getValue("portraitCollageGap").jsonPrimitive.content)
+    }
+
 }

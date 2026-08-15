@@ -1,22 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.example.familyphotoframe.data.weather.WeatherTest" tests="16" skipped="0" failures="0" errors="0" timestamp="2026-08-07T04:51:48" hostname="aleksu-Vostro-5471" time="0.016">
+<testsuite name="com.example.familyphotoframe.data.weather.WeatherTest" tests="16" skipped="0" failures="0" errors="0" timestamp="2026-08-15T06:27:22" hostname="runnervmzvulz" time="0.013">
   <properties/>
-  <testcase name="trailingSlashDoesNotDoubleUp" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.002"/>
-  <testcase name="markedStaleButStillShownAfterThreshold" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.004"/>
+  <testcase name="trailingSlashDoesNotDoubleUp" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.001"/>
+  <testcase name="markedStaleButStillShownAfterThreshold" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.002"/>
   <testcase name="visibleAndFreshForRecentSnapshot" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.0"/>
   <testcase name="hiddenOnceBeyondMaxAge" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.001"/>
   <testcase name="labelsCoverCommonConditions" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.0"/>
-  <testcase name="malformedPayloadsReturnNull" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.003"/>
+  <testcase name="malformedPayloadsReturnNull" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.002"/>
   <testcase name="urlCarriesCoordinatesAndFields" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.001"/>
-  <testcase name="toleratesUnknownFields" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.002"/>
+  <testcase name="toleratesUnknownFields" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.001"/>
   <testcase name="roundsRatherThanTruncates" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.0"/>
   <testcase name="apiKeyIsAppendedOnlyWhenPresent" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.0"/>
   <testcase name="formatsCelsius" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.0"/>
-  <testcase name="missingWeatherCodeStillParses" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.0"/>
+  <testcase name="missingWeatherCodeStillParses" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.001"/>
   <testcase name="hiddenWhenNoSnapshotYet" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.0"/>
-  <testcase name="convertsToFahrenheit" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.001"/>
+  <testcase name="convertsToFahrenheit" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.0"/>
   <testcase name="parsesCurrentConditions" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.0"/>
-  <testcase name="omitsLabelForUnknownCode" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.001"/>
+  <testcase name="omitsLabelForUnknownCode" classname="com.example.familyphotoframe.data.weather.WeatherTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

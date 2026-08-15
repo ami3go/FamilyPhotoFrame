@@ -43,6 +43,8 @@ public final class PhotoDao_Impl implements PhotoDao {
 
   private final SharedSQLiteStatement __preparedStmtOfDeleteStaleForSource;
 
+  private final SharedSQLiteStatement __preparedStmtOfUpdateDimensionsIfMissing;
+
   private final SharedSQLiteStatement __preparedStmtOfUpdateContentHash;
 
   private final SharedSQLiteStatement __preparedStmtOfMarkContentHashAttempt;
@@ -185,6 +187,17 @@ public final class PhotoDao_Impl implements PhotoDao {
       @NonNull
       public String createQuery() {
         final String _query = "DELETE FROM photos WHERE sourceId = ? AND indexedAtEpochMs < ?";
+        return _query;
+      }
+    };
+    this.__preparedStmtOfUpdateDimensionsIfMissing = new SharedSQLiteStatement(__db) {
+      @Override
+      @NonNull
+      public String createQuery() {
+        final String _query = "\n"
+                + "        UPDATE photos SET width = ?, height = ?\n"
+                + "        WHERE id = ? AND (width IS NULL OR height IS NULL)\n"
+                + "        ";
         return _query;
       }
     };
@@ -384,6 +397,36 @@ public final class PhotoDao_Impl implements PhotoDao {
           }
         } finally {
           __preparedStmtOfDeleteStaleForSource.release(_stmt);
+        }
+      }
+    }, $completion);
+  }
+
+  @Override
+  public Object updateDimensionsIfMissing(final long id, final int width, final int height,
+      final Continuation<? super Unit> $completion) {
+    return CoroutinesRoom.execute(__db, true, new Callable<Unit>() {
+      @Override
+      @NonNull
+      public Unit call() throws Exception {
+        final SupportSQLiteStatement _stmt = __preparedStmtOfUpdateDimensionsIfMissing.acquire();
+        int _argIndex = 1;
+        _stmt.bindLong(_argIndex, width);
+        _argIndex = 2;
+        _stmt.bindLong(_argIndex, height);
+        _argIndex = 3;
+        _stmt.bindLong(_argIndex, id);
+        try {
+          __db.beginTransaction();
+          try {
+            _stmt.executeUpdateDelete();
+            __db.setTransactionSuccessful();
+            return Unit.INSTANCE;
+          } finally {
+            __db.endTransaction();
+          }
+        } finally {
+          __preparedStmtOfUpdateDimensionsIfMissing.release(_stmt);
         }
       }
     }, $completion);
@@ -995,6 +1038,143 @@ public final class PhotoDao_Impl implements PhotoDao {
               _tmpContentHashScannedAtEpochMs = _cursor.getLong(_cursorIndexOfContentHashScannedAtEpochMs);
             }
             _item_1 = new PhotoItemEntity(_tmpId,_tmpStableId,_tmpSourceId,_tmpNormalizedPath,_tmpFolderName,_tmpFileName,_tmpMimeType,_tmpSizeBytes,_tmpFileModifiedEpochMs,_tmpOpenToken,_tmpIndexedAtEpochMs,_tmpIsHidden,_tmpLastShownAtEpochMs,_tmpDecodeFailureCount,_tmpLastDecodeFailureAtEpochMs,_tmpWidth,_tmpHeight,_tmpExifOrientation,_tmpDateTakenEpochMs,_tmpIsFavorite,_tmpMissingSinceEpochMs,_tmpCacheKey,_tmpCaption,_tmpGpsLat,_tmpGpsLon,_tmpExifScannedAtEpochMs,_tmpCanonicalDirectory,_tmpContentSha256,_tmpContentHashScannedAtEpochMs);
+            _result.add(_item_1);
+          }
+          return _result;
+        } finally {
+          _cursor.close();
+          _statement.release();
+        }
+      }
+    }, $completion);
+  }
+
+  @Override
+  public Object localThumbnailRebuildCandidates(final int limit, final int offset,
+      final Continuation<? super List<PhotoDao.LocalThumbnailRebuildCandidate>> $completion) {
+    final String _sql = "\n"
+            + "        SELECT stableId, openToken FROM photos\n"
+            + "        WHERE sourceId NOT IN ('smb', 'synology', 'webdav') AND isHidden = 0\n"
+            + "        ORDER BY id ASC\n"
+            + "        LIMIT ? OFFSET ?\n"
+            + "        ";
+    final RoomSQLiteQuery _statement = RoomSQLiteQuery.acquire(_sql, 2);
+    int _argIndex = 1;
+    _statement.bindLong(_argIndex, limit);
+    _argIndex = 2;
+    _statement.bindLong(_argIndex, offset);
+    final CancellationSignal _cancellationSignal = DBUtil.createCancellationSignal();
+    return CoroutinesRoom.execute(__db, false, _cancellationSignal, new Callable<List<PhotoDao.LocalThumbnailRebuildCandidate>>() {
+      @Override
+      @NonNull
+      public List<PhotoDao.LocalThumbnailRebuildCandidate> call() throws Exception {
+        final Cursor _cursor = DBUtil.query(__db, _statement, false, null);
+        try {
+          final int _cursorIndexOfStableId = 0;
+          final int _cursorIndexOfOpenToken = 1;
+          final List<PhotoDao.LocalThumbnailRebuildCandidate> _result = new ArrayList<PhotoDao.LocalThumbnailRebuildCandidate>(_cursor.getCount());
+          while (_cursor.moveToNext()) {
+            final PhotoDao.LocalThumbnailRebuildCandidate _item;
+            final String _tmpStableId;
+            _tmpStableId = _cursor.getString(_cursorIndexOfStableId);
+            final String _tmpOpenToken;
+            _tmpOpenToken = _cursor.getString(_cursorIndexOfOpenToken);
+            _item = new PhotoDao.LocalThumbnailRebuildCandidate(_tmpStableId,_tmpOpenToken);
+            _result.add(_item);
+          }
+          return _result;
+        } finally {
+          _cursor.close();
+          _statement.release();
+        }
+      }
+    }, $completion);
+  }
+
+  @Override
+  public Object onThisDayCandidates(final List<String> sourceIds, final String monthDay,
+      final int maxFailures, final int allowHeif, final int limit,
+      final Continuation<? super List<PhotoDao.OnThisDayCandidate>> $completion) {
+    final StringBuilder _stringBuilder = StringUtil.newStringBuilder();
+    _stringBuilder.append("\n");
+    _stringBuilder.append("        SELECT id, stableId, folderName, dateTakenEpochMs, isFavorite, openToken FROM photos");
+    _stringBuilder.append("\n");
+    _stringBuilder.append("        WHERE sourceId IN (");
+    final int _inputSize = sourceIds.size();
+    StringUtil.appendPlaceholders(_stringBuilder, _inputSize);
+    _stringBuilder.append(") AND isHidden = 0 AND decodeFailureCount < ");
+    _stringBuilder.append("?");
+    _stringBuilder.append("\n");
+    _stringBuilder.append("          AND dateTakenEpochMs IS NOT NULL");
+    _stringBuilder.append("\n");
+    _stringBuilder.append("          AND strftime('%m-%d', dateTakenEpochMs / 1000, 'unixepoch', 'localtime') = ");
+    _stringBuilder.append("?");
+    _stringBuilder.append("\n");
+    _stringBuilder.append("          AND (");
+    _stringBuilder.append("?");
+    _stringBuilder.append(" = 1 OR (");
+    _stringBuilder.append("\n");
+    _stringBuilder.append("            lower(fileName) NOT LIKE '%.heic' AND lower(fileName) NOT LIKE '%.heif'");
+    _stringBuilder.append("\n");
+    _stringBuilder.append("            AND lower(COALESCE(mimeType, '')) NOT IN");
+    _stringBuilder.append("\n");
+    _stringBuilder.append("              ('image/heic','image/heif','image/heic-sequence','image/heif-sequence')");
+    _stringBuilder.append("\n");
+    _stringBuilder.append("          ))");
+    _stringBuilder.append("\n");
+    _stringBuilder.append("        ORDER BY isFavorite DESC, id ASC");
+    _stringBuilder.append("\n");
+    _stringBuilder.append("        LIMIT ");
+    _stringBuilder.append("?");
+    _stringBuilder.append("\n");
+    _stringBuilder.append("        ");
+    final String _sql = _stringBuilder.toString();
+    final int _argCount = 4 + _inputSize;
+    final RoomSQLiteQuery _statement = RoomSQLiteQuery.acquire(_sql, _argCount);
+    int _argIndex = 1;
+    for (String _item : sourceIds) {
+      _statement.bindString(_argIndex, _item);
+      _argIndex++;
+    }
+    _argIndex = 1 + _inputSize;
+    _statement.bindLong(_argIndex, maxFailures);
+    _argIndex = 2 + _inputSize;
+    _statement.bindString(_argIndex, monthDay);
+    _argIndex = 3 + _inputSize;
+    _statement.bindLong(_argIndex, allowHeif);
+    _argIndex = 4 + _inputSize;
+    _statement.bindLong(_argIndex, limit);
+    final CancellationSignal _cancellationSignal = DBUtil.createCancellationSignal();
+    return CoroutinesRoom.execute(__db, false, _cancellationSignal, new Callable<List<PhotoDao.OnThisDayCandidate>>() {
+      @Override
+      @NonNull
+      public List<PhotoDao.OnThisDayCandidate> call() throws Exception {
+        final Cursor _cursor = DBUtil.query(__db, _statement, false, null);
+        try {
+          final int _cursorIndexOfId = 0;
+          final int _cursorIndexOfStableId = 1;
+          final int _cursorIndexOfFolderName = 2;
+          final int _cursorIndexOfDateTakenEpochMs = 3;
+          final int _cursorIndexOfIsFavorite = 4;
+          final int _cursorIndexOfOpenToken = 5;
+          final List<PhotoDao.OnThisDayCandidate> _result = new ArrayList<PhotoDao.OnThisDayCandidate>(_cursor.getCount());
+          while (_cursor.moveToNext()) {
+            final PhotoDao.OnThisDayCandidate _item_1;
+            final long _tmpId;
+            _tmpId = _cursor.getLong(_cursorIndexOfId);
+            final String _tmpStableId;
+            _tmpStableId = _cursor.getString(_cursorIndexOfStableId);
+            final String _tmpFolderName;
+            _tmpFolderName = _cursor.getString(_cursorIndexOfFolderName);
+            final long _tmpDateTakenEpochMs;
+            _tmpDateTakenEpochMs = _cursor.getLong(_cursorIndexOfDateTakenEpochMs);
+            final boolean _tmpIsFavorite;
+            final int _tmp;
+            _tmp = _cursor.getInt(_cursorIndexOfIsFavorite);
+            _tmpIsFavorite = _tmp != 0;
+            final String _tmpOpenToken;
+            _tmpOpenToken = _cursor.getString(_cursorIndexOfOpenToken);
+            _item_1 = new PhotoDao.OnThisDayCandidate(_tmpId,_tmpStableId,_tmpFolderName,_tmpDateTakenEpochMs,_tmpIsFavorite,_tmpOpenToken);
             _result.add(_item_1);
           }
           return _result;
@@ -2306,6 +2486,219 @@ public final class PhotoDao_Impl implements PhotoDao {
     _argIndex = 9;
     _statement.bindLong(_argIndex, anchorTime);
     _argIndex = 10;
+    _statement.bindLong(_argIndex, limit);
+    final CancellationSignal _cancellationSignal = DBUtil.createCancellationSignal();
+    return CoroutinesRoom.execute(__db, false, _cancellationSignal, new Callable<List<PhotoItemEntity>>() {
+      @Override
+      @NonNull
+      public List<PhotoItemEntity> call() throws Exception {
+        final Cursor _cursor = DBUtil.query(__db, _statement, false, null);
+        try {
+          final int _cursorIndexOfId = CursorUtil.getColumnIndexOrThrow(_cursor, "id");
+          final int _cursorIndexOfStableId = CursorUtil.getColumnIndexOrThrow(_cursor, "stableId");
+          final int _cursorIndexOfSourceId = CursorUtil.getColumnIndexOrThrow(_cursor, "sourceId");
+          final int _cursorIndexOfNormalizedPath = CursorUtil.getColumnIndexOrThrow(_cursor, "normalizedPath");
+          final int _cursorIndexOfFolderName = CursorUtil.getColumnIndexOrThrow(_cursor, "folderName");
+          final int _cursorIndexOfFileName = CursorUtil.getColumnIndexOrThrow(_cursor, "fileName");
+          final int _cursorIndexOfMimeType = CursorUtil.getColumnIndexOrThrow(_cursor, "mimeType");
+          final int _cursorIndexOfSizeBytes = CursorUtil.getColumnIndexOrThrow(_cursor, "sizeBytes");
+          final int _cursorIndexOfFileModifiedEpochMs = CursorUtil.getColumnIndexOrThrow(_cursor, "fileModifiedEpochMs");
+          final int _cursorIndexOfOpenToken = CursorUtil.getColumnIndexOrThrow(_cursor, "openToken");
+          final int _cursorIndexOfIndexedAtEpochMs = CursorUtil.getColumnIndexOrThrow(_cursor, "indexedAtEpochMs");
+          final int _cursorIndexOfIsHidden = CursorUtil.getColumnIndexOrThrow(_cursor, "isHidden");
+          final int _cursorIndexOfLastShownAtEpochMs = CursorUtil.getColumnIndexOrThrow(_cursor, "lastShownAtEpochMs");
+          final int _cursorIndexOfDecodeFailureCount = CursorUtil.getColumnIndexOrThrow(_cursor, "decodeFailureCount");
+          final int _cursorIndexOfLastDecodeFailureAtEpochMs = CursorUtil.getColumnIndexOrThrow(_cursor, "lastDecodeFailureAtEpochMs");
+          final int _cursorIndexOfWidth = CursorUtil.getColumnIndexOrThrow(_cursor, "width");
+          final int _cursorIndexOfHeight = CursorUtil.getColumnIndexOrThrow(_cursor, "height");
+          final int _cursorIndexOfExifOrientation = CursorUtil.getColumnIndexOrThrow(_cursor, "exifOrientation");
+          final int _cursorIndexOfDateTakenEpochMs = CursorUtil.getColumnIndexOrThrow(_cursor, "dateTakenEpochMs");
+          final int _cursorIndexOfIsFavorite = CursorUtil.getColumnIndexOrThrow(_cursor, "isFavorite");
+          final int _cursorIndexOfMissingSinceEpochMs = CursorUtil.getColumnIndexOrThrow(_cursor, "missingSinceEpochMs");
+          final int _cursorIndexOfCacheKey = CursorUtil.getColumnIndexOrThrow(_cursor, "cacheKey");
+          final int _cursorIndexOfCaption = CursorUtil.getColumnIndexOrThrow(_cursor, "caption");
+          final int _cursorIndexOfGpsLat = CursorUtil.getColumnIndexOrThrow(_cursor, "gpsLat");
+          final int _cursorIndexOfGpsLon = CursorUtil.getColumnIndexOrThrow(_cursor, "gpsLon");
+          final int _cursorIndexOfExifScannedAtEpochMs = CursorUtil.getColumnIndexOrThrow(_cursor, "exifScannedAtEpochMs");
+          final int _cursorIndexOfCanonicalDirectory = CursorUtil.getColumnIndexOrThrow(_cursor, "canonicalDirectory");
+          final int _cursorIndexOfContentSha256 = CursorUtil.getColumnIndexOrThrow(_cursor, "contentSha256");
+          final int _cursorIndexOfContentHashScannedAtEpochMs = CursorUtil.getColumnIndexOrThrow(_cursor, "contentHashScannedAtEpochMs");
+          final List<PhotoItemEntity> _result = new ArrayList<PhotoItemEntity>(_cursor.getCount());
+          while (_cursor.moveToNext()) {
+            final PhotoItemEntity _item;
+            final long _tmpId;
+            _tmpId = _cursor.getLong(_cursorIndexOfId);
+            final String _tmpStableId;
+            _tmpStableId = _cursor.getString(_cursorIndexOfStableId);
+            final String _tmpSourceId;
+            _tmpSourceId = _cursor.getString(_cursorIndexOfSourceId);
+            final String _tmpNormalizedPath;
+            _tmpNormalizedPath = _cursor.getString(_cursorIndexOfNormalizedPath);
+            final String _tmpFolderName;
+            _tmpFolderName = _cursor.getString(_cursorIndexOfFolderName);
+            final String _tmpFileName;
+            _tmpFileName = _cursor.getString(_cursorIndexOfFileName);
+            final String _tmpMimeType;
+            if (_cursor.isNull(_cursorIndexOfMimeType)) {
+              _tmpMimeType = null;
+            } else {
+              _tmpMimeType = _cursor.getString(_cursorIndexOfMimeType);
+            }
+            final long _tmpSizeBytes;
+            _tmpSizeBytes = _cursor.getLong(_cursorIndexOfSizeBytes);
+            final long _tmpFileModifiedEpochMs;
+            _tmpFileModifiedEpochMs = _cursor.getLong(_cursorIndexOfFileModifiedEpochMs);
+            final String _tmpOpenToken;
+            _tmpOpenToken = _cursor.getString(_cursorIndexOfOpenToken);
+            final long _tmpIndexedAtEpochMs;
+            _tmpIndexedAtEpochMs = _cursor.getLong(_cursorIndexOfIndexedAtEpochMs);
+            final boolean _tmpIsHidden;
+            final int _tmp;
+            _tmp = _cursor.getInt(_cursorIndexOfIsHidden);
+            _tmpIsHidden = _tmp != 0;
+            final Long _tmpLastShownAtEpochMs;
+            if (_cursor.isNull(_cursorIndexOfLastShownAtEpochMs)) {
+              _tmpLastShownAtEpochMs = null;
+            } else {
+              _tmpLastShownAtEpochMs = _cursor.getLong(_cursorIndexOfLastShownAtEpochMs);
+            }
+            final int _tmpDecodeFailureCount;
+            _tmpDecodeFailureCount = _cursor.getInt(_cursorIndexOfDecodeFailureCount);
+            final Long _tmpLastDecodeFailureAtEpochMs;
+            if (_cursor.isNull(_cursorIndexOfLastDecodeFailureAtEpochMs)) {
+              _tmpLastDecodeFailureAtEpochMs = null;
+            } else {
+              _tmpLastDecodeFailureAtEpochMs = _cursor.getLong(_cursorIndexOfLastDecodeFailureAtEpochMs);
+            }
+            final Integer _tmpWidth;
+            if (_cursor.isNull(_cursorIndexOfWidth)) {
+              _tmpWidth = null;
+            } else {
+              _tmpWidth = _cursor.getInt(_cursorIndexOfWidth);
+            }
+            final Integer _tmpHeight;
+            if (_cursor.isNull(_cursorIndexOfHeight)) {
+              _tmpHeight = null;
+            } else {
+              _tmpHeight = _cursor.getInt(_cursorIndexOfHeight);
+            }
+            final int _tmpExifOrientation;
+            _tmpExifOrientation = _cursor.getInt(_cursorIndexOfExifOrientation);
+            final Long _tmpDateTakenEpochMs;
+            if (_cursor.isNull(_cursorIndexOfDateTakenEpochMs)) {
+              _tmpDateTakenEpochMs = null;
+            } else {
+              _tmpDateTakenEpochMs = _cursor.getLong(_cursorIndexOfDateTakenEpochMs);
+            }
+            final boolean _tmpIsFavorite;
+            final int _tmp_1;
+            _tmp_1 = _cursor.getInt(_cursorIndexOfIsFavorite);
+            _tmpIsFavorite = _tmp_1 != 0;
+            final Long _tmpMissingSinceEpochMs;
+            if (_cursor.isNull(_cursorIndexOfMissingSinceEpochMs)) {
+              _tmpMissingSinceEpochMs = null;
+            } else {
+              _tmpMissingSinceEpochMs = _cursor.getLong(_cursorIndexOfMissingSinceEpochMs);
+            }
+            final String _tmpCacheKey;
+            if (_cursor.isNull(_cursorIndexOfCacheKey)) {
+              _tmpCacheKey = null;
+            } else {
+              _tmpCacheKey = _cursor.getString(_cursorIndexOfCacheKey);
+            }
+            final String _tmpCaption;
+            if (_cursor.isNull(_cursorIndexOfCaption)) {
+              _tmpCaption = null;
+            } else {
+              _tmpCaption = _cursor.getString(_cursorIndexOfCaption);
+            }
+            final Double _tmpGpsLat;
+            if (_cursor.isNull(_cursorIndexOfGpsLat)) {
+              _tmpGpsLat = null;
+            } else {
+              _tmpGpsLat = _cursor.getDouble(_cursorIndexOfGpsLat);
+            }
+            final Double _tmpGpsLon;
+            if (_cursor.isNull(_cursorIndexOfGpsLon)) {
+              _tmpGpsLon = null;
+            } else {
+              _tmpGpsLon = _cursor.getDouble(_cursorIndexOfGpsLon);
+            }
+            final Long _tmpExifScannedAtEpochMs;
+            if (_cursor.isNull(_cursorIndexOfExifScannedAtEpochMs)) {
+              _tmpExifScannedAtEpochMs = null;
+            } else {
+              _tmpExifScannedAtEpochMs = _cursor.getLong(_cursorIndexOfExifScannedAtEpochMs);
+            }
+            final String _tmpCanonicalDirectory;
+            _tmpCanonicalDirectory = _cursor.getString(_cursorIndexOfCanonicalDirectory);
+            final String _tmpContentSha256;
+            if (_cursor.isNull(_cursorIndexOfContentSha256)) {
+              _tmpContentSha256 = null;
+            } else {
+              _tmpContentSha256 = _cursor.getString(_cursorIndexOfContentSha256);
+            }
+            final Long _tmpContentHashScannedAtEpochMs;
+            if (_cursor.isNull(_cursorIndexOfContentHashScannedAtEpochMs)) {
+              _tmpContentHashScannedAtEpochMs = null;
+            } else {
+              _tmpContentHashScannedAtEpochMs = _cursor.getLong(_cursorIndexOfContentHashScannedAtEpochMs);
+            }
+            _item = new PhotoItemEntity(_tmpId,_tmpStableId,_tmpSourceId,_tmpNormalizedPath,_tmpFolderName,_tmpFileName,_tmpMimeType,_tmpSizeBytes,_tmpFileModifiedEpochMs,_tmpOpenToken,_tmpIndexedAtEpochMs,_tmpIsHidden,_tmpLastShownAtEpochMs,_tmpDecodeFailureCount,_tmpLastDecodeFailureAtEpochMs,_tmpWidth,_tmpHeight,_tmpExifOrientation,_tmpDateTakenEpochMs,_tmpIsFavorite,_tmpMissingSinceEpochMs,_tmpCacheKey,_tmpCaption,_tmpGpsLat,_tmpGpsLon,_tmpExifScannedAtEpochMs,_tmpCanonicalDirectory,_tmpContentSha256,_tmpContentHashScannedAtEpochMs);
+            _result.add(_item);
+          }
+          return _result;
+        } finally {
+          _cursor.close();
+          _statement.release();
+        }
+      }
+    }, $completion);
+  }
+
+  @Override
+  public Object collageCandidatesAcrossSource(final String sourceId, final long anchorId,
+      final long anchorTime, final int maxFailures, final int favoritesOnly, final int cachedOnly,
+      final int allowHeif, final int limit,
+      final Continuation<? super List<PhotoItemEntity>> $completion) {
+    final String _sql = "\n"
+            + "        SELECT * FROM photos\n"
+            + "        WHERE sourceId = ?\n"
+            + "          AND id != ? AND isHidden = 0 AND decodeFailureCount < ?\n"
+            + "          AND (? = 0 OR isFavorite = 1)\n"
+            + "          AND (? = 0 OR cacheKey IS NOT NULL)\n"
+            + "          AND (? = 1 OR (\n"
+            + "            lower(fileName) NOT LIKE '%.heic' AND lower(fileName) NOT LIKE '%.heif'\n"
+            + "            AND lower(COALESCE(mimeType, '')) NOT IN\n"
+            + "              ('image/heic','image/heif','image/heic-sequence','image/heif-sequence')\n"
+            + "          ))\n"
+            + "        ORDER BY\n"
+            + "          CASE WHEN ? > 0\n"
+            + "            THEN ABS(COALESCE(dateTakenEpochMs, fileModifiedEpochMs) - ?)\n"
+            + "            ELSE 0 END ASC,\n"
+            + "          (lastShownAtEpochMs IS NOT NULL) ASC,\n"
+            + "          lastShownAtEpochMs ASC,\n"
+            + "          id ASC\n"
+            + "        LIMIT ?\n"
+            + "        ";
+    final RoomSQLiteQuery _statement = RoomSQLiteQuery.acquire(_sql, 9);
+    int _argIndex = 1;
+    _statement.bindString(_argIndex, sourceId);
+    _argIndex = 2;
+    _statement.bindLong(_argIndex, anchorId);
+    _argIndex = 3;
+    _statement.bindLong(_argIndex, maxFailures);
+    _argIndex = 4;
+    _statement.bindLong(_argIndex, favoritesOnly);
+    _argIndex = 5;
+    _statement.bindLong(_argIndex, cachedOnly);
+    _argIndex = 6;
+    _statement.bindLong(_argIndex, allowHeif);
+    _argIndex = 7;
+    _statement.bindLong(_argIndex, anchorTime);
+    _argIndex = 8;
+    _statement.bindLong(_argIndex, anchorTime);
+    _argIndex = 9;
     _statement.bindLong(_argIndex, limit);
     final CancellationSignal _cancellationSignal = DBUtil.createCancellationSignal();
     return CoroutinesRoom.execute(__db, false, _cancellationSignal, new Callable<List<PhotoItemEntity>>() {

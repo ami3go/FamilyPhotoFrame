@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Text
@@ -40,6 +41,7 @@ import coil.ImageLoader
 import com.example.familyphotoframe.R
 import com.example.familyphotoframe.data.settings.AspectMode
 import com.example.familyphotoframe.data.settings.CollageGap
+import com.example.familyphotoframe.data.settings.CollageScaleMode
 import com.example.familyphotoframe.data.settings.PortraitCollageMode
 import com.example.familyphotoframe.data.settings.PortraitFallback
 import com.example.familyphotoframe.domain.engine.DecodeFailure
@@ -57,6 +59,7 @@ import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -477,6 +480,8 @@ private fun PlayingContent(
             memoryMaxCollagePhotos = memoryMaxPhotos,
             portraitFallback = state.portraitCollage.fallback,
             collageGap = state.portraitCollage.gap,
+            collageOrientationFilter = state.portraitCollage.orientationFilter,
+            collageLayoutPreference = state.portraitCollage.layoutPreference,
             prepareSoftFocusBlur = softFocusNeeded,
             allowBlurredBackground = memoryProtection.allowBlurredBackdrop,
             excludedIds = buildSet {
@@ -935,7 +940,7 @@ private fun PlayingContent(
         committedHandle,
         state.aspectMode,
         state.backgroundColorArgb,
-        state.portraitCollage.gap,
+        state.portraitCollage,
         targetW,
         targetH,
         memoryProtection.level,
@@ -947,6 +952,10 @@ private fun PlayingContent(
             aspectMode = state.aspectMode,
             backgroundColorArgb = state.backgroundColorArgb,
             collageGap = state.portraitCollage.gap,
+            collageScaleMode = state.portraitCollage.scaleMode,
+            collageAlignment = state.portraitCollage.alignment,
+            collageBackground = state.portraitCollage.background,
+            collageCornerRadiusDp = state.portraitCollage.cornerRadiusDpClamped,
             transition = activeTransition.effect.storageValue,
             targetW = targetW,
             targetH = targetH,
@@ -1049,12 +1058,17 @@ internal fun PreparedCollage(
         CollageGap.NONE -> 0.dp
         CollageGap.SMALL -> 4.dp
         CollageGap.MEDIUM -> 8.dp
+        CollageGap.LARGE -> 16.dp
     }
+    val tileScale = state.portraitCollage.scaleMode.toContentScale()
+    val tileAlignment = state.portraitCollage.alignment.toComposeAlignment()
+    val tileBackground = state.portraitCollage.background.toComposeColor(state.backgroundColorArgb)
+    val tileShape = RoundedCornerShape(state.portraitCollage.cornerRadiusDpClamped.dp)
 
     // Task §1: motion is defined for the three-equal-portrait-panel layout only.
     val threePanel = prepared.layout == CollageLayout.THREE_COLUMNS && prepared.tiles.size == 3
     val animationScale = rememberSystemAnimationScale()
-    val profile = if (!threePanel) {
+    val profile = if (!threePanel || state.portraitCollage.scaleMode == CollageScaleMode.FIT) {
         PanelMotionProfile.OFF
     } else {
         PortraitPanelMotion.profileFor(state.portraitCollage.animateThreePhotoFrames, animationScale)
@@ -1069,6 +1083,10 @@ internal fun PreparedCollage(
         when {
             !threePanel -> {
                 fallbackReason = "not_three_panel_layout"
+                null
+            }
+            state.portraitCollage.scaleMode == CollageScaleMode.FIT -> {
+                fallbackReason = "fit_scale_mode"
                 null
             }
             profile == PanelMotionProfile.OFF -> {
@@ -1150,7 +1168,7 @@ internal fun PreparedCollage(
     }
 
     Row(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().background(tileBackground),
         horizontalArrangement = Arrangement.spacedBy(gapDp),
     ) {
         prepared.tiles.forEachIndexed { index, tile ->
@@ -1159,10 +1177,13 @@ internal fun PreparedCollage(
             Image(
                 bitmap = imageBitmap,
                 contentDescription = null,
-                contentScale = ContentScale.Crop,
+                contentScale = tileScale,
+                alignment = tileAlignment,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
+                    .background(tileBackground, tileShape)
+                    .clip(tileShape)
                     // Clip to the panel so transformed pixels never bleed into a neighbour.
                     .clipToBounds()
                     .then(

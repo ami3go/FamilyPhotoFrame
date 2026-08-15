@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.example.familyphotoframe.data.settings.SourceRuntimeSignatureTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-08-07T04:51:47" hostname="aleksu-Vostro-5471" time="0.008">
+<testsuite name="com.example.familyphotoframe.data.settings.SourceRuntimeSignatureTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-08-15T06:27:21" hostname="runnervmzvulz" time="0.01">
   <properties/>
-  <testcase name="scanFilterChangeTriggersReactivation" classname="com.example.familyphotoframe.data.settings.SourceRuntimeSignatureTest" time="0.004"/>
+  <testcase name="scanFilterChangeTriggersReactivation" classname="com.example.familyphotoframe.data.settings.SourceRuntimeSignatureTest" time="0.005"/>
   <testcase name="changingUnusedSourceDoesNotInterruptActiveSource" classname="com.example.familyphotoframe.data.settings.SourceRuntimeSignatureTest" time="0.0"/>
   <testcase name="failedSynologyToSmbSwitchHasDifferentRuntimeIdentity" classname="com.example.familyphotoframe.data.settings.SourceRuntimeSignatureTest" time="0.0"/>
-  <testcase name="changingMergedSecondarySourceTriggersReactivation" classname="com.example.familyphotoframe.data.settings.SourceRuntimeSignatureTest" time="0.003"/>
+  <testcase name="changingMergedSecondarySourceTriggersReactivation" classname="com.example.familyphotoframe.data.settings.SourceRuntimeSignatureTest" time="0.002"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

@@ -71,7 +71,7 @@ internal fun PreparedPhotoFrame(
                 onMotionDiagnostic,
             )
         } else {
-            PreparedAdaptiveCollage(prepared, state.portraitCollage.gap)
+            PreparedAdaptiveCollage(prepared, state)
         }
     }
 }

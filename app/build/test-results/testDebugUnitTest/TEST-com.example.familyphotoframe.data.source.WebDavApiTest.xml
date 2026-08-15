@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.example.familyphotoframe.data.source.WebDavApiTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-08-07T04:51:47" hostname="aleksu-Vostro-5471" time="0.801">
+<testsuite name="com.example.familyphotoframe.data.source.WebDavApiTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-08-15T06:27:21" hostname="runnervmzvulz" time="0.746">
   <properties/>
-  <testcase name="streamedParserRejectsTruncatedAndOversizedResponses" classname="com.example.familyphotoframe.data.source.WebDavApiTest" time="0.031"/>
+  <testcase name="streamedParserRejectsTruncatedAndOversizedResponses" classname="com.example.familyphotoframe.data.source.WebDavApiTest" time="0.027"/>
   <testcase name="percentEncodesNonAsciiBytes" classname="com.example.familyphotoframe.data.source.WebDavApiTest" time="0.001"/>
   <testcase name="redactsCredentialsButNotAtSignsInPaths" classname="com.example.familyphotoframe.data.source.WebDavApiTest" time="0.001"/>
   <testcase name="streamedParserEnforcesWireLimit" classname="com.example.familyphotoframe.data.source.WebDavApiTest" time="0.0"/>
-  <testcase name="toleratesForeignNamespacePrefixes" classname="com.example.familyphotoframe.data.source.WebDavApiTest" time="0.003"/>
-  <testcase name="distinguishesBadCredentialsFromInsufficientPermission" classname="com.example.familyphotoframe.data.source.WebDavApiTest" time="0.001"/>
-  <testcase name="streamedParserYieldsEntriesAndCompletesValidRoot" classname="com.example.familyphotoframe.data.source.WebDavApiTest" time="0.76"/>
+  <testcase name="toleratesForeignNamespacePrefixes" classname="com.example.familyphotoframe.data.source.WebDavApiTest" time="0.004"/>
+  <testcase name="distinguishesBadCredentialsFromInsufficientPermission" classname="com.example.familyphotoframe.data.source.WebDavApiTest" time="0.0"/>
+  <testcase name="streamedParserYieldsEntriesAndCompletesValidRoot" classname="com.example.familyphotoframe.data.source.WebDavApiTest" time="0.708"/>
   <testcase name="nonMultistatusPayloadIsRejectedRatherThanTreatedAsEmpty" classname="com.example.familyphotoframe.data.source.WebDavApiTest" time="0.0"/>
-  <testcase name="parsesNextcloudListingAndDropsTheCollectionItself" classname="com.example.familyphotoframe.data.source.WebDavApiTest" time="0.003"/>
+  <testcase name="parsesNextcloudListingAndDropsTheCollectionItself" classname="com.example.familyphotoframe.data.source.WebDavApiTest" time="0.002"/>
   <testcase name="normalizesUrlsAndDefaultsToHttps" classname="com.example.familyphotoframe.data.source.WebDavApiTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
