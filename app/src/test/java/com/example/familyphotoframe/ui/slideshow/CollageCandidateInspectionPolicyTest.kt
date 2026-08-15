@@ -11,9 +11,9 @@ class CollageCandidateInspectionPolicyTest {
         )
     }
 
-    @Test fun unknownRemoteCandidateIsNeverFetchedForRanking() {
+    @Test fun unknownRemoteCandidateUsesBoundedProbeInsteadOfFullFetchOrDrop() {
         assertEquals(
-            CollageCandidateInspectionAction.SKIP_REMOTE_UNKNOWN,
+            CollageCandidateInspectionAction.QUEUE_REMOTE_BOUNDED_PROBE,
             CollageCandidateInspectionPolicy.decide(false, true, 0, 4),
         )
     }
@@ -24,7 +24,7 @@ class CollageCandidateInspectionPolicyTest {
             CollageCandidateInspectionPolicy.decide(false, false, 3, 4),
         )
         assertEquals(
-            CollageCandidateInspectionAction.SKIP_PROBE_BUDGET,
+            CollageCandidateInspectionAction.SKIP_LOCAL_PROBE_BUDGET,
             CollageCandidateInspectionPolicy.decide(false, false, 4, 4),
         )
     }

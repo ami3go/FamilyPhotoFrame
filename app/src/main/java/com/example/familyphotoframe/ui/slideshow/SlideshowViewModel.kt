@@ -67,6 +67,7 @@ import com.example.familyphotoframe.data.settings.SourceRuntimeSignature
 import com.example.familyphotoframe.data.settings.WebDavSettings
 import com.example.familyphotoframe.data.settings.UnreachablePolicy
 import com.example.familyphotoframe.data.source.PhotoItem
+import com.example.familyphotoframe.data.source.OpenOptions
 import com.example.familyphotoframe.domain.engine.EngineUiModel
 import com.example.familyphotoframe.data.source.PhotoSource
 import com.example.familyphotoframe.data.source.WebDavApi
@@ -107,6 +108,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -2524,6 +2526,74 @@ class SlideshowViewModel(
     }
 
     /**
+     * Read only enough bytes to discover dimensions for an optimizer candidate.
+     *
+     * This deliberately bypasses [resolveModel] for a remote cache miss: resolving a
+     * candidate materializes and verifies the complete NAS original, which made collage
+     * ranking take tens of seconds. Successful bounds are persisted so subsequent
+     * presentations stay metadata-only.
+     */
+    suspend fun probeRemoteCollageDimensions(display: DisplayPhoto): Pair<Int, Int>? {
+        if (!display.needsCache) return null
+        val item = PhotoItem(
+            stableId = display.stableId,
+            sourceId = SourceId(display.sourceId),
+            normalizedPath = display.normalizedPath,
+            folderName = display.folderName,
+            fileName = display.fileName,
+            mimeType = display.mimeType,
+            sizeBytes = display.sizeBytes,
+            fileModifiedEpochMs = display.fileModifiedEpochMs,
+            openToken = display.openToken,
+        )
+
+        suspend fun persist(dimensions: Pair<Int, Int>?): Pair<Int, Int>? {
+            val valid = dimensions?.takeIf { it.first > 0 && it.second > 0 } ?: return null
+            runCatching {
+                services.photoDao.updateDimensionsIfMissing(display.id, valid.first, valid.second)
+            }
+            return valid
+        }
+
+        when (val cached = services.mediaCache.resolveIfCached(item)) {
+            is MediaCache.ResolveResult.Ready -> {
+                val dimensions = withContext(Dispatchers.IO) {
+                    try {
+                        RemoteImageBoundsProbe.decode(cached.file.inputStream())
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+                return persist(dimensions)
+            }
+            is MediaCache.ResolveResult.Failed -> Unit
+        }
+
+        val source = activeRemoteSources[display.sourceId] ?: return null
+        val dimensions = withTimeoutOrNull(REMOTE_COLLAGE_PROBE_TIMEOUT_MS) {
+            withContext(Dispatchers.IO) {
+                try {
+                    val stream = source.openStream(
+                        item,
+                        OpenOptions(
+                            timeoutMs = REMOTE_COLLAGE_PROBE_TIMEOUT_MS,
+                            preferOriginal = false,
+                        ),
+                    )
+                    RemoteImageBoundsProbe.decode(stream)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        }
+        return persist(dimensions)
+    }
+
+    /**
      * Return the bounded optimizer pool in deterministic order.
      *
      * Folder-balanced reservations/history remain absolute: this method never invents an
@@ -4748,6 +4818,7 @@ class SlideshowViewModel(
             "outgoingId" to (event.outgoingId?.toString() ?: ""),
             "incomingId" to event.incomingId.toString(),
             "durationMs" to event.durationMs.toString(),
+            "actualDurationMs" to event.actualDurationMs?.toString().orEmpty(),
             "direction" to event.direction,
             "reason" to event.reason.orEmpty(),
             "fallbackUsed" to event.fallbackUsed.toString(),

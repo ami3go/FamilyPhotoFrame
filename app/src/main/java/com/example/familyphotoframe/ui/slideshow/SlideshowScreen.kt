@@ -1,6 +1,5 @@
 package com.example.familyphotoframe.ui.slideshow
 
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -27,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -56,6 +56,7 @@ import android.os.Looper
 import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -200,6 +201,7 @@ fun SlideshowScreen(
                 imageLoader = imageLoader,
                 resolveModel = vm::resolveModel,
                 loadCollageCandidates = vm::portraitCollageCandidates,
+                probeRemoteDimensions = vm::probeRemoteCollageDimensions,
                 onDecodeFailure = vm::onDecodeFailure,
                 onCollageCandidateFailure = vm::onCollageCandidateFailure,
                 onCollageEvent = vm::onCollageEvent,
@@ -338,6 +340,7 @@ private fun PlayingContent(
     imageLoader: ImageLoader,
     resolveModel: suspend (DisplayPhoto) -> PhotoModelResolution,
     loadCollageCandidates: suspend (DisplayPhoto, Int) -> List<DisplayPhoto>,
+    probeRemoteDimensions: suspend (DisplayPhoto) -> Pair<Int, Int>?,
     onDecodeFailure: (DecodeFailure) -> Unit,
     onCollageCandidateFailure: (DecodeFailure) -> Unit,
     onCollageEvent: (
@@ -463,6 +466,7 @@ private fun PlayingContent(
             imageLoader = imageLoader,
             resolveModel = resolveModel,
             loadCollageCandidates = loadCollageCandidates,
+            probeRemoteDimensions = probeRemoteDimensions,
             collageMode = if (maxPhotos >= 2) {
                 state.portraitCollage.mode
             } else {
@@ -731,6 +735,7 @@ private fun PlayingContent(
             reason: String? = null,
             metrics: com.example.familyphotoframe.ui.slideshow.transition.TransitionFrameMetrics? = null,
             startLatencyMs: Long? = null,
+            actualDurationMs: Long? = null,
         ) = TransitionEvent(
             code = code,
             configuredMode = state.transitionSelectionMode.storageValue,
@@ -739,6 +744,7 @@ private fun PlayingContent(
             outgoingId = previous?.anchor?.id,
             incomingId = target.anchor.id,
             durationMs = durationMs,
+            actualDurationMs = actualDurationMs,
             direction = resolved.direction.name.lowercase(),
             reason = reason,
             fallbackUsed = resolved.fallbackUsed,
@@ -774,21 +780,29 @@ private fun PlayingContent(
         onTransitionEvent(event("TRANSITION_STARTED"))
 
         val frameSampler = TransitionFrameSampler()
-        frameSampler.record(SystemClock.elapsedRealtimeNanos())
         var firstFrameAtNs: Long? = null
         var completed = false
+        val animationStartedAtNs = SystemClock.elapsedRealtimeNanos()
         try {
-            transitionProgress.animateTo(
-                targetValue = 1f,
-                animationSpec = tween(durationMillis = durationMs, easing = LinearEasing),
-            ) {
-                val frameAtNs = SystemClock.elapsedRealtimeNanos()
-                if (firstFrameAtNs == null) firstFrameAtNs = frameAtNs
+            val firstFrameNs = withFrameNanos { it }
+            firstFrameAtNs = firstFrameNs
+            frameSampler.record(firstFrameNs)
+            transitionProgress.snapTo(0f)
+            while (currentCoroutineContext().isActive) {
+                val frameAtNs = withFrameNanos { it }
                 frameSampler.record(frameAtNs)
+                val progress = TransitionTiming.progressForElapsedNanos(
+                    elapsedNanos = (frameAtNs - firstFrameNs).coerceAtLeast(0L),
+                    durationMs = durationMs,
+                )
+                transitionProgress.snapTo(progress)
+                if (progress >= 1f) break
             }
             completed = true
         } finally {
             val metrics = frameSampler.summary()
+            val actualDurationMs =
+                (SystemClock.elapsedRealtimeNanos() - animationStartedAtNs).coerceAtLeast(0L) / 1_000_000L
             val startLatencyMs = firstFrameAtNs?.let { first ->
                 (first - readyAtNs).coerceAtLeast(0L) / 1_000_000L
             }
@@ -811,6 +825,7 @@ private fun PlayingContent(
                             "host_stopped",
                             metrics,
                             startLatencyMs,
+                            actualDurationMs,
                         )
                     )
                     publishBitmapInventory()
@@ -845,6 +860,7 @@ private fun PlayingContent(
                             cancellation.reason,
                             metrics,
                             startLatencyMs,
+                            actualDurationMs,
                         )
                     )
                     registry.retain(
@@ -880,6 +896,7 @@ private fun PlayingContent(
                         if (completed) null else cancellation.reason,
                         metrics,
                         startLatencyMs,
+                        actualDurationMs,
                     )
                 )
 

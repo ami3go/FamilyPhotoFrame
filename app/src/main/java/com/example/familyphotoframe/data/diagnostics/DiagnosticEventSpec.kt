@@ -94,6 +94,9 @@ object DiagnosticEventCatalog {
         "unknownCode", "preparedSlideCount", "renderedSlideCount", "decodedBitmapCount",
         "appBitmapCount", "activeDecodedBytes", "pendingDisposals", "memoryProtectionLevel",
         "oomCount", "workerLimit", "queueLimit", "uploadedPhotosPreserved",
+        "processStartKind", "currentElapsedRealtimeMs", "previousElapsedRealtimeMs",
+        "estimatedBootEpochMs", "previousEstimatedBootEpochMs", "bootEpochDeltaMs",
+        "previousMarkerAgeMs",
     )
 
     private val engineFields = setOf(
@@ -113,7 +116,14 @@ object DiagnosticEventCatalog {
         "landscapeCandidateCount", "evaluatedTwoPhotoCombinations",
         "evaluatedThreePhotoCombinations", "evaluatedLayoutCount", "folderTier",
         "orientationTier", "screenCoverage", "averageCropLoss", "maximumCropLoss",
-        "timeDistanceScore", "recentPenalty", "decisionReason",
+        "timeDistanceScore", "recentPenalty", "decisionReason", "actualDurationMs",
+        "collageMode", "configuredMaxCollagePhotos", "memoryMaxCollagePhotos",
+        "effectiveMaxCollagePhotos", "threePhotoEvaluationAllowed",
+        "threePhotoEvaluationPerformed", "threePhotoSkipReason", "rawCandidateCount",
+        "metadataCandidateCount", "localProbeCount", "localProbeBudgetSkippedCount",
+        "remoteProbeCount", "remoteProbeSuccessCount", "remoteProbeFailureCount",
+        "remoteProbeBudgetSkippedCount", "remoteProbeByteLimit", "remoteUnknownSkippedCount",
+        "probeBudgetSkippedCount",
     )
 
     private val sourceFields = setOf(

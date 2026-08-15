@@ -132,6 +132,15 @@ interface PhotoDao {
     @Query("DELETE FROM photos WHERE sourceId = :sourceId AND indexedAtEpochMs < :scanStartedEpochMs")
     suspend fun deleteStaleForSource(sourceId: String, scanStartedEpochMs: Long)
 
+    /** Backfill dimensions learned from a bounded remote header probe. */
+    @Query(
+        """
+        UPDATE photos SET width = :width, height = :height
+        WHERE id = :id AND (width IS NULL OR height IS NULL)
+        """
+    )
+    suspend fun updateDimensionsIfMissing(id: Long, width: Int, height: Int)
+
     /**
      * Least-recent-random candidate window (spec §9.6 `least_recent_random`):
      * fetch the N least-recently-shown displayable rows; the strategy then picks

@@ -23,6 +23,7 @@ import com.example.familyphotoframe.data.diagnostics.DiagnosticOrigin
 import com.example.familyphotoframe.data.diagnostics.DiagnosticsLog
 import com.example.familyphotoframe.data.diagnostics.MainThreadStallWatchdog
 import com.example.familyphotoframe.data.diagnostics.ProcessExitInspector
+import com.example.familyphotoframe.data.diagnostics.ProcessStartClassifier
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import com.example.familyphotoframe.data.diagnostics.RuntimeSampler
@@ -78,6 +79,22 @@ class App : Application() {
             crashEnvelopeStore.sizeBytes(),
         )
         installCrashRecorder()
+        val processEvidencePreferences = getSharedPreferences(PROCESS_START_PREFS, MODE_PRIVATE)
+        val currentElapsedRealtimeMs = SystemClock.elapsedRealtime()
+        val currentWallClockMs = System.currentTimeMillis()
+        val previousElapsedRealtimeMs = processEvidencePreferences
+            .getLong(KEY_LAST_OBSERVED_ELAPSED_REALTIME_MS, -1L).takeIf { it >= 0L }
+        val previousEstimatedBootEpochMs = processEvidencePreferences
+            .getLong(KEY_LAST_ESTIMATED_BOOT_EPOCH_MS, -1L).takeIf { it >= 0L }
+        val previousMarkerWallClockMs = processEvidencePreferences
+            .getLong(KEY_LAST_MARKER_WALL_CLOCK_MS, -1L).takeIf { it >= 0L }
+        val processStartClassification = ProcessStartClassifier.classify(
+            previousElapsedRealtimeMs = previousElapsedRealtimeMs,
+            previousEstimatedBootEpochMs = previousEstimatedBootEpochMs,
+            currentWallClockMs = currentWallClockMs,
+            currentElapsedRealtimeMs = currentElapsedRealtimeMs,
+        )
+
         val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val imageCacheMaxBytes = com.example.familyphotoframe.util.ImageMemoryBudget.bytesForHeap(
             Runtime.getRuntime().maxMemory(),
@@ -91,6 +108,15 @@ class App : Application() {
                 "sdkInt" to android.os.Build.VERSION.SDK_INT.toString(),
                 "deviceModel" to "${android.os.Build.MANUFACTURER}_${android.os.Build.MODEL}",
                 "processId" to Process.myPid().toString(),
+                "processStartKind" to processStartClassification.kind.name,
+                "currentElapsedRealtimeMs" to currentElapsedRealtimeMs.toString(),
+                "previousElapsedRealtimeMs" to previousElapsedRealtimeMs?.toString().orEmpty(),
+                "estimatedBootEpochMs" to processStartClassification.estimatedBootEpochMs.toString(),
+                "previousEstimatedBootEpochMs" to previousEstimatedBootEpochMs?.toString().orEmpty(),
+                "bootEpochDeltaMs" to processStartClassification.bootEpochDeltaMs?.toString().orEmpty(),
+                "previousMarkerAgeMs" to previousMarkerWallClockMs?.let {
+                    (currentWallClockMs - it).coerceAtLeast(0L).toString()
+                }.orEmpty(),
                 "heapMaxKb" to (Runtime.getRuntime().maxMemory() / 1024L).toString(),
                 "memoryClassMb" to activityManager.memoryClass.toString(),
                 "lowRam" to activityManager.isLowRamDevice.toString(),
@@ -104,6 +130,7 @@ class App : Application() {
             ),
             DiagnosticContext(origin = DiagnosticOrigin.APP),
         )
+        persistProcessRuntimeMarker(currentWallClockMs, currentElapsedRealtimeMs)
         services.diagnostics.logEvent(
             "APP_CREATE",
             mapOf("appVersion" to BuildConfig.VERSION_NAME),
@@ -129,6 +156,7 @@ class App : Application() {
                     elapsedMs - lastSampleAtMs >= RuntimeSampler.DEFAULT_INTERVAL_MS
                 ) {
                     lastSampleAtMs = elapsedMs
+                    persistProcessRuntimeMarker(System.currentTimeMillis(), elapsedMs)
                     services.runtimeSampler.sample()
                 } else {
                     services.runtimeSampler.reading()
@@ -376,6 +404,14 @@ class App : Application() {
                 sampledAtEpochMs = System.currentTimeMillis(),
             )
         )
+    }
+
+    private fun persistProcessRuntimeMarker(wallClockMs: Long, elapsedRealtimeMs: Long) {
+        getSharedPreferences(PROCESS_START_PREFS, MODE_PRIVATE).edit()
+            .putLong(KEY_LAST_OBSERVED_ELAPSED_REALTIME_MS, elapsedRealtimeMs)
+            .putLong(KEY_LAST_ESTIMATED_BOOT_EPOCH_MS, wallClockMs - elapsedRealtimeMs.coerceAtLeast(0L))
+            .putLong(KEY_LAST_MARKER_WALL_CLOCK_MS, wallClockMs)
+            .apply()
     }
 
     private fun flushSucceeded(): Boolean =
@@ -659,6 +695,10 @@ class App : Application() {
 
     private companion object {
         const val HEAP_PRESSURE_RATIO = 0.75
+        const val PROCESS_START_PREFS = "process_start_evidence"
+        const val KEY_LAST_OBSERVED_ELAPSED_REALTIME_MS = "last_observed_elapsed_realtime_ms"
+        const val KEY_LAST_ESTIMATED_BOOT_EPOCH_MS = "last_estimated_boot_epoch_ms"
+        const val KEY_LAST_MARKER_WALL_CLOCK_MS = "last_marker_wall_clock_ms"
         const val PRESSURE_CLEAR_COOLDOWN_MS = 5L * 60_000L
         const val LEGACY_RECOVERY_MIN_SDK = 21
         const val LEGACY_RECOVERY_MAX_SDK = 25

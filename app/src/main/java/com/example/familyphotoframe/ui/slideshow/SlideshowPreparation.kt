@@ -365,6 +365,7 @@ internal suspend fun prepareSlide(
     imageLoader: ImageLoader,
     resolveModel: suspend (DisplayPhoto) -> PhotoModelResolution,
     loadCollageCandidates: suspend (DisplayPhoto, Int) -> List<DisplayPhoto>,
+    probeRemoteDimensions: suspend (DisplayPhoto) -> Pair<Int, Int>?,
     collageMode: PortraitCollageMode,
     maxCollagePhotos: Int,
     configuredMaxCollagePhotos: Int = maxCollagePhotos,
@@ -554,10 +555,14 @@ internal suspend fun prepareSlide(
             .take(MAX_COLLAGE_CANDIDATES)
             .toList()
         val inspectedCandidates = mutableListOf<InspectedCollagePhoto>()
+        val remoteProbeQueue = mutableListOf<Pair<Int, DisplayPhoto>>()
         var metadataCandidateCount = 0
         var localProbeCount = 0
-        var remoteUnknownSkippedCount = 0
-        var probeBudgetSkippedCount = 0
+        var localProbeBudgetSkippedCount = 0
+        var remoteProbeCount = 0
+        var remoteProbeSuccessCount = 0
+        var remoteProbeFailureCount = 0
+        var remoteProbeBudgetSkippedCount = 0
 
         for ((index, candidate) in rawCandidates.withIndex()) {
             val metadata = candidate.metadataCollageMeta(index)
@@ -574,14 +579,15 @@ internal suspend fun prepareSlide(
                     inspectedCandidates += InspectedCollagePhoto(candidate, null, metadata!!)
                     continue
                 }
-                CollageCandidateInspectionAction.SKIP_REMOTE_UNKNOWN -> {
-                    // resolveModel() would fetch the complete remote original merely to
-                    // discover orientation; field diagnostics showed this can take minutes.
-                    remoteUnknownSkippedCount++
+                CollageCandidateInspectionAction.QUEUE_REMOTE_BOUNDED_PROBE -> {
+                    // Never call resolveModel() here: that path intentionally materializes
+                    // the complete NAS original. A later bounded header pass reads at most
+                    // REMOTE_COLLAGE_PROBE_BYTE_LIMIT bytes instead.
+                    remoteProbeQueue += index to candidate
                     continue
                 }
-                CollageCandidateInspectionAction.SKIP_PROBE_BUDGET -> {
-                    probeBudgetSkippedCount++
+                CollageCandidateInspectionAction.SKIP_LOCAL_PROBE_BUDGET -> {
+                    localProbeBudgetSkippedCount++
                     continue
                 }
                 CollageCandidateInspectionAction.PROBE_LOCAL -> localProbeCount++
@@ -613,6 +619,35 @@ internal suspend fun prepareSlide(
                     )
                 }
             }
+        }
+
+        remoteProbeBudgetSkippedCount =
+            (remoteProbeQueue.size - MAX_REMOTE_COLLAGE_PROBES).coerceAtLeast(0)
+        for ((index, candidate) in remoteProbeQueue.take(MAX_REMOTE_COLLAGE_PROBES)) {
+            remoteProbeCount++
+            val dimensions = probeRemoteDimensions(candidate)
+            val effective = dimensions?.let { (width, height) ->
+                PortraitCollagePolicy.effectiveDimensions(width, height, candidate.exifOrientation)
+            }
+            if (effective == null) {
+                remoteProbeFailureCount++
+                continue
+            }
+            val (width, height) = effective
+            remoteProbeSuccessCount++
+            inspectedCandidates += InspectedCollagePhoto(
+                photo = candidate,
+                resolved = null,
+                meta = CollageCandidateMeta(
+                    id = candidate.id,
+                    aspectRatio = PortraitCollagePolicy.aspectRatio(width, height),
+                    orientation = PortraitCollagePolicy.classify(width, height),
+                    folderKey = candidate.collageFolderKey(),
+                    captureTimeEpochMs = candidate.collageCaptureTime(),
+                    lastShownAtEpochMs = candidate.lastShownAtEpochMs,
+                    candidateOrder = index,
+                ),
+            )
         }
 
         val mutableCandidates = inspectedCandidates.toMutableList()
@@ -647,8 +682,12 @@ internal suspend fun prepareSlide(
             "rawCandidateCount" to rawCandidates.size.toString(),
             "metadataCandidateCount" to metadataCandidateCount.toString(),
             "localProbeCount" to localProbeCount.toString(),
-            "remoteUnknownSkippedCount" to remoteUnknownSkippedCount.toString(),
-            "probeBudgetSkippedCount" to probeBudgetSkippedCount.toString(),
+            "localProbeBudgetSkippedCount" to localProbeBudgetSkippedCount.toString(),
+            "remoteProbeCount" to remoteProbeCount.toString(),
+            "remoteProbeSuccessCount" to remoteProbeSuccessCount.toString(),
+            "remoteProbeFailureCount" to remoteProbeFailureCount.toString(),
+            "remoteProbeBudgetSkippedCount" to remoteProbeBudgetSkippedCount.toString(),
+            "remoteProbeByteLimit" to REMOTE_COLLAGE_PROBE_BYTE_LIMIT.toString(),
             "candidateCount" to decision.stats.candidateCount.toString(),
             "sameFolderCandidateCount" to decision.stats.sameFolderCandidateCount.toString(),
             "portraitCandidateCount" to decision.stats.portraitCandidateCount.toString(),
@@ -848,4 +887,5 @@ internal suspend fun prepareSlide(
 
 private const val MAX_COLLAGE_CANDIDATES = 12
 private const val MAX_LOCAL_COLLAGE_PROBES = 4
+private const val MAX_REMOTE_COLLAGE_PROBES = 4
 private const val COLLAGE_PROBE_MAX_PX = 256

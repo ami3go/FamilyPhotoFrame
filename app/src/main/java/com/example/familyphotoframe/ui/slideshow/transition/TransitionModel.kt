@@ -35,6 +35,14 @@ object TransitionTiming {
         (clampBase(baseDurationMs) * effect.durationMultiplier)
             .roundToInt()
             .coerceIn(MIN_BASE_DURATION_MS, MAX_RESOLVED_DURATION_MS)
+
+    /** Progress derived from real frame-clock time, independent of Android animator scale. */
+    fun progressForElapsedNanos(elapsedNanos: Long, durationMs: Int): Float {
+        val durationNanos = durationMs.coerceAtLeast(1).toLong() * 1_000_000L
+        return (elapsedNanos.coerceAtLeast(0L).toDouble() / durationNanos.toDouble())
+            .toFloat()
+            .coerceIn(0f, 1f)
+    }
 }
 
 /** Transform applied to one full prepared presentation at a particular progress value. */
@@ -59,6 +67,8 @@ data class TransitionEvent(
     val outgoingId: Long?,
     val incomingId: Long,
     val durationMs: Int,
+    /** Real elapsed animation time; configured duration remains in [durationMs]. */
+    val actualDurationMs: Long? = null,
     val direction: String = TransitionDirection.NONE.name.lowercase(),
     val reason: String? = null,
     val fallbackUsed: Boolean = false,
