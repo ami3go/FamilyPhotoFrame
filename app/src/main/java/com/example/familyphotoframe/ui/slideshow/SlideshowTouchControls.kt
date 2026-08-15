@@ -3,18 +3,21 @@ package com.example.familyphotoframe.ui.slideshow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -23,6 +26,8 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.familyphotoframe.domain.engine.DisplayPhoto
@@ -34,6 +39,14 @@ internal sealed interface CurationMode {
     data class Hide(override val photos: List<DisplayPhoto>) : CurationMode
 }
 
+/**
+ * Large tablet-friendly touch controls presented as one coherent bottom dock.
+ *
+ * Keeping every action in the same row makes the overlay predictable when it appears,
+ * while the translucent dock preserves enough contrast over both bright and dark photos.
+ * The buttons deliberately use flexible width so the same layout scales across frame
+ * resolutions without reintroducing edge-mounted hit targets.
+ */
 @Composable
 internal fun TouchNavigationOverlay(
     photos: List<DisplayPhoto>,
@@ -42,40 +55,84 @@ internal fun TouchNavigationOverlay(
     onFavorite: (List<DisplayPhoto>) -> Unit,
     onHide: (List<DisplayPhoto>) -> Unit,
 ) {
+    val allFavorite = photos.isNotEmpty() && photos.all { it.isFavorite }
+
     Box(Modifier.fillMaxSize()) {
-        ControlButton("‹", "Previous presentation", Alignment.CenterStart, onPrevious)
-        ControlButton("›", "Next presentation", Alignment.CenterEnd, onNext)
-        Row(
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 28.dp),
-            horizontalArrangement = Arrangement.spacedBy(18.dp),
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(start = 16.dp, end = 16.dp, bottom = 28.dp)
+                .fillMaxWidth()
+                .widthIn(max = 560.dp),
+            shape = RoundedCornerShape(32.dp),
+            color = Color.Black.copy(alpha = 0.62f),
+            contentColor = Color.White,
+            shadowElevation = 10.dp,
         ) {
-            val allFavorite = photos.isNotEmpty() && photos.all { it.isFavorite }
-            Button(
-                onClick = { onFavorite(photos) },
-                modifier = Modifier.size(72.dp),
-                shape = CircleShape,
-            ) { Text(if (allFavorite) "★" else "☆", fontSize = 28.sp) }
-            Button(
-                onClick = { onHide(photos) },
-                modifier = Modifier.size(72.dp),
-                shape = CircleShape,
-            ) { Text("⌫", fontSize = 25.sp) }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ControlDockButton(
+                    symbol = "‹",
+                    label = "Previous",
+                    description = "Previous presentation",
+                    onClick = onPrevious,
+                )
+                ControlDockButton(
+                    symbol = if (allFavorite) "★" else "☆",
+                    label = if (allFavorite) "Favorited" else "Favorite",
+                    description = if (allFavorite) "Remove favorite" else "Favorite presentation",
+                    active = allFavorite,
+                    onClick = { onFavorite(photos) },
+                )
+                ControlDockButton(
+                    symbol = "⊘",
+                    label = "Hide",
+                    description = "Hide presentation",
+                    onClick = { onHide(photos) },
+                )
+                ControlDockButton(
+                    symbol = "›",
+                    label = "Next",
+                    description = "Next presentation",
+                    onClick = onNext,
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun BoxScope.ControlButton(
-    text: String,
+private fun RowScope.ControlDockButton(
+    symbol: String,
+    label: String,
     description: String,
-    alignment: Alignment,
+    active: Boolean = false,
     onClick: () -> Unit,
 ) {
-    Button(
+    FilledTonalButton(
         onClick = onClick,
-        modifier = Modifier.align(alignment).padding(24.dp).size(72.dp),
-        shape = CircleShape,
-    ) { Text(text, fontSize = 38.sp) }
+        modifier = Modifier
+            .weight(1f)
+            .height(84.dp)
+            .semantics { contentDescription = description },
+        shape = RoundedCornerShape(24.dp),
+        colors = ButtonDefaults.filledTonalButtonColors(
+            containerColor = Color.White.copy(alpha = if (active) 0.26f else 0.14f),
+            contentColor = Color.White,
+        ),
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(symbol, fontSize = 32.sp, lineHeight = 34.sp)
+            Text(label, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1)
+        }
+    }
 }
 
 @Composable
@@ -148,4 +205,3 @@ internal fun UndoHideBar(count: Int, onUndo: () -> Unit) {
         TextButton(onClick = onUndo) { Text("Undo") }
     }
 }
-
