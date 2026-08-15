@@ -20,7 +20,9 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Apply source patch
-        run: python3 tools/agent_collage_settings_tab.py
+        run: |
+          python3 tools/agent_collage_settings_tab.py
+          python3 tools/agent_collage_settings_tab_fix.py
       - name: Check whitespace
         run: git diff --check
       - name: Run unit tests and debug build
@@ -34,5 +36,5 @@ jobs:
             echo "No source changes to commit."
             exit 0
           fi
-          git commit -m "refactor: add dedicated collage settings pages"
+          git commit -m "refactor: add dedicated collage settings pages [skip ci]"
           git push
