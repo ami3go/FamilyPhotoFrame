@@ -17,6 +17,7 @@ jobs:
       - name: Apply feature patches
         run: |
           python3 scripts/patch_collage_model.py
+          sed -i 's/layoutPreference: CollageLayoutPreference,/layoutPreference: CollageLayoutPreference = CollageLayoutPreference.AUTO,/' app/src/main/java/com/example/familyphotoframe/domain/engine/PortraitCollagePolicy.kt
           python3 scripts/patch_collage_renderer.py
           python3 scripts/patch_collage_preview.py
           python3 scripts/patch_collage_android_ui.py
