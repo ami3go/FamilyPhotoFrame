@@ -4,7 +4,6 @@ import com.example.familyphotoframe.data.db.PhotoDao
 import com.example.familyphotoframe.data.settings.ActiveSourceKind
 import com.example.familyphotoframe.data.settings.AspectMode
 import com.example.familyphotoframe.data.settings.BrightnessMode
-import com.example.familyphotoframe.data.settings.BrightnessPeriod
 import com.example.familyphotoframe.data.settings.CollageAlignment
 import com.example.familyphotoframe.data.settings.CollageBackground
 import com.example.familyphotoframe.data.settings.CollageGap
@@ -115,17 +114,16 @@ internal class WebSettingsPatchApplier(
         str("portraitCollageBackground")?.let { v -> if (CollageBackground.entries.none { it.name == v }) return "Unknown portraitCollageBackground" }
         int("portraitCollageCornerRadiusDp")?.let { if (it !in 0..32) return "portraitCollageCornerRadiusDp must be 0-32" }
         str("selectionMode")?.let { v ->
-            // ON_THIS_DAY is system-managed only (empty pool otherwise) — never a valid
-            // direct choice for the global selection mode. See SelectionMode.ON_THIS_DAY.
-            if (v == SelectionMode.ON_THIS_DAY.name || SelectionMode.entries.none { it.name == v }) {
+            // Historical LEAST_RECENT_RANDOM is accepted as an alias for the current
+            // no-repeat mode; ON_THIS_DAY remains system-managed only.
+            val parsed = SelectionMode.fromStorage(v)
+            if (parsed == null || parsed == SelectionMode.ON_THIS_DAY) {
                 return "Unknown selectionMode"
             }
         }
         str("onUnreachable")?.let { v ->
             if (UnreachablePolicy.entries.none { it.name == v }) return "Unknown onUnreachable"
         }
-        float("brightnessDay")?.let { if (it !in 0.05f..1f) return "brightnessDay must be 0.05-1.0" }
-        float("brightnessNight")?.let { if (it !in 0.05f..1f) return "brightnessNight must be 0.05-1.0" }
         strings("includeGlobs")?.let { if (it.isEmpty()) return "includeGlobs cannot be empty" }
         int("webPort")?.let { if (it !in 1024..65535) return "webPort must be 1024-65535" }
         int("webIdleTimeoutMinutes")?.let { if (it !in 1..1440) return "webIdleTimeoutMinutes must be 1-1440" }
@@ -178,8 +176,8 @@ internal class WebSettingsPatchApplier(
                 if (OverlayPosition.entries.none { it.name == v }) return "Unknown $key"
             }
         }
-        str("sleepStart")?.let { if (SleepSchedule.parseMinutes(it) == null) return "sleepStart must be HH:mm" }
-        str("sleepEnd")?.let { if (SleepSchedule.parseMinutes(it) == null) return "sleepEnd must be HH:mm" }
+
+        LegacyBrightnessWebPatch.validationError(patch)?.let { return it }
 
         // Same guard as the on-device toggle: enabling favourites-only with nothing
         // favourited would leave the engine with an empty primary pool and quietly
@@ -198,53 +196,8 @@ internal class WebSettingsPatchApplier(
             }
         }
 
-        val hasLegacyBrightnessPatch = listOf(
-            "sleepEnabled", "sleepStart", "sleepEnd", "brightnessDay", "brightnessNight",
-        ).any(patch::containsKey)
-
         settings.update { cur ->
-            var next = cur
-            if (hasLegacyBrightnessPatch) {
-                val base = next.brightnessAutomation
-                val periods = base.periods.toMutableList()
-
-                fun replacePeriod(period: BrightnessPeriod) {
-                    val index = periods.indexOfFirst { it.id == period.id }
-                    if (index >= 0) periods[index] = period else periods += period
-                }
-
-                val day = periods.firstOrNull { it.id == "day" } ?: BrightnessPeriod(
-                    id = "day",
-                    startTime = "07:00",
-                    brightness = base.manualBrightness,
-                    action = NightAction.DIM_ONLY,
-                )
-                val night = periods.firstOrNull { it.id == "night" } ?: BrightnessPeriod(
-                    id = "night",
-                    startTime = "23:00",
-                    brightness = 0.30f,
-                    action = NightAction.PAUSE_SLIDESHOW,
-                )
-                replacePeriod(day.copy(
-                    startTime = str("sleepEnd")?.trim() ?: day.startTime,
-                    brightness = float("brightnessDay") ?: day.brightness,
-                ))
-                replacePeriod(night.copy(
-                    startTime = str("sleepStart")?.trim() ?: night.startTime,
-                    brightness = float("brightnessNight") ?: night.brightness,
-                    action = if (bool("sleepEnabled") == true) NightAction.PAUSE_SLIDESHOW else night.action,
-                ))
-                val mode = when (bool("sleepEnabled")) {
-                    true -> BrightnessMode.SCHEDULED
-                    false -> BrightnessMode.MANUAL
-                    null -> base.mode
-                }
-                next = next.copy(brightnessAutomation = base.copy(
-                    mode = mode,
-                    manualBrightness = float("brightnessDay") ?: base.manualBrightness,
-                    periods = periods,
-                ).normalized())
-            }
+            var next = LegacyBrightnessWebPatch.apply(cur, patch)
             int("intervalSeconds")?.let { next = next.copy(intervalSeconds = it) }
             int("transitionDurationMs")?.let { next = next.copy(transitionDurationMs = it.coerceIn(300, 2000)) }
             str("aspectMode")?.let { v -> next = next.copy(aspectMode = AspectMode.valueOf(v)) }
@@ -326,7 +279,11 @@ internal class WebSettingsPatchApplier(
                     .toSet()
                 next = next.copy(source = next.source.copy(alsoPlay = kinds - next.source.kind))
             }
-            str("selectionMode")?.let { v -> next = next.copy(selectionMode = SelectionMode.valueOf(v)) }
+            str("selectionMode")?.let { v ->
+                SelectionMode.fromStorage(v)?.takeIf { it != SelectionMode.ON_THIS_DAY }?.let { mode ->
+                    next = next.copy(selectionMode = mode)
+                }
+            }
             str("onUnreachable")?.let { v -> next = next.copy(onUnreachable = UnreachablePolicy.valueOf(v)) }
             bool("favoritesOnly")?.let { next = next.copy(favoritesOnly = it) }
             // Blank clears the filter, which means "play everything" — the same

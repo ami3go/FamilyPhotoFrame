@@ -52,10 +52,7 @@ data class EngineUiModel(
     val current: DisplayPhoto? = null,
     val next: DisplayPhoto? = null,   // exposed so the UI can preload exactly one ahead (§10.2)
     val paused: Boolean = false,
-    /**
-     * Progress through the current no-repeat cycle: photos shown so far, and the pool
-     * size. Both zero in the windowed random mode, which has no cycle to report.
-     */
+    /** Progress through the current explicit-id playback cycle. */
     val cycleShown: Int = 0,
     val cycleTotal: Int = 0,
     /** Persisted folder-balanced progress and health counters. */

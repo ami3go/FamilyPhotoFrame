@@ -6,11 +6,8 @@ import kotlin.random.Random
  * Ordered playback over an explicit pool of photo ids (spec §9.6 `shuffle_no_repeat`,
  * plus the date-ordered modes).
  *
- * [LeastRecentRandom] samples a *window* supplied by the DAO, which biases away from
- * recently shown photos but can never promise "every photo once before any repeat":
- * the window is smaller than the library, so a photo just outside it can reappear
- * early. This class takes the whole displayable id list instead and consumes it, which
- * is what makes the no-repeat guarantee actually hold.
+ * This queue consumes the whole displayable id list rather than sampling a partial
+ * window, which makes the no-repeat guarantee explicit and testable.
  *
  * Pure and deterministic given [Random] — no Room, no Android, no clock — so the
  * guarantee is unit-testable rather than merely asserted.

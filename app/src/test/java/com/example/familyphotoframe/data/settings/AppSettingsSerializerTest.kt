@@ -113,7 +113,6 @@ class AppSettingsSerializerTest {
             ),
         )
         assertEquals(SelectionMode.SHUFFLE_NO_REPEAT, restored.selectionMode)
-        assertEquals(1, restored.playbackOrderMigrationVersion)
         assertEquals(
             SelectionMode.SHUFFLE_NO_REPEAT,
             restored.withCurrentDefaults().selectionMode,

@@ -36,7 +36,8 @@ object AppSettingsSerializer : Serializer<AppSettings> {
         }
 
     override suspend fun writeTo(t: AppSettings, output: OutputStream) {
-        output.write(json.encodeToString(AppSettings.serializer(), t).encodeToByteArray())
+        val canonical = t.withCurrentDefaults()
+        output.write(json.encodeToString(AppSettings.serializer(), canonical).encodeToByteArray())
     }
 }
 
@@ -53,13 +54,16 @@ class SettingsRepository(context: Context) {
     val settings: Flow<AppSettings> = dataStore.data
 
     suspend fun update(transform: (AppSettings) -> AppSettings) {
-        dataStore.updateData(transform)
+        dataStore.updateData { current ->
+            val canonical = transform(current).withCurrentDefaults()
+            if (canonical == current) current else canonical
+        }
     }
 
     /** One atomic DataStore write for the complete folder selection. Empty means all. */
     suspend fun setSelectedFolders(folderKeys: Set<String>) {
         val normalized = folderKeys.asSequence().map { it.trim() }.filter { it.isNotEmpty() }.toSet()
-        dataStore.updateData { current ->
+        update { current ->
             if (current.selectedFolders == normalized) current
             else current.copy(selectedFolders = normalized)
         }

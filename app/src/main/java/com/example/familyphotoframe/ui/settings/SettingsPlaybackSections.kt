@@ -328,11 +328,6 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel, o
                 label = { Text(stringResource(R.string.selection_sequential)) },
             )
             FilterChip(
-                selected = state.selectionMode == SelectionMode.LEAST_RECENT_RANDOM,
-                onClick = { vm.setSelectionMode(SelectionMode.LEAST_RECENT_RANDOM) },
-                label = { Text(stringResource(R.string.selection_least_recent)) },
-            )
-            FilterChip(
                 selected = state.selectionMode == SelectionMode.SHUFFLE_NO_REPEAT,
                 onClick = { vm.setSelectionMode(SelectionMode.SHUFFLE_NO_REPEAT) },
                 label = { Text(stringResource(R.string.selection_shuffle_no_repeat)) },
