@@ -551,9 +551,9 @@ private fun PlayingContent(
             }
             val cachedHandle = registry.latest(photo.id)
             val existingHandle = cachedHandle?.takeIf { handle ->
-                handle == committedHandle || slide(handle)?.let {
-                    !softFocusNeeded || it.transitionBlurredBitmap != null
-                } == true
+                handle == committedHandle ||
+                    (fastManual && slide(handle) != null) ||
+                    slide(handle)?.let { !softFocusNeeded || it.transitionBlurredBitmap != null } == true
             }
             val handle = existingHandle ?: when (val result = build(photo, fastManual = fastManual)) {
                 is PrepareSlideResult.Ready -> {
@@ -619,10 +619,12 @@ private fun PlayingContent(
         state.portraitCollage,
         softFocusNeeded,
         memoryProtection.decisionVersion,
+        manualNavigationActive,
         hostActive,
         hostGeneration,
     ) {
         val photo = next ?: return@LaunchedEffect
+        val prewarmManual = manualNavigationActive && committedHandle != null
         val lifecycleToken = hostPlaybackToken()
         if (!hostActive || lifecycleToken == null ||
             !isHostPlaybackTokenCurrent(lifecycleToken) || !memoryProtection.allowNextPreload
@@ -644,10 +646,12 @@ private fun PlayingContent(
         // and would show up in diagnostics as a second COLLAGE_PRELOAD_STARTED for the same
         // anchor (observed as 304/544 wasted preloads in the §22.2 soak log).
         val existingHandle = registry.latest(photo.id)?.takeIf { handle ->
-            slide(handle)?.let { !softFocusNeeded || it.transitionBlurredBitmap != null } == true
+            slide(handle)?.let {
+                prewarmManual || !softFocusNeeded || it.transitionBlurredBitmap != null
+            } == true
         }
         if (existingHandle != null) return@LaunchedEffect
-        when (val result = build(photo)) {
+        when (val result = build(photo, fastManual = prewarmManual)) {
             is PrepareSlideResult.Ready -> {
                 if (!currentCoroutineContext().isActive ||
                     !isHostPlaybackTokenCurrent(lifecycleToken)
