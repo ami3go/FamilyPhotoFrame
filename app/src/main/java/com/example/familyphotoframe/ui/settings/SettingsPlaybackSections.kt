@@ -109,7 +109,7 @@ internal fun TransitionChip(
     )
 }
 @Composable
-internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
+internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel, onOpenCollage: () -> Unit) {
     var pendingShuffleReset by remember { mutableStateOf<ShuffleResetAction?>(null) }
     PlaylistSection(state, vm)
     SettingsSectionCard("Timing & transitions") {
@@ -255,161 +255,45 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     }
 
     SettingsSectionCard(stringResource(R.string.settings_portrait_collage)) {
-    Text(
-        stringResource(R.string.settings_portrait_collage_hint),
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-        fontSize = 14.sp,
-    )
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            FilterChip(
-                selected = state.portraitCollage.mode == PortraitCollageMode.OFF,
-                onClick = { vm.setPortraitCollageMode(PortraitCollageMode.OFF) },
-                label = { Text(stringResource(R.string.settings_collage_off)) },
-            )
-            FilterChip(
-                selected = state.portraitCollage.mode == PortraitCollageMode.AUTOMATIC,
-                onClick = { vm.setPortraitCollageMode(PortraitCollageMode.AUTOMATIC) },
-                label = { Text(stringResource(R.string.settings_collage_auto)) },
-            )
+        val collage = state.portraitCollage
+        val modeLabel = when (collage.mode) {
+            PortraitCollageMode.OFF -> stringResource(R.string.settings_collage_off)
+            PortraitCollageMode.AUTOMATIC -> stringResource(R.string.settings_collage_auto)
+            PortraitCollageMode.ALWAYS_TWO -> stringResource(R.string.settings_collage_always_two)
+            PortraitCollageMode.PREFER_THREE -> stringResource(R.string.settings_collage_prefer_three)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            FilterChip(
-                selected = state.portraitCollage.mode == PortraitCollageMode.ALWAYS_TWO,
-                onClick = { vm.setPortraitCollageMode(PortraitCollageMode.ALWAYS_TWO) },
-                label = { Text(stringResource(R.string.settings_collage_always_two)) },
-            )
-            FilterChip(
-                selected = state.portraitCollage.mode == PortraitCollageMode.PREFER_THREE,
-                onClick = { vm.setPortraitCollageMode(PortraitCollageMode.PREFER_THREE) },
-                label = { Text(stringResource(R.string.settings_collage_prefer_three)) },
-            )
+        val orientationLabel = when (collage.orientationFilter) {
+            CollageOrientationFilter.ANY -> stringResource(R.string.settings_collage_orientation_any)
+            CollageOrientationFilter.PORTRAIT_ONLY -> stringResource(R.string.settings_collage_orientation_vertical)
+            CollageOrientationFilter.LANDSCAPE_ONLY -> stringResource(R.string.settings_collage_orientation_horizontal)
+            CollageOrientationFilter.SAME_AS_ANCHOR -> stringResource(R.string.settings_collage_orientation_match)
         }
-    }
-
-    Text(
-        stringResource(R.string.settings_collage_max),
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
-        fontSize = 14.sp,
-    )
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        FilterChip(
-            selected = state.portraitCollage.maxPhotosClamped == 2,
-            onClick = { vm.setPortraitCollageMaxPhotos(2) },
-            label = { Text(stringResource(R.string.settings_collage_two)) },
-        )
-        FilterChip(
-            selected = state.portraitCollage.maxPhotosClamped == 3,
-            onClick = { vm.setPortraitCollageMaxPhotos(3) },
-            label = { Text(stringResource(R.string.settings_collage_three)) },
-        )
-    }
-
-    Text(stringResource(R.string.settings_collage_orientation))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(state.portraitCollage.orientationFilter == CollageOrientationFilter.ANY, { vm.setCollageOrientationFilter(CollageOrientationFilter.ANY) }, { Text(stringResource(R.string.settings_collage_orientation_any)) })
-        FilterChip(state.portraitCollage.orientationFilter == CollageOrientationFilter.PORTRAIT_ONLY, { vm.setCollageOrientationFilter(CollageOrientationFilter.PORTRAIT_ONLY) }, { Text(stringResource(R.string.settings_collage_orientation_vertical)) })
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(state.portraitCollage.orientationFilter == CollageOrientationFilter.LANDSCAPE_ONLY, { vm.setCollageOrientationFilter(CollageOrientationFilter.LANDSCAPE_ONLY) }, { Text(stringResource(R.string.settings_collage_orientation_horizontal)) })
-        FilterChip(state.portraitCollage.orientationFilter == CollageOrientationFilter.SAME_AS_ANCHOR, { vm.setCollageOrientationFilter(CollageOrientationFilter.SAME_AS_ANCHOR) }, { Text(stringResource(R.string.settings_collage_orientation_match)) })
-    }
-    Text(stringResource(R.string.settings_collage_layout))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(state.portraitCollage.layoutPreference == CollageLayoutPreference.AUTO, { vm.setCollageLayoutPreference(CollageLayoutPreference.AUTO) }, { Text(stringResource(R.string.settings_collage_layout_auto)) })
-        FilterChip(state.portraitCollage.layoutPreference == CollageLayoutPreference.COLUMNS, { vm.setCollageLayoutPreference(CollageLayoutPreference.COLUMNS) }, { Text(stringResource(R.string.settings_collage_layout_columns)) })
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(state.portraitCollage.layoutPreference == CollageLayoutPreference.ROWS, { vm.setCollageLayoutPreference(CollageLayoutPreference.ROWS) }, { Text(stringResource(R.string.settings_collage_layout_rows)) })
-        FilterChip(state.portraitCollage.layoutPreference == CollageLayoutPreference.FEATURED, { vm.setCollageLayoutPreference(CollageLayoutPreference.FEATURED) }, { Text(stringResource(R.string.settings_collage_layout_featured)) })
-    }
-    Text(stringResource(R.string.settings_collage_scaling))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(state.portraitCollage.scaleMode == CollageScaleMode.CROP, { vm.setCollageScaleMode(CollageScaleMode.CROP) }, { Text(stringResource(R.string.settings_collage_scaling_crop)) })
-        FilterChip(state.portraitCollage.scaleMode == CollageScaleMode.FIT, { vm.setCollageScaleMode(CollageScaleMode.FIT) }, { Text(stringResource(R.string.settings_collage_scaling_fit)) })
-    }
-    Text(stringResource(R.string.settings_collage_alignment))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(state.portraitCollage.alignment == CollageAlignment.LEFT, { vm.setCollageAlignment(CollageAlignment.LEFT) }, { Text(stringResource(R.string.settings_collage_left)) })
-        FilterChip(state.portraitCollage.alignment == CollageAlignment.CENTER, { vm.setCollageAlignment(CollageAlignment.CENTER) }, { Text(stringResource(R.string.settings_collage_center)) })
-        FilterChip(state.portraitCollage.alignment == CollageAlignment.RIGHT, { vm.setCollageAlignment(CollageAlignment.RIGHT) }, { Text(stringResource(R.string.settings_collage_right)) })
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(state.portraitCollage.alignment == CollageAlignment.TOP, { vm.setCollageAlignment(CollageAlignment.TOP) }, { Text(stringResource(R.string.settings_collage_top)) })
-        FilterChip(state.portraitCollage.alignment == CollageAlignment.BOTTOM, { vm.setCollageAlignment(CollageAlignment.BOTTOM) }, { Text(stringResource(R.string.settings_collage_bottom)) })
-    }
-    Text(stringResource(R.string.settings_collage_background))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(state.portraitCollage.background == CollageBackground.APP_BACKGROUND, { vm.setCollageBackground(CollageBackground.APP_BACKGROUND) }, { Text(stringResource(R.string.settings_collage_background_frame)) })
-        FilterChip(state.portraitCollage.background == CollageBackground.BLACK, { vm.setCollageBackground(CollageBackground.BLACK) }, { Text(stringResource(R.string.settings_collage_background_black)) })
-        FilterChip(state.portraitCollage.background == CollageBackground.WHITE, { vm.setCollageBackground(CollageBackground.WHITE) }, { Text(stringResource(R.string.settings_collage_background_white)) })
-    }
-    Text(stringResource(R.string.settings_collage_corner_radius, state.portraitCollage.cornerRadiusDpClamped))
-    Slider(value = state.portraitCollage.cornerRadiusDpClamped.toFloat(), onValueChange = { vm.setCollageCornerRadiusDp(it.roundToInt()) }, valueRange = 0f..32f, steps = 7)
-
-    ToggleRow(
-        label = stringResource(R.string.settings_collage_animate_three),
-        checked = state.portraitCollage.animateThreePhotoFrames,
-        onChange = vm::setAnimateThreePhotoFrames,
-    )
-    Text(
-        stringResource(R.string.settings_collage_animate_three_hint),
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-        fontSize = 14.sp,
-    )
-
-    Text(
-        stringResource(R.string.settings_collage_fallback),
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
-        fontSize = 14.sp,
-    )
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            FilterChip(
-                selected = state.portraitCollage.fallback == PortraitFallback.BLURRED_BACKGROUND,
-                onClick = { vm.setPortraitFallback(PortraitFallback.BLURRED_BACKGROUND) },
-                label = { Text(stringResource(R.string.settings_collage_fallback_blur)) },
-            )
-            FilterChip(
-                selected = state.portraitCollage.fallback == PortraitFallback.SOLID_BACKGROUND,
-                onClick = { vm.setPortraitFallback(PortraitFallback.SOLID_BACKGROUND) },
-                label = { Text(stringResource(R.string.settings_collage_fallback_solid)) },
-            )
+        val scaleLabel = when (collage.scaleMode) {
+            CollageScaleMode.CROP -> stringResource(R.string.settings_collage_scaling_crop)
+            CollageScaleMode.FIT -> stringResource(R.string.settings_collage_scaling_fit)
         }
-        FilterChip(
-            selected = state.portraitCollage.fallback == PortraitFallback.CROP_TO_FILL,
-            onClick = { vm.setPortraitFallback(PortraitFallback.CROP_TO_FILL) },
-            label = { Text(stringResource(R.string.settings_collage_fallback_crop)) },
+        val alignmentLabel = when (collage.alignment) {
+            CollageAlignment.CENTER -> stringResource(R.string.settings_collage_center)
+            CollageAlignment.TOP -> stringResource(R.string.settings_collage_top)
+            CollageAlignment.BOTTOM -> stringResource(R.string.settings_collage_bottom)
+            CollageAlignment.LEFT -> stringResource(R.string.settings_collage_left)
+            CollageAlignment.RIGHT -> stringResource(R.string.settings_collage_right)
+        }
+        Text(
+            stringResource(
+                R.string.settings_collage_summary_format,
+                modeLabel,
+                collage.maxPhotosClamped,
+                orientationLabel,
+                scaleLabel,
+                alignmentLabel,
+            ),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+            fontSize = 14.sp,
         )
-    }
-
-    Text(
-        stringResource(R.string.settings_collage_gap),
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
-        fontSize = 14.sp,
-    )
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        FilterChip(
-            selected = state.portraitCollage.gap == CollageGap.NONE,
-            onClick = { vm.setCollageGap(CollageGap.NONE) },
-            label = { Text(stringResource(R.string.settings_collage_gap_none)) },
-        )
-        FilterChip(
-            selected = state.portraitCollage.gap == CollageGap.SMALL,
-            onClick = { vm.setCollageGap(CollageGap.SMALL) },
-            label = { Text(stringResource(R.string.settings_collage_gap_small)) },
-        )
-        FilterChip(
-            selected = state.portraitCollage.gap == CollageGap.MEDIUM,
-            onClick = { vm.setCollageGap(CollageGap.MEDIUM) },
-            label = { Text(stringResource(R.string.settings_collage_gap_medium)) },
-        )
-        FilterChip(
-            selected = state.portraitCollage.gap == CollageGap.LARGE,
-            onClick = { vm.setCollageGap(CollageGap.LARGE) },
-            label = { Text(stringResource(R.string.settings_collage_gap_large)) },
-        )
-    }
+        OutlinedButton(onClick = onOpenCollage, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.settings_collage_configure))
+        }
     }
 
     if (state.configurableKinds.isNotEmpty()) {

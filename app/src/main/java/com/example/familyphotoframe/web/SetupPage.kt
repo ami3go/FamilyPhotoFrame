@@ -84,6 +84,7 @@ object SetupPage {
       <section id="tab-overview" class="tab-page" data-tab="overview"></section>
       <section id="tab-photos" class="tab-page hidden" data-tab="photos"></section>
       <section id="tab-playback" class="tab-page hidden" data-tab="playback"></section>
+      <section id="tab-collage" class="tab-page hidden" data-tab="collage"></section>
       <section id="tab-display" class="tab-page hidden" data-tab="display"></section>
       <section id="tab-schedule" class="tab-page hidden" data-tab="schedule"></section>
       <section id="tab-device" class="tab-page hidden" data-tab="device"></section>

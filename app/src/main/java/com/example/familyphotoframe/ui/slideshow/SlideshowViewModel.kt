@@ -51,6 +51,7 @@ import com.example.familyphotoframe.data.settings.CollageLayoutPreference
 import com.example.familyphotoframe.data.settings.CollageOrientationFilter
 import com.example.familyphotoframe.data.settings.CollageScaleMode
 import com.example.familyphotoframe.data.settings.PortraitCollageMode
+import com.example.familyphotoframe.data.settings.PortraitCollageSettings
 import com.example.familyphotoframe.data.settings.PortraitFallback
 import com.example.familyphotoframe.data.settings.OverlayPosition
 import com.example.familyphotoframe.data.settings.TransitionMode
@@ -3673,6 +3674,7 @@ class SlideshowViewModel(
     fun setCollageAlignment(alignment: CollageAlignment) = viewModelScope.launch { services.settings.update { it.copy(portraitCollage = it.portraitCollage.copy(alignment = alignment)) } }
     fun setCollageBackground(background: CollageBackground) = viewModelScope.launch { services.settings.update { it.copy(portraitCollage = it.portraitCollage.copy(background = background)) } }
     fun setCollageCornerRadiusDp(radiusDp: Int) = viewModelScope.launch { services.settings.update { it.copy(portraitCollage = it.portraitCollage.copy(cornerRadiusDp = radiusDp.coerceIn(0, 32))) } }
+    fun resetPortraitCollageSettings() = viewModelScope.launch { services.settings.update { it.copy(portraitCollage = PortraitCollageSettings()) } }
 
     // ---- display-time EXIF backfill (Phase 2 increment 8) ----
 
