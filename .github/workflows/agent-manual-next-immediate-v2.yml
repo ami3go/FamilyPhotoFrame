@@ -1,0 +1,60 @@
+name: Verify immediate manual next v2
+on:
+  push:
+    branches: [agent/manual-next-immediate-ci2]
+permissions:
+  contents: write
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Patch manual navigation fast path
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowScreen.kt')
+          s=p.read_text()
+          def rep(old,new,count=1):
+              global s
+              assert s.count(old)>=count, old[:120]
+              s=s.replace(old,new,count)
+          rep('                onMotionDiagnostic = vm::logThreePhotoMotion,\n                memoryProtection = memoryProtection,','                onMotionDiagnostic = vm::logThreePhotoMotion,\n                manualNavigationActive = controlsVisible,\n                memoryProtection = memoryProtection,')
+          rep('    onMotionDiagnostic: (List<Long>, String) -> Unit,\n    memoryProtection: PlaybackMemoryState,','    onMotionDiagnostic: (List<Long>, String) -> Unit,\n    manualNavigationActive: Boolean,\n    memoryProtection: PlaybackMemoryState,')
+          rep('    var incomingHandle by remember { mutableStateOf<PreparedSlideHandle?>(null) }\n    var transitionState by remember {','    var incomingHandle by remember { mutableStateOf<PreparedSlideHandle?>(null) }\n    var manualCandidateHandle by remember { mutableStateOf<PreparedSlideHandle?>(null) }\n    var transitionState by remember {')
+          rep('    suspend fun build(photo: DisplayPhoto): PrepareSlideResult = preparationMutex.withLock {','    suspend fun build(photo: DisplayPhoto, fastManual: Boolean = false): PrepareSlideResult {\n        suspend fun prepare(): PrepareSlideResult {')
+          rep('            collageMode = if (maxPhotos >= 2) {\n                state.portraitCollage.mode\n            } else {\n                PortraitCollageMode.OFF\n            },','            collageMode = if (fastManual) {\n                PortraitCollageMode.OFF\n            } else if (maxPhotos >= 2) {\n                state.portraitCollage.mode\n            } else {\n                PortraitCollageMode.OFF\n            },')
+          rep('            prepareSoftFocusBlur = softFocusNeeded,\n            allowBlurredBackground = memoryProtection.allowBlurredBackdrop,','            prepareSoftFocusBlur = softFocusNeeded && !fastManual,\n            allowBlurredBackground = memoryProtection.allowBlurredBackdrop && !fastManual,')
+          rep('        prepareSlide(\n            context = context,','        return prepareSlide(\n            context = context,')
+          rep('            onCollageEvent = onCollageEvent,\n        )\n    }\n\n    // A complete presentation becomes a candidate,','            onCollageEvent = onCollageEvent,\n        )\n        }\n\n        // A manual skip has higher priority than speculative collage preload.\n        // Use a single-anchor decode when no prepared target exists instead of\n        // queueing behind remote collage probes and companion decodes.\n        return if (fastManual) prepare() else preparationMutex.withLock { prepare() }\n    }\n\n    // A complete presentation becomes a candidate,')
+          rep('            val photo = selected ?: return@LaunchedEffect\n            val lifecycleToken = hostPlaybackToken() ?: return@LaunchedEffect','            val photo = selected ?: return@LaunchedEffect\n            val fastManual = manualNavigationActive && committedHandle != null\n            val lifecycleToken = hostPlaybackToken() ?: return@LaunchedEffect')
+          rep('            val handle = existingHandle ?: when (val result = build(photo)) {','            val handle = existingHandle ?: when (val result = build(photo, fastManual = fastManual)) {')
+          rep('            candidateHandle = handle\n            // The Compose-visible handle now owns this registry entry.','            candidateHandle = handle\n            manualCandidateHandle = if (fastManual) handle else null\n            // The Compose-visible handle now owns this registry entry.')
+          rep('        val previousHandle = committedHandle\n        val previous = slide(previousHandle)\n        val supportedEffects =','        val previousHandle = committedHandle\n        val previous = slide(previousHandle)\n        val manualNavigation = targetHandle == manualCandidateHandle\n        val supportedEffects =')
+          rep('        val resolved = if (previous == null) {\n            ResolvedTransition(TransitionMode.CROSSFADE, fallbackReason = "cold_start")\n        } else {\n            transitionSelector.select(','        val resolved = if (previous == null) {\n            ResolvedTransition(TransitionMode.CROSSFADE, fallbackReason = "cold_start")\n        } else if (manualNavigation) {\n            ResolvedTransition(TransitionMode.CROSSFADE, fallbackReason = "manual_navigation")\n        } else {\n            transitionSelector.select(')
+          rep('        val durationMs = if (previous == null) {\n            TransitionTiming.COLD_START_DURATION_MS\n        } else {\n            TransitionTiming.resolvedDurationMs(state.transitionDurationMs, resolved.effect)\n        }','        val durationMs = if (previous == null) {\n            TransitionTiming.COLD_START_DURATION_MS\n        } else if (manualNavigation) {\n            120\n        } else {\n            TransitionTiming.resolvedDurationMs(state.transitionDurationMs, resolved.effect)\n        }')
+          rep('                    publishBitmapInventory()\n                    return@withContext\n                }\n\n                transitionProgress.snapTo(1f)\n                committedHandle = targetHandle','                    if (manualCandidateHandle == targetHandle) manualCandidateHandle = null\n                    publishBitmapInventory()\n                    return@withContext\n                }\n\n                transitionProgress.snapTo(1f)\n                committedHandle = targetHandle')
+          rep('                onRendered(\n                    target.anchor.id,\n                    target.photos.map { it.id },\n                    target.dataSources,\n                    (target as? PreparedSlide.Collage)?.layout?.name,\n                )','                onRendered(\n                    target.anchor.id,\n                    target.photos.map { it.id },\n                    target.dataSources,\n                    (target as? PreparedSlide.Collage)?.layout?.name,\n                )\n                if (manualCandidateHandle == targetHandle) manualCandidateHandle = null')
+          rep('                            onDoubleTap = { vm.onTogglePause("double_tap") },','                            onDoubleTap = {\n                                if (!controlsVisible) vm.onTogglePause("double_tap")\n                            },')
+          p.write_text(s)
+          PY
+      - name: Structural checks
+        run: |
+          git diff --check
+          grep -q 'manualNavigationActive = controlsVisible' app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowScreen.kt
+          grep -q 'build(photo, fastManual = fastManual)' app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowScreen.kt
+          grep -q 'fallbackReason = "manual_navigation"' app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowScreen.kt
+          grep -q '^            120$' app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowScreen.kt
+      - name: Unit tests and debug build
+        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
+      - name: Commit verified source
+        run: |
+          git config user.name ami3go
+          git config user.email 69671996+ami3go@users.noreply.github.com
+          git add app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowScreen.kt
+          git commit -m 'fix: make manual slideshow navigation immediate [skip ci]'
+          git push origin HEAD:agent/manual-next-immediate-ci2
