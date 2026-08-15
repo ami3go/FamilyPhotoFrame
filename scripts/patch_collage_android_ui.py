@@ -10,7 +10,7 @@ def rep(s,a,b,label):
 p='app/src/main/java/com/example/familyphotoframe/ui/settings/SettingsPlaybackSections.kt'; s=rd(p)
 s=rep(s,'import com.example.familyphotoframe.data.settings.CollageGap\n','import com.example.familyphotoframe.data.settings.CollageAlignment\nimport com.example.familyphotoframe.data.settings.CollageBackground\nimport com.example.familyphotoframe.data.settings.CollageGap\nimport com.example.familyphotoframe.data.settings.CollageLayoutPreference\nimport com.example.familyphotoframe.data.settings.CollageOrientationFilter\nimport com.example.familyphotoframe.data.settings.CollageScaleMode\n','imports')
 needle='''    ToggleRow(
-        stringResource(R.string.settings_collage_animate_three),'''
+        label = stringResource(R.string.settings_collage_animate_three),'''
 controls='''    Text(stringResource(R.string.settings_collage_orientation))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilterChip(state.portraitCollage.orientationFilter == CollageOrientationFilter.ANY, { vm.setCollageOrientationFilter(CollageOrientationFilter.ANY) }, { Text(stringResource(R.string.settings_collage_orientation_any)) })
