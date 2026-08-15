@@ -77,6 +77,7 @@ enum class SettingsPage {
     PHOTOS,
     FOLDERS,
     PLAYBACK,
+    COLLAGE,
     DISPLAY,
     SCHEDULE,
     DEVICE,
@@ -108,6 +109,7 @@ fun SettingsScreen(
         SettingsPage.PHOTOS -> stringResource(R.string.settings_source)
         SettingsPage.FOLDERS -> stringResource(R.string.settings_folders)
         SettingsPage.PLAYBACK -> stringResource(R.string.settings_playback)
+        SettingsPage.COLLAGE -> stringResource(R.string.settings_portrait_collage)
         SettingsPage.DISPLAY -> stringResource(R.string.settings_display)
         SettingsPage.SCHEDULE -> stringResource(R.string.settings_schedule)
         SettingsPage.DEVICE -> stringResource(R.string.settings_device)
@@ -138,7 +140,8 @@ fun SettingsScreen(
             }
             SettingsPage.PHOTOS -> PhotosSettings(state, vm) { onOpenPage(SettingsPage.FOLDERS) }
             SettingsPage.FOLDERS -> Unit
-            SettingsPage.PLAYBACK -> PlaybackSettings(state, vm)
+            SettingsPage.PLAYBACK -> PlaybackSettings(state, vm) { onOpenPage(SettingsPage.COLLAGE) }
+            SettingsPage.COLLAGE -> CollageSettings(state, vm)
             SettingsPage.DISPLAY -> DisplaySettings(state, vm)
             SettingsPage.SCHEDULE -> ScheduleSettings(state, vm)
             SettingsPage.DEVICE -> DeviceSettings(state, vm)
@@ -215,6 +218,7 @@ internal fun SettingsHeader(title: String, showBackArrow: Boolean, onBack: () ->
 private fun SettingsGroupList(onOpenPage: (SettingsPage) -> Unit) {
     SettingsGroupEntry(stringResource(R.string.settings_source)) { onOpenPage(SettingsPage.PHOTOS) }
     SettingsGroupEntry(stringResource(R.string.settings_playback)) { onOpenPage(SettingsPage.PLAYBACK) }
+    SettingsGroupEntry(stringResource(R.string.settings_portrait_collage)) { onOpenPage(SettingsPage.COLLAGE) }
     SettingsGroupEntry(stringResource(R.string.settings_display)) { onOpenPage(SettingsPage.DISPLAY) }
     SettingsGroupEntry(stringResource(R.string.settings_schedule)) { onOpenPage(SettingsPage.SCHEDULE) }
     SettingsGroupEntry(stringResource(R.string.settings_device)) { onOpenPage(SettingsPage.DEVICE) }
