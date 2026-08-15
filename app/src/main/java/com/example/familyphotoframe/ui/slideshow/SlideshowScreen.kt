@@ -147,28 +147,7 @@ fun SlideshowScreen(
     Box(
         modifier
             .fillMaxSize()
-            .background(bg)
-            .pointerInput(state.blackScreen) {
-                detectTapGestures(
-                    // Pause is deliberately NOT on a single tap. The gesture surface is
-                    // the whole screen, so a single tap made it trivial to pause the
-                    // frame by brushing it, or with a stray release when returning from
-                    // settings — and a paused frame looks broken rather than paused.
-                    // Double tap is hard to trigger by accident and easy to repeat to
-                    // undo; keyboard/remote (space, play/pause) and the web panel are
-                    // unchanged.
-                    onTap = {
-                        if (state.blackScreen) vm.temporaryWake()
-                        else if (controlsVisible) controlsVisible = false
-                        else showControls()
-                    },
-                    onDoubleTap = { vm.onTogglePause("double_tap") },
-                    onLongPress = {
-                        controlsVisible = false
-                        onOpenSettings()
-                    },
-                )
-            },
+            .background(bg),
         contentAlignment = Alignment.Center,
     ) {
         // Decode target = physical display size (spec §10.2). The preload and the
@@ -269,6 +248,32 @@ fun SlideshowScreen(
 
         if (state.blackScreen) {
             Box(Modifier.fillMaxSize().background(Color.Black))
+        }
+
+        // Keep the full-screen gesture detector as a sibling behind the controls.
+        // A parent detector participates in the same pointer sequence as child Buttons
+        // and can swallow their click on older Compose/Android combinations. Keying on
+        // controlsVisible also prevents the detector from retaining a stale captured
+        // visibility value after the first tap opens the controls.
+        if (state.surface is Surface.Playing) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .pointerInput(state.blackScreen, controlsVisible) {
+                        detectTapGestures(
+                            onTap = {
+                                if (state.blackScreen) vm.temporaryWake()
+                                else if (controlsVisible) controlsVisible = false
+                                else showControls()
+                            },
+                            onDoubleTap = { vm.onTogglePause("double_tap") },
+                            onLongPress = {
+                                controlsVisible = false
+                                onOpenSettings()
+                            },
+                        )
+                    },
+            )
         }
 
         if (controlsVisible && state.surface is Surface.Playing) {
