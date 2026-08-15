@@ -1,0 +1,50 @@
+name: Verify collage customization
+on:
+  push:
+    branches:
+      - agent/collage-customization-ci
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/collage-customization-ci
+          fetch-depth: 0
+      - name: Apply feature patches
+        run: |
+          python3 scripts/patch_collage_model.py
+          python3 scripts/patch_collage_renderer.py
+          python3 scripts/patch_collage_preview.py
+          python3 scripts/patch_collage_android_ui.py
+          python3 scripts/patch_collage_web.py
+          python3 scripts/patch_collage_tests.py
+          git diff --check
+          git status --short
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+      - name: Unit tests and debug build
+        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
+      - name: Commit verified feature
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/agent-collage-customization.yml \
+            scripts/patch_collage_model.py \
+            scripts/patch_collage_renderer.py \
+            scripts/patch_collage_preview.py \
+            scripts/patch_collage_android_ui.py \
+            scripts/patch_collage_web.py \
+            scripts/patch_collage_tests.py
+          git add app
+          git diff --cached --check
+          git commit -m "feat: expand collage customization"
+          git push origin HEAD:agent/collage-customization-ci
