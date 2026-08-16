@@ -46,6 +46,7 @@ import com.example.familyphotoframe.data.settings.PortraitCollageMode
 import com.example.familyphotoframe.data.settings.PortraitFallback
 import com.example.familyphotoframe.domain.engine.DecodeFailure
 import com.example.familyphotoframe.domain.engine.DecodeFailureStage
+import com.example.familyphotoframe.domain.engine.DecodeColorPolicy
 import com.example.familyphotoframe.domain.engine.DisplayPhoto
 import com.example.familyphotoframe.domain.engine.CollageLayout
 import com.example.familyphotoframe.domain.engine.PhotoOrientation
@@ -498,6 +499,11 @@ private fun PlayingContent(
             collageLayoutPreference = state.portraitCollage.layoutPreference,
             prepareSoftFocusBlur = softFocusNeeded && !fastManual,
             allowBlurredBackground = memoryProtection.allowBlurredBackdrop && !fastManual,
+            colorChoice = DecodeColorPolicy.choose(
+                preference = state.decodeColorDepth,
+                heapMaxBytes = Runtime.getRuntime().maxMemory(),
+                level = memoryProtection.level,
+            ),
             excludedIds = buildSet {
                 addAll(registry.photoIds())
                 selected?.id?.let(::add)

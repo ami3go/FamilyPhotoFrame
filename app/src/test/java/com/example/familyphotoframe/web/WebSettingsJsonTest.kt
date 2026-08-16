@@ -11,6 +11,7 @@ import com.example.familyphotoframe.data.settings.CollageGap
 import com.example.familyphotoframe.data.settings.CollageLayoutPreference
 import com.example.familyphotoframe.data.settings.CollageOrientationFilter
 import com.example.familyphotoframe.data.settings.CollageScaleMode
+import com.example.familyphotoframe.data.settings.DecodeColorDepth
 import com.example.familyphotoframe.data.settings.PortraitCollageSettings
 import com.example.familyphotoframe.data.settings.FilterSettings
 import com.example.familyphotoframe.data.settings.PlaylistScheduleRule
@@ -114,6 +115,20 @@ class WebSettingsJsonTest {
         assertEquals("BLACK",json.getValue("portraitCollageBackground").jsonPrimitive.content)
         assertEquals("24",json.getValue("portraitCollageCornerRadiusDp").jsonPrimitive.content)
         assertEquals("LARGE",json.getValue("portraitCollageGap").jsonPrimitive.content)
+    }
+
+    @Test
+    fun lowMemoryOptionsAreProjectedForWebParity() {
+        val defaults=WebSettingsJson.redactedConfig(AppSettings(),nextScheduleAction="none")
+        assertEquals("AUTO",defaults.getValue("decodeColorDepth").jsonPrimitive.content)
+        assertEquals("true",defaults.getValue("cachePlaybackPool").jsonPrimitive.content)
+
+        val tuned=WebSettingsJson.redactedConfig(
+            AppSettings(decodeColorDepth=DecodeColorDepth.LOW_MEMORY,cachePlaybackPool=false),
+            nextScheduleAction="none",
+        )
+        assertEquals("LOW_MEMORY",tuned.getValue("decodeColorDepth").jsonPrimitive.content)
+        assertEquals("false",tuned.getValue("cachePlaybackPool").jsonPrimitive.content)
     }
 
 }

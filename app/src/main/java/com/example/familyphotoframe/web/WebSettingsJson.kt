@@ -26,6 +26,8 @@ internal object WebSettingsJson {
             put("transition", s.transition.storageValue)
             put("transitionReduceMotion", s.transitionReduceMotion)
             put("motion", s.motion.name)
+            put("decodeColorDepth", s.decodeColorDepth.name)
+            put("cachePlaybackPool", s.cachePlaybackPool)
             put("portraitCollageMode", s.portraitCollage.mode.name)
             put("portraitCollageMaxPhotos", s.portraitCollage.maxPhotosClamped)
             put("portraitCollageFallback", s.portraitCollage.fallback.name)

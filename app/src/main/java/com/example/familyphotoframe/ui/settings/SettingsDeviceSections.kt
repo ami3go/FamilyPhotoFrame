@@ -66,6 +66,7 @@ import com.example.familyphotoframe.data.settings.NightAction
 import com.example.familyphotoframe.data.settings.UploadDuplicatePolicy
 import com.example.familyphotoframe.data.weather.TemperatureUnits
 import com.example.familyphotoframe.domain.schedule.RescanSchedule
+import com.example.familyphotoframe.data.settings.DecodeColorDepth
 import com.example.familyphotoframe.ui.slideshow.SlideshowUiState
 import com.example.familyphotoframe.ui.slideshow.SlideshowViewModel
 import com.example.familyphotoframe.web.QrCodes
@@ -94,6 +95,66 @@ internal fun DeviceSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
                 Text(stringResource(R.string.settings_perf_capture))
             }
         }
+    }
+
+    LowMemorySettings(state, vm)
+}
+
+/**
+ * Options that matter on an old tablet with a small Java heap, where the frame is
+ * otherwise forced to react to memory pressure rather than avoid it.
+ */
+@Composable
+internal fun LowMemorySettings(state: SlideshowUiState, vm: SlideshowViewModel) {
+    SettingsSectionCard(stringResource(R.string.settings_lowmem)) {
+        Text(
+            stringResource(R.string.settings_lowmem_hint),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            fontSize = 14.sp,
+        )
+
+        Text(stringResource(R.string.settings_color_depth))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilterChip(
+                    state.decodeColorDepth == DecodeColorDepth.AUTO,
+                    { vm.setDecodeColorDepth(DecodeColorDepth.AUTO) },
+                    { Text(stringResource(R.string.settings_color_depth_auto)) },
+                )
+                FilterChip(
+                    state.decodeColorDepth == DecodeColorDepth.FULL,
+                    { vm.setDecodeColorDepth(DecodeColorDepth.FULL) },
+                    { Text(stringResource(R.string.settings_color_depth_full)) },
+                )
+            }
+            FilterChip(
+                state.decodeColorDepth == DecodeColorDepth.LOW_MEMORY,
+                { vm.setDecodeColorDepth(DecodeColorDepth.LOW_MEMORY) },
+                { Text(stringResource(R.string.settings_color_depth_low)) },
+            )
+        }
+        Text(
+            stringResource(
+                when (state.decodeColorDepth) {
+                    DecodeColorDepth.AUTO -> R.string.settings_color_depth_auto_hint
+                    DecodeColorDepth.FULL -> R.string.settings_color_depth_full_hint
+                    DecodeColorDepth.LOW_MEMORY -> R.string.settings_color_depth_low_hint
+                }
+            ),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            fontSize = 14.sp,
+        )
+
+        ToggleRow(
+            stringResource(R.string.settings_pool_cache),
+            state.cachePlaybackPool,
+            vm::setCachePlaybackPool,
+        )
+        Text(
+            stringResource(R.string.settings_pool_cache_hint),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            fontSize = 14.sp,
+        )
     }
 }
 @Composable

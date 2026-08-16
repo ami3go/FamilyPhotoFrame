@@ -48,6 +48,10 @@ class WebUiContractTest {
         assertTrue(js.contains("data-tab-jump=\"collage\""))
         assertTrue(js.contains("reset-collage"))
         assertTrue(js.contains("Collage-specific controls have their own page"))
+        // Low-memory options, reachable from a browser as well as the frame.
+        assertTrue(js.contains("decodeColorDepth"))
+        assertTrue(js.contains("cachePlaybackPool"))
+        assertTrue(js.contains("device-memory-card"))
         // Source indicator: which source is set up, which one is playing, and the
         // switches that promote or merge one without retyping a connection.
         assertTrue(js.contains("function sourceStatusCard()"))

@@ -250,6 +250,15 @@ object TransitionModeSerializer : KSerializer<TransitionMode> {
 /** Optional continuous motion applied to the displayed photo (spec §4 Phase 2). */
 enum class MotionMode { NONE, KEN_BURNS }
 
+/**
+ * Colour depth used when decoding a photo for display.
+ *
+ * [AUTO] follows the heap: full colour where there is room, half-size RGB_565 pixels on
+ * the small heaps old tablets provide and whenever the memory guard has already stepped
+ * playback down.
+ */
+enum class DecodeColorDepth { AUTO, FULL, LOW_MEMORY }
+
 /** How portrait photos are grouped on a landscape frame. */
 enum class PortraitCollageMode { OFF, AUTOMATIC, ALWAYS_TWO, PREFER_THREE }
 
@@ -806,6 +815,18 @@ data class AppSettings(
      * the last open acceptance item can be measured rather than argued about.
      */
     val showPerformanceOverlay: Boolean = false,
+    /**
+     * Bytes per decoded pixel. Photographs are opaque, so the alpha channel in
+     * ARGB_8888 is dead weight; RGB_565 halves every slide bitmap at the cost of
+     * visible banding in smooth gradients. [DecodeColorDepth.AUTO] spends the memory
+     * only where the heap can afford it.
+     */
+    val decodeColorDepth: DecodeColorDepth = DecodeColorDepth.AUTO,
+    /**
+     * Reuse the playback id list between slides instead of re-reading the whole photo
+     * index on every advance (spec §9.6 pools). Off restores the previous behaviour.
+     */
+    val cachePlaybackPool: Boolean = true,
 ) {
     val intervalSecondsClamped: Int get() = PlaybackInterval.clamp(intervalSeconds)
 

@@ -17,6 +17,7 @@ import com.example.familyphotoframe.data.settings.PortraitFallback
 import com.example.familyphotoframe.domain.engine.CollageLayout
 import com.example.familyphotoframe.domain.engine.CollageCandidateMeta
 import com.example.familyphotoframe.domain.engine.CollageDecision
+import com.example.familyphotoframe.domain.engine.DecodeColorChoice
 import com.example.familyphotoframe.domain.engine.DecodeFailure
 import com.example.familyphotoframe.domain.engine.DecodeFailureStage
 import com.example.familyphotoframe.domain.engine.DisplayPhoto
@@ -98,6 +99,11 @@ internal sealed interface PrepareSlideResult {
     data class Failed(val failure: DecodeFailure) : PrepareSlideResult
 }
 
+private fun DecodeColorChoice.toBitmapConfig(): Bitmap.Config = when (this) {
+    DecodeColorChoice.ARGB_8888 -> Bitmap.Config.ARGB_8888
+    DecodeColorChoice.RGB_565 -> Bitmap.Config.RGB_565
+}
+
 private fun Bitmap.safeAllocationBytes(): Long = runCatching { allocationByteCount.toLong() }
     .getOrElse { byteCount.toLong() }
 
@@ -111,6 +117,7 @@ private suspend fun createTransitionBlur(
     targetW: Int,
     targetH: Int,
     collageGap: CollageGap,
+    colorChoice: DecodeColorChoice,
     onOutOfMemory: () -> Unit,
 ): Bitmap? = withContext(Dispatchers.Default) {
     try {
@@ -119,7 +126,7 @@ private suspend fun createTransitionBlur(
         val scale = SOFT_FOCUS_DIMENSION_SCALE
         val width = (targetW.coerceAtLeast(1) * scale).roundToInt().coerceAtLeast(1)
         val height = (targetH.coerceAtLeast(1) * scale).roundToInt().coerceAtLeast(1)
-        val source = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val source = Bitmap.createBitmap(width, height, colorChoice.toBitmapConfig())
         try {
             val canvas = android.graphics.Canvas(source)
             canvas.drawColor(android.graphics.Color.BLACK)
@@ -168,7 +175,7 @@ private suspend fun createTransitionBlur(
             val pixels = IntArray(width * height)
             source.getPixels(pixels, 0, width, 0, 0, width, height)
             val blurredPixels = ImageBlur.boxBlur(pixels, width, height)
-            Bitmap.createBitmap(blurredPixels, width, height, Bitmap.Config.ARGB_8888)
+            Bitmap.createBitmap(blurredPixels, width, height, colorChoice.toBitmapConfig())
         } finally {
             if (!source.isRecycled) source.recycle()
         }
@@ -233,6 +240,7 @@ private suspend fun decodePhoto(
     imageLoader: ImageLoader,
     targetW: Int,
     targetH: Int,
+    colorChoice: DecodeColorChoice,
 ): DecodePhotoResult {
     return try {
         // Request construction is intentionally inside the OOM boundary. The API-22
@@ -241,6 +249,9 @@ private suspend fun decodePhoto(
             .data(resolved.model)
             .size(targetW.coerceAtLeast(1), targetH.coerceAtLeast(1))
             .allowHardware(false)
+            // Photographs are opaque, so ARGB_8888's alpha channel is a byte per pixel
+            // of dead weight on the small heaps this runs on. See DecodeColorPolicy.
+            .bitmapConfig(colorChoice.toBitmapConfig())
             // PreparedSlide exclusively owns this software bitmap until retirement.
             // Retaining the same allocation in Coil doubles steady-state heap pressure.
             .memoryCachePolicy(CachePolicy.DISABLED)
@@ -381,6 +392,7 @@ internal suspend fun prepareSlide(
     collageLayoutPreference: CollageLayoutPreference = CollageLayoutPreference.AUTO,
     prepareSoftFocusBlur: Boolean,
     allowBlurredBackground: Boolean,
+    colorChoice: DecodeColorChoice = DecodeColorChoice.ARGB_8888,
     excludedIds: Set<Long>,
     targetW: Int,
     targetH: Int,
@@ -405,7 +417,7 @@ internal suspend fun prepareSlide(
         resolved: ResolvedPhoto,
         width: Int,
         height: Int,
-    ): DecodePhotoResult = decodePhoto(context, resolved, imageLoader, width, height).also { result ->
+    ): DecodePhotoResult = decodePhoto(context, resolved, imageLoader, width, height, colorChoice).also { result ->
         if (result is DecodePhotoResult.Ready) uncommitted += result.tile.bitmap
     }
 
@@ -460,7 +472,7 @@ internal suspend fun prepareSlide(
             allowTransitionBlur: Boolean = true,
         ): PrepareSlideResult.Ready {
             val blur = if (prepareSoftFocusBlur && allowTransitionBlur) {
-                createTransitionBlur(slide, targetW, targetH, collageGap) {
+                createTransitionBlur(slide, targetW, targetH, collageGap, colorChoice) {
                     onRecoverableOom(
                         decodeFailure(
                             photo,

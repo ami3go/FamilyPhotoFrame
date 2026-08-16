@@ -108,6 +108,11 @@ data class SlideshowUiState(
     val performanceReadout: String? = null,
     /** Whether the performance overlay is enabled (§22.4 measurement aid). */
     val showPerformanceOverlay: Boolean = false,
+    /** Decoded pixel format preference; see DecodeColorPolicy. */
+    val decodeColorDepth: com.example.familyphotoframe.data.settings.DecodeColorDepth =
+        com.example.familyphotoframe.data.settings.DecodeColorDepth.AUTO,
+    /** Reuse the playback id list between slides instead of re-querying the index. */
+    val cachePlaybackPool: Boolean = true,
     /** Rendered weather string, or null when unavailable/disabled (spec §11). */
     val weatherText: String? = null,
     val weather: com.example.familyphotoframe.data.settings.WeatherSettings =

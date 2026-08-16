@@ -10,6 +10,7 @@ import com.example.familyphotoframe.data.settings.CollageGap
 import com.example.familyphotoframe.data.settings.CollageLayoutPreference
 import com.example.familyphotoframe.data.settings.CollageOrientationFilter
 import com.example.familyphotoframe.data.settings.CollageScaleMode
+import com.example.familyphotoframe.data.settings.DecodeColorDepth
 import com.example.familyphotoframe.data.settings.CredentialPolicy
 import com.example.familyphotoframe.data.settings.MotionMode
 import com.example.familyphotoframe.data.settings.NightAction
@@ -95,6 +96,9 @@ internal class WebSettingsPatchApplier(
         }
         str("motion")?.let { v ->
             if (MotionMode.entries.none { it.name == v }) return "Unknown motion"
+        }
+        str("decodeColorDepth")?.let { v ->
+            if (DecodeColorDepth.entries.none { it.name == v }) return "Unknown decodeColorDepth"
         }
         str("portraitCollageMode")?.let { v ->
             if (PortraitCollageMode.entries.none { it.name == v }) return "Unknown portraitCollageMode"
@@ -222,6 +226,10 @@ internal class WebSettingsPatchApplier(
             str("transition")?.let { v -> next = next.copy(transition = TransitionMode.fromStorage(v) ?: TransitionMode.CROSSFADE) }
             bool("transitionReduceMotion")?.let { next = next.copy(transitionReduceMotion = it) }
             str("motion")?.let { v -> next = next.copy(motion = MotionMode.valueOf(v)) }
+            str("decodeColorDepth")?.let { v ->
+                next = next.copy(decodeColorDepth = DecodeColorDepth.valueOf(v))
+            }
+            bool("cachePlaybackPool")?.let { next = next.copy(cachePlaybackPool = it) }
             str("portraitCollageMode")?.let { v ->
                 next = next.copy(portraitCollage = next.portraitCollage.copy(
                     mode = PortraitCollageMode.valueOf(v),

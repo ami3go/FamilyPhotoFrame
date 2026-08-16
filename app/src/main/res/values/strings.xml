@@ -147,6 +147,19 @@
     <string name="settings_also_play">Also play from</string>
     <string name="settings_also_play_hint">Merge another configured source into the same slideshow.</string>
     <string name="msg_source_not_configured">Set that source up first, then merge it in.</string>
+    <!-- Low-memory options for older tablets -->
+    <string name="settings_lowmem">Memory</string>
+    <string name="settings_lowmem_hint">Older tablets give apps a small amount of working memory. These options trade a little image quality or freshness for headroom.</string>
+    <string name="settings_color_depth">Photo colour depth</string>
+    <string name="settings_color_depth_auto">Automatic</string>
+    <string name="settings_color_depth_full">Full colour</string>
+    <string name="settings_color_depth_low">Save memory</string>
+    <string name="settings_color_depth_auto_hint">Full colour on frames with memory to spare, half-size pixels on frames without. Recommended.</string>
+    <string name="settings_color_depth_full_hint">Always decode at full colour. Best quality, and twice the memory per photo.</string>
+    <string name="settings_color_depth_low_hint">Always use half-size pixels. Halves the memory each photo needs; smooth skies may show faint banding.</string>
+    <string name="settings_pool_cache">Reuse the photo list between slides</string>
+    <string name="settings_pool_cache_hint">Avoids re-reading the whole photo index for every photo shown. Turn off only if newly added photos take too long to appear.</string>
+
     <!-- Which source is configured and in use (source indicator) -->
     <string name="settings_source_status">Source status</string>
     <string name="settings_source_role_primary">Primary source</string>

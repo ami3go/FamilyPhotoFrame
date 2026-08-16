@@ -49,6 +49,7 @@ import com.example.familyphotoframe.data.settings.CollageBackground
 import com.example.familyphotoframe.data.settings.CollageGap
 import com.example.familyphotoframe.data.settings.CollageLayoutPreference
 import com.example.familyphotoframe.data.settings.CollageOrientationFilter
+import com.example.familyphotoframe.data.settings.DecodeColorDepth
 import com.example.familyphotoframe.data.settings.CollageScaleMode
 import com.example.familyphotoframe.data.settings.PortraitCollageMode
 import com.example.familyphotoframe.data.settings.PortraitCollageSettings
@@ -629,6 +630,8 @@ class SlideshowViewModel(
                 synology = s.source.synology,
                 webdav = s.source.webdav,
                 showPerformanceOverlay = s.showPerformanceOverlay,
+                decodeColorDepth = s.decodeColorDepth,
+                cachePlaybackPool = s.cachePlaybackPool,
                 autoStartOnBoot = s.autoStartOnBoot,
                 web = s.web,
                 schedule = s.schedule,
@@ -658,6 +661,7 @@ class SlideshowViewModel(
             )
         }
         publishDiagnosticPlayback(_state.value, transitionOverride = effectiveTransition.name)
+        engine.setCachePlaybackPool(s.cachePlaybackPool)
         engine.setTiming(effectiveInterval, s.temporarilySuppressAfterDecodeFailures)
         // Applied without a reselect: the pools are unchanged, so the photo on screen
         // stays up and only the *next* pick follows the new rule.
@@ -3491,6 +3495,7 @@ class SlideshowViewModel(
         if (distinct.isEmpty()) return
         viewModelScope.launch {
             services.photoDao.setHiddenBatch(distinct, true)
+            engine.invalidatePlaybackPool()
             diagnostics.log(
                 DiagnosticsLog.Category.ENGINE,
                 "PHOTO_EXCLUDED",
@@ -3512,6 +3517,7 @@ class SlideshowViewModel(
         if (ids.isEmpty()) return
         viewModelScope.launch {
             services.photoDao.setHiddenBatch(ids, false)
+            engine.invalidatePlaybackPool()
             diagnostics.log(
                 DiagnosticsLog.Category.ENGINE,
                 "PHOTO_EXCLUSION_UNDONE",
@@ -3537,6 +3543,7 @@ class SlideshowViewModel(
         viewModelScope.launch {
             val hidden = runCatching { services.photoDao.hiddenCount() }.getOrDefault(0)
             services.photoDao.unhideAll()
+            engine.invalidatePlaybackPool()
             diagnostics.log(
                 DiagnosticsLog.Category.ENGINE,
                 "PHOTOS_UNHIDDEN",
@@ -4474,6 +4481,14 @@ class SlideshowViewModel(
                 recommendations = recommendations,
             ))
         }
+    }
+
+    fun setDecodeColorDepth(depth: DecodeColorDepth) {
+        viewModelScope.launch { services.settings.update { it.copy(decodeColorDepth = depth) } }
+    }
+
+    fun setCachePlaybackPool(enabled: Boolean) {
+        viewModelScope.launch { services.settings.update { it.copy(cachePlaybackPool = enabled) } }
     }
 
     fun setAutoStartOnBoot(value: Boolean) {

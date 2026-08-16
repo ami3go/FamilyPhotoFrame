@@ -133,6 +133,20 @@ class SlideshowEngine(
     /** True until the first presentation of this process is selected. */
     private var startupSelectionPending: Boolean = true
 
+    /**
+     * Cached playback pool, so an ordinary advance does not re-read the entire photo
+     * index. Without it every slide runs an unbounded `displayableIds` query and
+     * materialises the whole id list as boxed Longs purely to discover it is unchanged
+     * — on a large NAS library that is megabytes of garbage per slide, which the small
+     * heaps this frame runs on cannot spare. Keyed by everything the query depends on,
+     * and dropped outright whenever the pool is reconfigured or the index is rewritten.
+     */
+    private class CachedPool(val key: String, val ids: List<Long>, val loadedAtElapsedMs: Long)
+
+    @Volatile private var cachePlaybackPool: Boolean = true
+    private var cachedPrimaryPool: CachedPool? = null
+    private var cachedFallbackPool: CachedPool? = null
+
     private val backStack = ArrayDeque<DisplayPhoto>()
     private val forwardStack = ArrayDeque<DisplayPhoto>()
     private val historyLimit = 50
@@ -140,6 +154,23 @@ class SlideshowEngine(
     /** One terminal render outcome is accepted per selected current photo. */
     private var renderedCurrentId: Long? = null
     private var failedCurrentId: Long? = null
+
+    /** Playback-pool reuse; see [CachedPool]. Turning it off re-queries on every advance. */
+    fun setCachePlaybackPool(enabled: Boolean) {
+        if (cachePlaybackPool == enabled) return
+        cachePlaybackPool = enabled
+        invalidatePlaybackPool()
+    }
+
+    /**
+     * Drop the cached pools. Called whenever rows may have been added, removed or made
+     * (un)displayable behind the engine's back: a completed scan, a curation edit, a
+     * favourite toggled from the web UI.
+     */
+    fun invalidatePlaybackPool() {
+        cachedPrimaryPool = null
+        cachedFallbackPool = null
+    }
 
     fun configure(
         primaryIds: List<String>,
@@ -158,6 +189,10 @@ class SlideshowEngine(
         // A scan may change membership without changing settings. Invalidate before
         // comparing pool fields so an identical reconfiguration still sees the new index.
         folderBalancedShuffle.invalidateEligibility()
+        // Same reasoning for the sequential/date/shuffle pools: configure() is the call
+        // a finished scan arrives through, and the row set may have changed under a key
+        // that did not.
+        invalidatePlaybackPool()
         // A changed pool definition invalidates an in-flight no-repeat cycle: the cycle
         // is a promise about a specific set of photos, and silently carrying it across a
         // source swap would skip photos of the new source for a whole cycle.
@@ -362,6 +397,8 @@ class SlideshowEngine(
     fun toggleFavorite() {
         val photo = _ui.value.current ?: return
         val newValue = !photo.isFavorite
+        // Favourite state is a displayability predicate while favourites-only is on.
+        invalidatePlaybackPool()
         loopScope?.launch {
             dao.setFavorite(photo.id, newValue)
             diagnostics.log(
@@ -381,6 +418,7 @@ class SlideshowEngine(
 
     /** Reflect a batch favourite edit immediately when the anchor is among the edited ids. */
     fun reflectFavoriteState(ids: Set<Long>, value: Boolean) {
+        invalidatePlaybackPool()
         val current = _ui.value.current ?: return
         if (current.id in ids) {
             _ui.value = _ui.value.copy(current = current.copy(isFavorite = value))
@@ -390,6 +428,7 @@ class SlideshowEngine(
     /** Hide the current photo from all future selection; reversible via [PhotoDao.unhideAll]. */
     fun hideCurrent() {
         val photo = _ui.value.current ?: return
+        invalidatePlaybackPool()
         loopScope?.launch {
             cancelActiveReservation("hide")
             dao.setHidden(photo.id, true)
@@ -1030,7 +1069,7 @@ class SlideshowEngine(
         }
 
 
-        val pool = when (selectionMode) {
+        suspend fun queryPool(): List<Long> = when (selectionMode) {
             SelectionMode.SEQUENTIAL ->
                 dao.displayableIds(sourceIds, maxFailures, favFlag, cacheFlag, if (allowHeif) 1 else 0, allFolders, folderArg)
             SelectionMode.SHUFFLE_NO_REPEAT ->
@@ -1044,6 +1083,39 @@ class SlideshowEngine(
             // Returned earlier; explicit branch keeps this when-expression exhaustive
             // so adding another mode becomes a compiler-visible change.
             SelectionMode.FOLDER_BALANCED_SHUFFLE -> emptyList()
+        }
+
+        val pool = if (!cachePlaybackPool || selectionMode == SelectionMode.ON_THIS_DAY) {
+            // The on-this-day pool is already an in-memory list pushed by the ViewModel,
+            // so there is nothing to save by caching it a second time.
+            queryPool()
+        } else {
+            val key = PlaybackPoolCachePolicy.key(
+                selectionMode = selectionMode,
+                sourceIds = sourceIds,
+                maxFailures = maxFailures,
+                favoritesOnly = favFlag == 1,
+                cachedOnly = cacheFlag == 1,
+                allowHeif = allowHeif,
+                folders = if (allFolders == 1) emptyList() else folderArg,
+            )
+            val slot = if (fromFallback) cachedFallbackPool else cachedPrimaryPool
+            val now = System.nanoTime() / 1_000_000L
+            val reusable = PlaybackPoolCachePolicy.canReuse(
+                enabled = cachePlaybackPool,
+                cachedKey = slot?.key,
+                currentKey = key,
+                ageMs = now - (slot?.loadedAtElapsedMs ?: 0L),
+                maxAgeMs = POOL_CACHE_MAX_AGE_MS,
+            )
+            if (reusable) {
+                slot!!.ids
+            } else {
+                queryPool().also { loaded ->
+                    val entry = CachedPool(key, loaded, now)
+                    if (fromFallback) cachedFallbackPool = entry else cachedPrimaryPool = entry
+                }
+            }
         }
         if (pool.isEmpty()) return null
         queue.sync(pool, shuffleMode = selectionMode == SelectionMode.SHUFFLE_NO_REPEAT, random = random)
@@ -1125,6 +1197,13 @@ class SlideshowEngine(
          * times in a row is better re-synced on the next selection than spun on here.
          */
         const val MAX_QUEUE_MISSES = 8
+
+        /**
+         * Backstop for pool reuse. Explicit invalidation covers the changes the engine
+         * is told about; this bounds how long an unnoticed one can persist, and a stale
+         * id is skipped at pick time by the existing runtime-displayable recheck anyway.
+         */
+        const val POOL_CACHE_MAX_AGE_MS = 5L * 60_000L
         const val HISTORY_SKIP_LIMIT = 100
 
         /** Never-matching placeholder that keeps the bound list non-empty; see [pickFrom]. */
