@@ -494,6 +494,7 @@ private fun PlayingContent(
             portraitFallback = state.portraitCollage.fallback,
             collageGap = state.portraitCollage.gap,
             collageOrientationFilter = state.portraitCollage.orientationFilter,
+            collageFillWithOtherOrientations = state.portraitCollage.fillWithOtherOrientations,
             collageLayoutPreference = state.portraitCollage.layoutPreference,
             prepareSoftFocusBlur = softFocusNeeded && !fastManual,
             allowBlurredBackground = memoryProtection.allowBlurredBackdrop && !fastManual,

@@ -377,6 +377,7 @@ internal suspend fun prepareSlide(
     portraitFallback: PortraitFallback,
     collageGap: CollageGap,
     collageOrientationFilter: CollageOrientationFilter = CollageOrientationFilter.ANY,
+    collageFillWithOtherOrientations: Boolean = true,
     collageLayoutPreference: CollageLayoutPreference = CollageLayoutPreference.AUTO,
     prepareSoftFocusBlur: Boolean,
     allowBlurredBackground: Boolean,
@@ -676,6 +677,7 @@ internal suspend fun prepareSlide(
             return mapOf(
             "collageMode" to collageMode.name,
             "collageOrientationFilter" to collageOrientationFilter.name,
+            "collageFillWithOtherOrientations" to collageFillWithOtherOrientations.toString(),
             "collageLayoutPreference" to collageLayoutPreference.name,
             "configuredMaxCollagePhotos" to configuredMaxCollagePhotos.toString(),
             "memoryMaxCollagePhotos" to memoryMaxCollagePhotos.toString(),
@@ -726,6 +728,7 @@ internal suspend fun prepareSlide(
                 nowEpochMs = System.currentTimeMillis(),
                 orientationFilter = collageOrientationFilter,
                 layoutPreference = collageLayoutPreference,
+                fillWithOtherOrientations = collageFillWithOtherOrientations,
             )
             if (decision == null) {
                 val fallbackMode = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) {

@@ -3737,6 +3737,7 @@ class SlideshowViewModel(
     }
 
     fun setCollageOrientationFilter(filter: CollageOrientationFilter) = viewModelScope.launch { services.settings.update { it.copy(portraitCollage = it.portraitCollage.copy(orientationFilter = filter)) } }
+    fun setCollageFillWithOtherOrientations(enabled: Boolean) = viewModelScope.launch { services.settings.update { it.copy(portraitCollage = it.portraitCollage.copy(fillWithOtherOrientations = enabled)) } }
     fun setCollageLayoutPreference(preference: CollageLayoutPreference) = viewModelScope.launch { services.settings.update { it.copy(portraitCollage = it.portraitCollage.copy(layoutPreference = preference)) } }
     fun setCollageScaleMode(mode: CollageScaleMode) = viewModelScope.launch { services.settings.update { it.copy(portraitCollage = it.portraitCollage.copy(scaleMode = mode)) } }
     fun setCollageAlignment(alignment: CollageAlignment) = viewModelScope.launch { services.settings.update { it.copy(portraitCollage = it.portraitCollage.copy(alignment = alignment)) } }

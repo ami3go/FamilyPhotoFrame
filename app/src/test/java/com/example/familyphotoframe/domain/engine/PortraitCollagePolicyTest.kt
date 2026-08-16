@@ -1,5 +1,6 @@
 package com.example.familyphotoframe.domain.engine
 
+import com.example.familyphotoframe.data.settings.CollageOrientationFilter
 import com.example.familyphotoframe.data.settings.PortraitCollageMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -94,7 +95,7 @@ class PortraitCollagePolicyTest {
         assertEquals(CollageLayout.TWO_ROWS, decision.layout)
     }
 
-    @Test fun pplUsesAdaptiveLayout() {
+    @Test fun pplKeepsBothPortraitsFullHeightInUnequalColumns() {
         val anchor = meta(1, .60f, PhotoOrientation.PORTRAIT, order = -1)
         val portrait = meta(2, .62f, PhotoOrientation.PORTRAIT, order = 0)
         val landscape = meta(3, 1.80f, PhotoOrientation.LANDSCAPE, order = 1)
@@ -104,7 +105,16 @@ class PortraitCollagePolicyTest {
         )!!
         assertEquals(3, decision.photoIds.size)
         assertEquals(1L, decision.photoIds.first())
-        assertTrue(decision.layout in setOf(CollageLayout.FULL_LEFT_TWO_RIGHT, CollageLayout.TWO_LEFT_FULL_RIGHT))
+        // Half-height featured tiles wreck the second portrait; a wide column for the
+        // landscape keeps every crop moderate without leaving screen area empty.
+        assertTrue(
+            decision.layout in setOf(
+                CollageLayout.WIDE_LEFT_TWO_NARROW,
+                CollageLayout.NARROW_WIDE_NARROW,
+                CollageLayout.TWO_NARROW_WIDE_RIGHT,
+            )
+        )
+        assertTrue(decision.maximumCropLoss < .60f)
     }
 
     @Test fun pllUsesStackedMixedLayout() {
@@ -173,6 +183,81 @@ class PortraitCollagePolicyTest {
         )!!
         assertEquals(3, decision.photoIds.size)
         assertEquals(2, decision.orientationTier)
+    }
+
+    @Test fun verticalFilterFallsBackToOnePhotoWithoutFill() {
+        val anchor = meta(1, .60f, PhotoOrientation.PORTRAIT, order = -1)
+        val landscapes = listOf(
+            meta(2, 1.78f, PhotoOrientation.LANDSCAPE, order = 0),
+            meta(3, 1.80f, PhotoOrientation.LANDSCAPE, order = 1),
+        )
+        assertNull(
+            PortraitCollagePolicy.chooseBestPresentation(
+                PortraitCollageMode.PREFER_THREE, screenW, screenH, anchor, landscapes, 3, now,
+                orientationFilter = CollageOrientationFilter.PORTRAIT_ONLY,
+            )
+        )
+    }
+
+    @Test fun verticalFilterFillsRemainingTilesWithLandscapeWhenAllowed() {
+        val anchor = meta(1, .60f, PhotoOrientation.PORTRAIT, order = -1)
+        val landscapes = listOf(
+            meta(2, 1.78f, PhotoOrientation.LANDSCAPE, order = 0),
+            meta(3, 1.80f, PhotoOrientation.LANDSCAPE, order = 1),
+        )
+        val decision = PortraitCollagePolicy.chooseBestPresentation(
+            PortraitCollageMode.PREFER_THREE, screenW, screenH, anchor, landscapes, 3, now,
+            orientationFilter = CollageOrientationFilter.PORTRAIT_ONLY,
+            fillWithOtherOrientations = true,
+        )!!
+        assertEquals(3, decision.photoIds.size)
+        assertEquals(1L, decision.photoIds.first())
+        assertEquals("ORIENTATION_FILL_RELAXED", decision.decisionReason)
+    }
+
+    @Test fun fillAddsOneLandscapeOnlyWhenAThirdPortraitIsMissing() {
+        val anchor = meta(1, .60f, PhotoOrientation.PORTRAIT, order = -1)
+        val candidates = listOf(
+            meta(2, .61f, PhotoOrientation.PORTRAIT, order = 0),
+            meta(3, 1.80f, PhotoOrientation.LANDSCAPE, order = 1),
+            meta(4, 1.78f, PhotoOrientation.LANDSCAPE, order = 2),
+        )
+        val decision = PortraitCollagePolicy.chooseBestPresentation(
+            PortraitCollageMode.PREFER_THREE, screenW, screenH, anchor, candidates, 3, now,
+            orientationFilter = CollageOrientationFilter.PORTRAIT_ONLY,
+            fillWithOtherOrientations = true,
+        )!!
+        assertEquals(3, decision.photoIds.size)
+        assertTrue(1L in decision.photoIds && 2L in decision.photoIds)
+        assertEquals(1, decision.photoIds.count { it == 3L || it == 4L })
+    }
+
+    @Test fun fillKeepsThreeVerticalsWhenEnoughAreAvailable() {
+        val anchor = meta(1, .60f, PhotoOrientation.PORTRAIT, order = -1)
+        val candidates = listOf(
+            meta(2, 1.80f, PhotoOrientation.LANDSCAPE, order = 0),
+            meta(3, .61f, PhotoOrientation.PORTRAIT, order = 1),
+            meta(4, .59f, PhotoOrientation.PORTRAIT, order = 2),
+        )
+        val decision = PortraitCollagePolicy.chooseBestPresentation(
+            PortraitCollageMode.PREFER_THREE, screenW, screenH, anchor, candidates, 3, now,
+            orientationFilter = CollageOrientationFilter.PORTRAIT_ONLY,
+            fillWithOtherOrientations = true,
+        )!!
+        assertEquals(setOf(1L, 3L, 4L), decision.photoIds.toSet())
+        assertEquals(CollageLayout.THREE_COLUMNS, decision.layout)
+    }
+
+    @Test fun fillNeverOverridesAnAnchorTheFilterExcludes() {
+        val anchor = meta(1, 1.78f, PhotoOrientation.LANDSCAPE, order = -1)
+        val candidates = listOf(meta(2, .60f, PhotoOrientation.PORTRAIT, order = 0))
+        assertNull(
+            PortraitCollagePolicy.chooseBestPresentation(
+                PortraitCollageMode.PREFER_THREE, screenW, screenH, anchor, candidates, 3, now,
+                orientationFilter = CollageOrientationFilter.PORTRAIT_ONLY,
+                fillWithOtherOrientations = true,
+            )
+        )
     }
 
     @Test fun alwaysTwoSelectsExactlyTwoPhotos() {

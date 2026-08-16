@@ -31,6 +31,7 @@ internal object WebSettingsJson {
             put("portraitCollageFallback", s.portraitCollage.fallback.name)
             put("portraitCollageGap", s.portraitCollage.gap.name)
             put("portraitCollageOrientationFilter", s.portraitCollage.orientationFilter.name)
+            put("portraitCollageFillOtherOrientations", s.portraitCollage.fillWithOtherOrientations)
             put("portraitCollageLayoutPreference", s.portraitCollage.layoutPreference.name)
             put("portraitCollageScaleMode", s.portraitCollage.scaleMode.name)
             put("portraitCollageAlignment", s.portraitCollage.alignment.name)

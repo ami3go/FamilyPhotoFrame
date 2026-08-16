@@ -19,6 +19,13 @@ enum class CollageLayout(val tileCount: Int) {
     TWO_TOP_FULL_BOTTOM(3),
     FULL_LEFT_TWO_RIGHT(3),
     TWO_LEFT_FULL_RIGHT(3),
+    // Unequal columns for mixed orientations: the wide slot takes a landscape without
+    // squeezing it into a portrait-shaped tile, and no screen area is left empty.
+    WIDE_COLUMN_LEFT(2),
+    WIDE_COLUMN_RIGHT(2),
+    WIDE_LEFT_TWO_NARROW(3),
+    NARROW_WIDE_NARROW(3),
+    TWO_NARROW_WIDE_RIGHT(3),
 }
 
 data class CollageTileGeometry(
@@ -73,7 +80,35 @@ object CollageLayoutGeometry {
             tile(0f, .5f, .5f, 1f),
             tile(.5f, 0f, 1f, 1f),
         )
+        CollageLayout.WIDE_COLUMN_LEFT -> listOf(
+            tile(0f, 0f, WIDE_PAIR_SPLIT, 1f),
+            tile(WIDE_PAIR_SPLIT, 0f, 1f, 1f),
+        )
+        CollageLayout.WIDE_COLUMN_RIGHT -> listOf(
+            tile(0f, 0f, 1f - WIDE_PAIR_SPLIT, 1f),
+            tile(1f - WIDE_PAIR_SPLIT, 0f, 1f, 1f),
+        )
+        CollageLayout.WIDE_LEFT_TWO_NARROW -> listOf(
+            tile(0f, 0f, WIDE_COLUMN, 1f),
+            tile(WIDE_COLUMN, 0f, WIDE_COLUMN + NARROW_COLUMN, 1f),
+            tile(WIDE_COLUMN + NARROW_COLUMN, 0f, 1f, 1f),
+        )
+        CollageLayout.NARROW_WIDE_NARROW -> listOf(
+            tile(0f, 0f, NARROW_COLUMN, 1f),
+            tile(NARROW_COLUMN, 0f, NARROW_COLUMN + WIDE_COLUMN, 1f),
+            tile(NARROW_COLUMN + WIDE_COLUMN, 0f, 1f, 1f),
+        )
+        CollageLayout.TWO_NARROW_WIDE_RIGHT -> listOf(
+            tile(0f, 0f, NARROW_COLUMN, 1f),
+            tile(NARROW_COLUMN, 0f, NARROW_COLUMN * 2f, 1f),
+            tile(NARROW_COLUMN * 2f, 0f, 1f, 1f),
+        )
     }
+
+    /** Two-tile split: the wide tile takes 60% of the frame. */
+    private const val WIDE_PAIR_SPLIT = .6f
+    private const val NARROW_COLUMN = .28f
+    private const val WIDE_COLUMN = 1f - NARROW_COLUMN * 2f
 
     private fun tile(left: Float, top: Float, right: Float, bottom: Float) =
         CollageTileGeometry(left, top, right, bottom)
@@ -180,11 +215,53 @@ object PortraitCollagePolicy {
         nowEpochMs: Long,
         orientationFilter: CollageOrientationFilter = CollageOrientationFilter.ANY,
         layoutPreference: CollageLayoutPreference = CollageLayoutPreference.AUTO,
+        fillWithOtherOrientations: Boolean = false,
     ): CollageDecision? {
         if (mode == PortraitCollageMode.OFF || maxPhotos < 2 || screenWidth <= 0 || screenHeight <= 0) {
             return null
         }
+        // The anchor itself always has to satisfy the filter. A photo the user excluded from
+        // collages is meant to be presented on its own, and that wastes no screen area.
         if (!orientationAllowed(anchor.orientation, anchor.orientation, orientationFilter)) return null
+
+        val strict = evaluateFiltered(
+            mode, screenWidth, screenHeight, anchor, candidates, maxPhotos, nowEpochMs,
+            orientationFilter, layoutPreference,
+        )
+        if (!fillWithOtherOrientations || orientationFilter == CollageOrientationFilter.ANY) {
+            return strict?.decision()
+        }
+        // Filling: the filter picked the companions we prefer, but it did not find enough of
+        // them. Rather than dropping to one photo (a portrait on a landscape frame leaves the
+        // sides empty), retry unfiltered and keep the result only when it fills more tiles.
+        val wanted = if (mode == PortraitCollageMode.ALWAYS_TWO) 2 else maxPhotos.coerceIn(2, 3)
+        val strictCount = strict?.selected?.photos?.size ?: 0
+        if (strictCount >= wanted) return strict?.decision()
+        val relaxed = evaluateFiltered(
+            mode, screenWidth, screenHeight, anchor, candidates, maxPhotos, nowEpochMs,
+            CollageOrientationFilter.ANY, layoutPreference,
+            preferredFilter = orientationFilter,
+        ) ?: return strict?.decision()
+        return if (relaxed.selected.photos.size > strictCount) {
+            relaxed.decision(reasonOverride = "ORIENTATION_FILL_RELAXED")
+        } else {
+            strict?.decision()
+        }
+    }
+
+    private fun evaluateFiltered(
+        mode: PortraitCollageMode,
+        screenWidth: Int,
+        screenHeight: Int,
+        anchor: CollageCandidateMeta,
+        candidates: List<CollageCandidateMeta>,
+        maxPhotos: Int,
+        nowEpochMs: Long,
+        orientationFilter: CollageOrientationFilter,
+        layoutPreference: CollageLayoutPreference,
+        /** Soft preference: companions outside it are allowed, but only to fill a frame. */
+        preferredFilter: CollageOrientationFilter = orientationFilter,
+    ): Evaluation? {
         val bounded = candidates.asSequence()
             .filter { it.id != anchor.id }
             .filter { orientationAllowed(it.orientation, anchor.orientation, orientationFilter) }
@@ -212,6 +289,7 @@ object PortraitCollagePolicy {
                     screenHeight = screenHeight,
                     nowEpochMs = nowEpochMs,
                     layoutPreference = layoutPreference,
+                    preferredFilter = preferredFilter,
                     evaluatedLayout = { statsBuilder.evaluatedLayoutCount++ },
                 )?.let(two::add)
             }
@@ -225,7 +303,8 @@ object PortraitCollagePolicy {
                         screenWidth = screenWidth,
                         screenHeight = screenHeight,
                         nowEpochMs = nowEpochMs,
-                    layoutPreference = layoutPreference,
+                        layoutPreference = layoutPreference,
+                        preferredFilter = preferredFilter,
                         evaluatedLayout = { statsBuilder.evaluatedLayoutCount++ },
                     )?.let(three::add)
                 }
@@ -256,8 +335,19 @@ object PortraitCollagePolicy {
             2 -> bestThree
             else -> bestTwo
         }
-        val reason = decisionReason(mode, selected, alternative, bestThree, maxPhotos)
-        return CollageDecision(
+        return Evaluation(
+            selected = selected,
+            reason = decisionReason(mode, selected, alternative, bestThree, maxPhotos),
+            stats = statsBuilder.freeze(),
+        )
+    }
+
+    private data class Evaluation(
+        val selected: ScoredPresentation,
+        val reason: String,
+        val stats: CollageSelectionStats,
+    ) {
+        fun decision(reasonOverride: String? = null) = CollageDecision(
             photoIds = selected.photos.map { it.id },
             layout = selected.layout,
             folderTier = selected.folderTier,
@@ -267,8 +357,8 @@ object PortraitCollagePolicy {
             maximumCropLoss = selected.maximumCropLoss,
             timeDistanceScore = selected.timeDistanceScore,
             recentPenalty = selected.recentPenalty,
-            decisionReason = reason,
-            stats = statsBuilder.freeze(),
+            decisionReason = reasonOverride ?: reason,
+            stats = stats,
         )
     }
 
@@ -339,6 +429,8 @@ object PortraitCollagePolicy {
         val photos: List<CollageCandidateMeta>,
         val layout: CollageLayout,
         val folderTier: Int,
+        /** Companions outside the preferred orientation filter; 0 on a strict pass. */
+        val filterMissCount: Int,
         val orientationTier: Int,
         val screenCoverage: Float,
         val emptyScreenFraction: Float,
@@ -355,6 +447,7 @@ object PortraitCollagePolicy {
         screenHeight: Int,
         nowEpochMs: Long,
         layoutPreference: CollageLayoutPreference = CollageLayoutPreference.AUTO,
+        preferredFilter: CollageOrientationFilter = CollageOrientationFilter.ANY,
         evaluatedLayout: () -> Unit,
     ): ScoredPresentation? {
         val layouts = compatibleLayouts(photos.map { it.orientation }, layoutPreference)
@@ -383,6 +476,9 @@ object PortraitCollagePolicy {
                     photos = ordered,
                     layout = layout,
                     folderTier = if (photos.all { it.folderKey == anchor.folderKey }) 0 else 1,
+                    filterMissCount = companions.count {
+                        !orientationAllowed(it.orientation, anchor.orientation, preferredFilter)
+                    },
                     orientationTier = orientationTier(photos.map { it.orientation }),
                     screenCoverage = coverage,
                     emptyScreenFraction = (1f - coverage).coerceIn(0f, 1f),
@@ -413,7 +509,10 @@ object PortraitCollagePolicy {
             CollageLayoutPreference.ROWS -> listOf(CollageLayout.TWO_ROWS)
             CollageLayoutPreference.FEATURED, CollageLayoutPreference.AUTO ->
                 if (orientations.all { it == PhotoOrientation.PORTRAIT }) listOf(CollageLayout.TWO_COLUMNS)
-                else listOf(CollageLayout.TWO_COLUMNS, CollageLayout.TWO_ROWS)
+                else listOf(
+                    CollageLayout.TWO_COLUMNS, CollageLayout.TWO_ROWS,
+                    CollageLayout.WIDE_COLUMN_LEFT, CollageLayout.WIDE_COLUMN_RIGHT,
+                )
         }
         if (orientations.size != 3) return emptyList()
         if (preference == CollageLayoutPreference.COLUMNS) return listOf(CollageLayout.THREE_COLUMNS)
@@ -423,14 +522,21 @@ object PortraitCollagePolicy {
             CollageLayout.FULL_LEFT_TWO_RIGHT, CollageLayout.TWO_LEFT_FULL_RIGHT,
         )
         if (preference == CollageLayoutPreference.FEATURED) return featured
+        // Unequal columns keep every tile full height, so a portrait companion is never
+        // squeezed into a half-height slot just because a landscape joined the frame.
+        val unequalColumns = listOf(
+            CollageLayout.WIDE_LEFT_TWO_NARROW,
+            CollageLayout.NARROW_WIDE_NARROW,
+            CollageLayout.TWO_NARROW_WIDE_RIGHT,
+        )
         val portrait = orientations.count { it == PhotoOrientation.PORTRAIT }
         val landscape = orientations.count { it == PhotoOrientation.LANDSCAPE }
         val square = orientations.size - portrait - landscape
         return when {
             portrait == 3 -> listOf(CollageLayout.THREE_COLUMNS)
             landscape == 3 -> listOf(CollageLayout.FULL_TOP_TWO_BOTTOM, CollageLayout.TWO_TOP_FULL_BOTTOM)
-            square > 0 -> listOf(CollageLayout.THREE_COLUMNS) + featured
-            else -> featured
+            square > 0 -> listOf(CollageLayout.THREE_COLUMNS) + featured + unequalColumns
+            else -> featured + unequalColumns
         }
     }
 
@@ -461,6 +567,8 @@ object PortraitCollagePolicy {
 
     private fun comparePresentation(a: ScoredPresentation, b: ScoredPresentation, automatic: Boolean): Int {
         compareValues(a.folderTier, b.folderTier).takeIf { it != 0 }?.let { return it }
+        // Borrow as few off-filter companions as the frame needs.
+        compareValues(a.filterMissCount, b.filterMissCount).takeIf { it != 0 }?.let { return it }
         compareValues(a.orientationTier, b.orientationTier).takeIf { it != 0 }?.let { return it }
         compareValues(quantize(a.emptyScreenFraction), quantize(b.emptyScreenFraction))
             .takeIf { it != 0 }?.let { return it }

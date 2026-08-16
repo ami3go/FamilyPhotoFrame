@@ -276,6 +276,11 @@ data class PortraitCollageSettings(
     val fallback: PortraitFallback = PortraitFallback.BLURRED_BACKGROUND,
     val gap: CollageGap = CollageGap.SMALL,
     val orientationFilter: CollageOrientationFilter = CollageOrientationFilter.ANY,
+    /**
+     * Let other orientations join when the filter cannot fill the frame, instead of
+     * dropping to a single photo that leaves the rest of the screen empty.
+     */
+    val fillWithOtherOrientations: Boolean = true,
     val layoutPreference: CollageLayoutPreference = CollageLayoutPreference.AUTO,
     val scaleMode: CollageScaleMode = CollageScaleMode.CROP,
     val alignment: CollageAlignment = CollageAlignment.CENTER,

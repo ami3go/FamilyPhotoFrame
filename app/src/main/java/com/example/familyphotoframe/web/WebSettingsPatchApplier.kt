@@ -229,6 +229,7 @@ internal class WebSettingsPatchApplier(
                 ))
             }
             str("portraitCollageOrientationFilter")?.let { v -> next = next.copy(portraitCollage = next.portraitCollage.copy(orientationFilter = CollageOrientationFilter.valueOf(v))) }
+            bool("portraitCollageFillOtherOrientations")?.let { v -> next = next.copy(portraitCollage = next.portraitCollage.copy(fillWithOtherOrientations = v)) }
             str("portraitCollageLayoutPreference")?.let { v -> next = next.copy(portraitCollage = next.portraitCollage.copy(layoutPreference = CollageLayoutPreference.valueOf(v))) }
             str("portraitCollageScaleMode")?.let { v -> next = next.copy(portraitCollage = next.portraitCollage.copy(scaleMode = CollageScaleMode.valueOf(v))) }
             str("portraitCollageAlignment")?.let { v -> next = next.copy(portraitCollage = next.portraitCollage.copy(alignment = CollageAlignment.valueOf(v))) }

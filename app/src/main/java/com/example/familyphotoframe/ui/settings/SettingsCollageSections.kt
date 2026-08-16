@@ -71,6 +71,18 @@ internal fun CollageSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
             FilterChip(collage.orientationFilter == CollageOrientationFilter.LANDSCAPE_ONLY, { vm.setCollageOrientationFilter(CollageOrientationFilter.LANDSCAPE_ONLY) }, { Text(stringResource(R.string.settings_collage_orientation_horizontal)) })
             FilterChip(collage.orientationFilter == CollageOrientationFilter.SAME_AS_ANCHOR, { vm.setCollageOrientationFilter(CollageOrientationFilter.SAME_AS_ANCHOR) }, { Text(stringResource(R.string.settings_collage_orientation_match)) })
         }
+
+        // Only meaningful with a filter other than "Any"; the policy ignores it otherwise.
+        ToggleRow(
+            label = stringResource(R.string.settings_collage_orientation_fill),
+            checked = collage.fillWithOtherOrientations,
+            onChange = vm::setCollageFillWithOtherOrientations,
+        )
+        Text(
+            stringResource(R.string.settings_collage_orientation_fill_hint),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            fontSize = 14.sp,
+        )
     }
 
     SettingsSectionCard(stringResource(R.string.settings_collage_layout_fitting)) {

@@ -237,6 +237,8 @@
     <string name="settings_collage_orientation_vertical">Vertical only</string>
     <string name="settings_collage_orientation_horizontal">Horizontal only</string>
     <string name="settings_collage_orientation_match">Match selected photo</string>
+    <string name="settings_collage_orientation_fill">Fill with other orientations</string>
+    <string name="settings_collage_orientation_fill_hint">When there are not enough matching photos, add one or two of another orientation instead of showing a single photo with empty space.</string>
     <string name="settings_collage_layout">Layout style</string>
     <string name="settings_collage_layout_auto">Auto</string>
     <string name="settings_collage_layout_columns">Columns</string>
