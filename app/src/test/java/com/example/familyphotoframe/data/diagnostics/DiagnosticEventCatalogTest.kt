@@ -33,4 +33,17 @@ class DiagnosticEventCatalogTest {
             "decisionReason",
         ).forEach { field -> assertTrue(field in spec.permittedFields) }
     }
+
+    /**
+     * An unregistered code is silently rewritten to DIAGNOSTICS_UNKNOWN_EVENT, which would
+     * make early-playback starts invisible in a diagnostics bundle — the one place they can
+     * be confirmed after the fact.
+     */
+    @Test fun earlyPlaybackStart_isRegisteredWithItsStructuredFields() {
+        val early = DiagnosticEventCatalog.require("SOURCE_EARLY_PLAYBACK_STARTED")
+        assertEquals(DiagnosticsLog.Category.SOURCE, early.category)
+        assertTrue("sourceKind" in early.permittedFields)
+        assertTrue("found" in early.permittedFields)
+        assertTrue("poolSize" in early.permittedFields)
+    }
 }

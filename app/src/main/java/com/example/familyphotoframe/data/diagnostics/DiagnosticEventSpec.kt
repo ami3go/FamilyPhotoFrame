@@ -131,7 +131,7 @@ object DiagnosticEventCatalog {
         "sourceKind", "sourceToken", "trigger", "configRevision", "refreshToken",
         "stage", "durationMs", "outcome", "errorClass", "errorCode", "reason",
         "healthState", "timeoutMs", "attempt", "waitMs", "cached", "poolSize",
-        "recoveryState", "completionState", "cancellationReason",
+        "found", "recoveryState", "completionState", "cancellationReason",
         "supersededByOperationId", "coalescedWithOperationId", "isChosen",
         "credentialChanged", "certificateState",
     )
@@ -195,7 +195,7 @@ object DiagnosticEventCatalog {
         "SOURCE_HEALTH_CHECK_FAILED", "SOURCE_RECOVERY_STARTED", "SOURCE_RECOVERED",
         "SOURCE_RECOVERY_CANCELLED", "SOURCE_RECOVERY_PROMOTION_ABORTED",
         "SOURCE_UNAVAILABLE", "SOURCE_BACKOFF", "SOURCE_BACKOFF_EXHAUSTED",
-        "SOURCE_RECOVERY_REQUIRED",
+        "SOURCE_RECOVERY_REQUIRED", "SOURCE_EARLY_PLAYBACK_STARTED",
     )
 
     private val scanOperationCodes = setOf(

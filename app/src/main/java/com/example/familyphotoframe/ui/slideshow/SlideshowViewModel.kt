@@ -301,6 +301,8 @@ class SlideshowViewModel(
     private var brightnessJob: kotlinx.coroutines.Job? = null
     private var healthJob: kotlinx.coroutines.Job? = null
     private var onThisDayJob: kotlinx.coroutines.Job? = null
+    /** Starts playback from a partially built index; see [startEarlyPlaybackWatcher]. */
+    private var earlyPlaybackJob: Job? = null
     @Volatile private var ambientLux: Float? = null
     @Volatile private var ambientSensorAvailable: Boolean = false
     private var activePlaylistSourceFilter: Set<String> = emptySet()
@@ -993,6 +995,10 @@ class SlideshowViewModel(
      * photos at full quality.
      */
     private suspend fun applySource(source: ActiveSource, request: SourceApplyRequest) {
+        // A watcher from a superseded apply must never configure the engine for a source
+        // this apply is about to replace.
+        earlyPlaybackJob?.cancelAndJoin()
+        earlyPlaybackJob = null
         val obsoleteRecoveryJobs = recoveryJobs.toList()
         recoveryJobs.clear()
         obsoleteRecoveryJobs.forEach { it.cancel() }
@@ -1159,6 +1165,7 @@ class SlideshowViewModel(
                 val saf = services.safSource(Uri.parse(uriStr))
                 val health = healthCheckWithDiagnostics(saf, kind, 5_000, request)
                 if (health is SourceHealth.Ok) {
+                    startEarlyPlaybackWatcher(ServiceLocator.SOURCE_LOCAL_SAF, "LOCAL_SAF")
                     indexSource(saf, ServiceLocator.SOURCE_LOCAL_SAF, request)
                     ActivatedSlot(ServiceLocator.SOURCE_LOCAL_SAF, "SAF", healthy = true)
                 } else {
@@ -1208,8 +1215,10 @@ class SlideshowViewModel(
                 )
                 activeRemoteSources[ServiceLocator.SOURCE_SMB] = src
                 val healthy = healthCheckWithDiagnostics(src, kind, 8_000, request) is SourceHealth.Ok
-                if (healthy) indexSource(src, ServiceLocator.SOURCE_SMB, request)
-                else diagnostics.logEvent(
+                if (healthy) {
+                    startEarlyPlaybackWatcher(ServiceLocator.SOURCE_SMB, "SMB")
+                    indexSource(src, ServiceLocator.SOURCE_SMB, request)
+                } else diagnostics.logEvent(
                     "SOURCE_UNAVAILABLE",
                     sourceRequestFields(request, "HEALTH_FAILED") + mapOf(
                         "sourceKind" to "SMB",
@@ -1246,6 +1255,7 @@ class SlideshowViewModel(
                 val health = healthCheckWithDiagnostics(src, kind, 10_000, request)
                 val healthy = health is SourceHealth.Ok
                 if (healthy) {
+                    startEarlyPlaybackWatcher(ServiceLocator.SOURCE_SYNOLOGY, "SYNOLOGY")
                     indexSource(src, ServiceLocator.SOURCE_SYNOLOGY, request)
                 } else {
                     diagnostics.log(
@@ -1289,6 +1299,7 @@ class SlideshowViewModel(
                 val health = healthCheckWithDiagnostics(src, kind, 10_000, request)
                 val healthy = health is SourceHealth.Ok
                 if (healthy) {
+                    startEarlyPlaybackWatcher(ServiceLocator.SOURCE_WEBDAV, "WEBDAV")
                     indexSource(src, ServiceLocator.SOURCE_WEBDAV, request)
                 } else {
                     diagnostics.log(
@@ -1509,10 +1520,67 @@ class SlideshowViewModel(
             .toSet()
 
     /**
+     * Start playing before a slow enumeration finishes.
+     *
+     * Enumerating a large SMB/WebDAV/Synology tree can take minutes, and `Indexer` writes
+     * to Room in batches as it goes, so playable rows exist long before the scan ends.
+     * Without this, the frame stays blank for that whole time even though it already has
+     * photos it could show. On a restart it is even more pronounced: the *previous* index
+     * is still in Room (stale rows are only reconciled away when the scan reaches
+     * `Finished`), so the frame can resume essentially immediately.
+     *
+     * Deliberately started only after the source's health check passed. Configuring the
+     * engine against a source that turns out to be unreachable would let it burn real
+     * decode failures on photos whose bytes cannot be fetched, and
+     * `decodeFailureCount` quarantines a photo after [currentMaxFailures] of those.
+     *
+     * The watcher is superseded by the authoritative [applyPlan] at the end of the apply,
+     * which reconfigures from the fully indexed pool.
+     */
+    private fun startEarlyPlaybackWatcher(sourceId: String, label: String) {
+        earlyPlaybackJob?.cancel()
+        earlyPlaybackJob = viewModelScope.launch {
+            val available = services.photoDao.displayableCountFlow(
+                sourceId,
+                currentMaxFailures(),
+                if (services.allowHeifPlayback) 1 else 0,
+            ).first { it >= EARLY_PLAYBACK_MIN_PHOTOS }
+
+            // primaryPoolIds already holds any local upload library indexed earlier in
+            // this apply; include it so early playback uses the same merged pool shape
+            // the final configuration will.
+            val primary = playlistFilteredIds((primaryPoolIds + sourceId).toList())
+            if (primary.isEmpty()) return@launch
+            val fallback =
+                if (activePlaylistSourceFilter.isEmpty()) listOf(ServiceLocator.SOURCE_FALLBACK) else emptyList()
+            _state.update { it.copy(surface = Surface.Playing, stalePlayback = false) }
+            engine.configure(
+                primary, fallback,
+                currentIntervalSeconds(), currentMaxFailures(), primaryCachedOnly = false,
+                unavailableSourceIds = playlistUnavailableSourceIds(),
+                exhaustedUnavailableSourceIds = playlistExhaustedSourceIds(),
+            )
+            diagnostics.logEvent(
+                "SOURCE_EARLY_PLAYBACK_STARTED",
+                mapOf(
+                    "sourceKind" to label,
+                    "found" to available.toString(),
+                    "poolSize" to primary.size.toString(),
+                ),
+            )
+        }
+    }
+
+    /**
      * Carry out a [SourcePoolPolicy.Plan]. The decision of *what* to play is made by the
      * pure policy and unit-tested; this function only performs the resulting I/O.
      */
     private suspend fun applyPlan(plan: SourcePoolPolicy.Plan) {
+        // Join rather than merely cancel: both run on the main dispatcher, but the
+        // watcher could otherwise be resumed past its await and reconfigure the engine
+        // from a partial pool *after* this authoritative configuration.
+        earlyPlaybackJob?.cancelAndJoin()
+        earlyPlaybackJob = null
         when (plan) {
             is SourcePoolPolicy.Plan.Play -> {
                 remotePrimaryCachedOnly = false
@@ -4882,6 +4950,14 @@ class SlideshowViewModel(
 
         /** Step clear of the slot just served so it cannot re-trigger. */
         const val RESCAN_SETTLE_MS = 5L * 60_000L
+        /**
+         * How many displayable rows must exist before playback starts from a still-running
+         * scan. Small enough that a first-ever scan starts showing photos within seconds,
+         * large enough that the shuffle has something to choose from rather than looping
+         * one or two images.
+         */
+        const val EARLY_PLAYBACK_MIN_PHOTOS = 10
+
         /** "On this day" windows are short and frequent — poll more often than rescan. */
         const val ON_THIS_DAY_POLL_MS = 30_000L
         /** Safety cap on rows fetched before year-grouping; a real day rarely nears this. */
