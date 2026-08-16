@@ -1,10 +1,15 @@
 # Known Limitations
 
-These document real scope boundaries and unvalidated areas of the current v0.12.13
-prerelease build, not necessarily defects. Historical phase labels below
-mark when each area was introduced; they are not a claim about current phase.
+These document real scope boundaries and unvalidated areas of the current build, not
+necessarily defects. Historical phase labels below mark when each area was introduced;
+they are not a claim about current phase.
 
-## v0.12.13 qualification boundary
+Versions now read `<year>.<build>` (`26.36`), with a third part for a test cut
+(`26.36.2`). The qualification boundary below was recorded under the previous
+`0.12.13-prerelease-<build>` scheme and still applies: build numbers carried over
+unchanged across the rename.
+
+## Qualification boundary (recorded as v0.12.13)
 
 - v52.15 fixes recovery from an expired OOM circuit, adds a rate-limited API-21–25 process
   self-recovery path for critically pinned heaps, and fixes scheduled-brightness time persistence

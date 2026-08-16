@@ -8,7 +8,9 @@
 
 **Local-first · No account · No cloud upload · No ads · No analytics · Free & open source**
 
-> **Status: `0.12.13-prerelease`.** FamilyPhotoFrame is actively developed and already has a substantial feature set, but it has not yet completed hardware soak testing or been signed for a public release build. Treat it as pre-release software. See [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md) for the current qualification status.
+> **Status: `26.36`.** FamilyPhotoFrame is actively developed and already has a substantial feature set, but it has not yet completed hardware soak testing or been signed for a public release build. Treat it as pre-release software. See [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md) for the current qualification status.
+>
+> Versions read `<year>.<build>`, with a third part for a test cut (`26.36.1` is the first test build of build 36). This line tracks the build number; individual test cuts are visible in the tags and in the app's own version string. Builds before this scheme used `0.12.13-prerelease-<build>`; build numbers carry over unchanged, so `26.36` follows `0.12.13-prerelease-35`.
 
 ## Why FamilyPhotoFrame?
 

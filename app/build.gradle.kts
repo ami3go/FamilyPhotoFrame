@@ -2,6 +2,23 @@ import com.android.build.api.artifact.SingleArtifact
 import java.time.Instant
 import java.util.Properties
 
+/**
+ * Version scheme: `<year>.<build>`, plus `.<testing>` when the build is a test cut —
+ * `26.35`, or `26.35.2` for the second test build of build 35.
+ *
+ * Only [buildNumber] is meaningful to Android: it becomes `versionCode`, the integer the
+ * package manager compares, so it must only ever increase. [releaseYear] is written down
+ * rather than read from the clock, because deriving it would silently change the version
+ * of an unchanged source tree the moment the year rolls over.
+ *
+ * A testing variant does **not** change `versionCode`: `26.35.1` and `26.35.2` are both
+ * build 35, so installing one over the other is a replace rather than an upgrade. Bump
+ * [buildNumber] instead when the distinction has to be visible to the package manager.
+ */
+val releaseYear = 26
+val buildNumber = 36
+val testingVariant: Int? = 1
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -24,8 +41,8 @@ android {
         // AES-in-AndroidKeyStore is API 23+ — see KeystoreSecretStore.
         minSdk = 21            // Android 5.0
         targetSdk = 35
-        versionCode = 35
-        versionName = "0.12.13-prerelease"
+        versionCode = buildNumber
+        versionName = listOfNotNull(releaseYear, buildNumber, testingVariant).joinToString(".")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
