@@ -130,6 +130,11 @@ data class SlideshowUiState(
     val alsoPlay: Set<com.example.familyphotoframe.data.settings.ActiveSourceKind> = emptySet(),
     /** Source kinds that have usable connection settings, so can be merged in. */
     val configurableKinds: Set<com.example.familyphotoframe.data.settings.ActiveSourceKind> = emptySet(),
+    /** Per-source role, reachability and indexed count for the source indicator. */
+    val sourceStatuses: List<com.example.familyphotoframe.domain.engine.SourceStatus> = emptyList(),
+    /** The primary source kind the user chose. */
+    val activeSourceKind: com.example.familyphotoframe.data.settings.ActiveSourceKind =
+        com.example.familyphotoframe.data.settings.ActiveSourceKind.NONE,
     /** What to play when a remote primary is unreachable (spec §9.3). */
     val onUnreachable: com.example.familyphotoframe.data.settings.UnreachablePolicy =
         com.example.familyphotoframe.data.settings.UnreachablePolicy.FALLBACK_SAMPLES,

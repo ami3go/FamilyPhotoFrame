@@ -24,6 +24,7 @@ import com.example.familyphotoframe.data.settings.UnreachablePolicy
 import com.example.familyphotoframe.data.settings.UploadDuplicatePolicy
 import com.example.familyphotoframe.data.source.BuiltInSourceIds
 import com.example.familyphotoframe.data.source.SynologyApi
+import com.example.familyphotoframe.domain.engine.SourceStatusPolicy
 import com.example.familyphotoframe.domain.schedule.RescanSchedule
 import com.example.familyphotoframe.domain.schedule.SleepSchedule
 import kotlinx.coroutines.flow.first
@@ -157,6 +158,17 @@ internal class WebSettingsPatchApplier(
                 return "Bad autoRescanDays (use 1-7, 1=Monday)"
             }
         }
+        // Switching the primary never carries connection details: only an already
+        // configured source (or the bundled samples) can be promoted from a browser.
+        str("sourceKind")?.let { v ->
+            val kind = ActiveSourceKind.entries.firstOrNull { it.name == v }
+                ?: return "Unknown sourceKind: $v"
+            if (kind == ActiveSourceKind.NONE) return "sourceKind cannot be NONE"
+            val stored = settings.settings.first().source
+            if (kind != ActiveSourceKind.SAMPLES && !SourceStatusPolicy.isConfigured(kind, stored)) {
+                return "$v is not configured yet"
+            }
+        }
         // Comma-separated kinds; blank means "no co-primaries". Validated as a group
         // so one bad name cannot leave a half-merged pool.
         str("alsoPlay")?.let { v ->
@@ -273,6 +285,25 @@ internal class WebSettingsPatchApplier(
             }
             str("locationPosition")?.let { v ->
                 next = next.copy(overlays = next.overlays.copy(locationPosition = OverlayPosition.valueOf(v)))
+            }
+            // Promote an already-configured source. Applied before alsoPlay so a patch
+            // carrying both cannot leave the new primary listed as its own co-primary.
+            str("sourceKind")?.let { v ->
+                val kind = ActiveSourceKind.valueOf(v)
+                next = next.copy(
+                    source = next.source.copy(
+                        kind = kind,
+                        displayName = when (kind) {
+                            ActiveSourceKind.LOCAL_SAF -> next.source.displayName
+                            ActiveSourceKind.SMB ->
+                                next.source.smb?.let { "${it.host}/${it.share}" }.orEmpty()
+                            ActiveSourceKind.SYNOLOGY -> next.source.synology?.baseUrl.orEmpty()
+                            ActiveSourceKind.WEBDAV -> next.source.webdav?.baseUrl.orEmpty()
+                            ActiveSourceKind.NONE, ActiveSourceKind.SAMPLES -> ""
+                        },
+                        alsoPlay = next.source.alsoPlay - kind,
+                    )
+                )
             }
             str("alsoPlay")?.let { v ->
                 val kinds = v.split(',').map { it.trim() }.filter { it.isNotEmpty() }

@@ -94,6 +94,24 @@ class SlideshowEngine(
      */
     @Volatile private var primaryCachedOnly: Boolean = false
 
+    /**
+     * Live pool membership, for surfaces outside the ViewModel (the web config's source
+     * indicator) that need to say which source is actually feeding playback.
+     */
+    val poolSnapshot: PoolSnapshot
+        get() = PoolSnapshot(
+            primaryIds = primaryIds,
+            unavailableSourceIds = unavailableSourceIds,
+            primaryCachedOnly = primaryCachedOnly,
+        )
+
+    data class PoolSnapshot(
+        val primaryIds: List<String>,
+        val unavailableSourceIds: Set<String>,
+        /** True while an unreachable remote primary is being served from cached bytes. */
+        val primaryCachedOnly: Boolean,
+    )
+
     /** Sequential queues for the date-ordered modes. */
     private val primaryQueue = PlaybackQueue()
     private val fallbackQueue = PlaybackQueue()

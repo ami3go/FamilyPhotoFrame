@@ -34,6 +34,7 @@ import com.example.familyphotoframe.data.settings.UploadDuplicatePolicy
 import com.example.familyphotoframe.data.source.BuiltInSourceIds
 import com.example.familyphotoframe.data.source.SynologyApi
 import com.example.familyphotoframe.domain.engine.SlideshowEngine
+import com.example.familyphotoframe.domain.engine.SourceStatusPolicy
 import com.example.familyphotoframe.domain.engine.EngineState
 import com.example.familyphotoframe.domain.schedule.RescanSchedule
 import com.example.familyphotoframe.domain.schedule.SleepSchedule
@@ -311,6 +312,9 @@ class WebServerController(
 
     // ---------------- backend ----------------
 
+    /** Per-source indexed counts with their capture time; see [indexedCountsPerSource]. */
+    @Volatile private var cachedSourceCounts: Pair<Long, Map<String, Int>>? = null
+
     private inner class Backend : WebBackend {
 
         override suspend fun statusJson(): JsonObject {
@@ -354,6 +358,7 @@ class WebServerController(
                 put("paused", ui.paused)
                 put("sourceKind", s.source.kind.name)
                 put("sourceName", s.source.displayName)
+                put("sources", sourceStatusJson(s))
                 put("indexedPhotos", indexedPhotos)
                 put("alsoPlay", s.source.alsoPlay.joinToString(",") { it.name })
                 put("fallbackPhotos", fallbackPhotos)
@@ -942,6 +947,63 @@ class WebServerController(
         }
     }
 
+    /**
+     * Per-source role, reachability and indexed count — the same indicator the on-device
+     * settings show, so a browser is not left guessing which source is actually playing.
+     */
+    private suspend fun sourceStatusJson(settings: AppSettings): JsonArray {
+        val pool = engine.poolSnapshot
+        val counts = indexedCountsPerSource()
+        val statuses = SourceStatusPolicy.statuses(
+            source = settings.source,
+            unavailableSourceIds = pool.unavailableSourceIds,
+            stalePlayback = pool.primaryCachedOnly,
+            indexedPhotos = counts,
+            sourceIdFor = ::sourceIdForKind,
+            fallbackSourceId = BuiltInSourceIds.FALLBACK,
+        )
+        return buildJsonArray {
+            statuses.forEach { status ->
+                add(buildJsonObject {
+                    put("kind", status.kind.name)
+                    put("sourceId", status.sourceId ?: "")
+                    put("role", status.role.name)
+                    put("availability", status.availability.name)
+                    put("detail", status.detail)
+                    put("indexedPhotos", status.indexedPhotos)
+                    put("canBecomePrimary", status.canBecomePrimary)
+                    put("canAlsoPlay", status.canAlsoPlay)
+                })
+            }
+        }
+    }
+
+    /**
+     * Browsers poll `/api/status` every few seconds, and these are whole-table COUNTs.
+     * Row counts move only when a scan writes, so a short cache keeps the indicator live
+     * without adding five aggregate queries per poll on a low-powered frame.
+     */
+    private suspend fun indexedCountsPerSource(): Map<String, Int> {
+        val now = SystemClock.elapsedRealtime()
+        cachedSourceCounts?.let { (cachedAt, counts) ->
+            if (now - cachedAt < SOURCE_COUNT_CACHE_MS) return counts
+        }
+        val counts = (SourceStatusPolicy.orderedKinds.mapNotNull(::sourceIdForKind) +
+            BuiltInSourceIds.FALLBACK)
+            .distinct()
+            .associateWith { id -> runCatching { photoDao.countForSource(id) }.getOrDefault(0) }
+        cachedSourceCounts = now to counts
+        return counts
+    }
+
+    private fun sourceIdForKind(kind: ActiveSourceKind): String? = when (kind) {
+        ActiveSourceKind.LOCAL_SAF -> BuiltInSourceIds.LOCAL_SAF
+        ActiveSourceKind.SMB -> BuiltInSourceIds.SMB
+        ActiveSourceKind.SYNOLOGY -> BuiltInSourceIds.SYNOLOGY
+        ActiveSourceKind.WEBDAV -> BuiltInSourceIds.WEBDAV
+        ActiveSourceKind.SAMPLES, ActiveSourceKind.NONE -> null
+    }
+
     private fun sourceIdsFor(settings: AppSettings): List<String> {
         val kinds = buildSet {
             add(settings.source.kind)
@@ -1147,6 +1209,7 @@ class WebServerController(
         const val REMEMBERED_CLEANUP_INTERVAL_MS = 6L * 60L * 60_000L
         const val PREVIEW_ACTIVE_WINDOW_MS = 90_000L
         const val MB = 1024L * 1024L
+        const val SOURCE_COUNT_CACHE_MS = 15_000L
 
         /** Every overlay-anchor field the web API accepts; validated as a group. */
     }

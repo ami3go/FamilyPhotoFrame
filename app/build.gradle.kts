@@ -24,7 +24,7 @@ android {
         // AES-in-AndroidKeyStore is API 23+ — see KeystoreSecretStore.
         minSdk = 21            // Android 5.0
         targetSdk = 35
-        versionCode = 34
+        versionCode = 35
         versionName = "0.12.13-prerelease"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

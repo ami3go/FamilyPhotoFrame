@@ -48,6 +48,13 @@ class WebUiContractTest {
         assertTrue(js.contains("data-tab-jump=\"collage\""))
         assertTrue(js.contains("reset-collage"))
         assertTrue(js.contains("Collage-specific controls have their own page"))
+        // Source indicator: which source is set up, which one is playing, and the
+        // switches that promote or merge one without retyping a connection.
+        assertTrue(js.contains("function sourceStatusCard()"))
+        assertTrue(js.contains("state.status.sources"))
+        assertTrue(js.contains("data-source-primary"))
+        assertTrue(js.contains("data-source-also"))
+        assertTrue(js.contains("sourceStatusHost"))
         assertTrue(js.contains("FOLDER_BALANCED_SHUFFLE"))
         assertTrue(js.contains("reset_shuffle_active"))
         assertTrue(js.contains("shuffleFolderResolved"))

@@ -147,6 +147,23 @@
     <string name="settings_also_play">Also play from</string>
     <string name="settings_also_play_hint">Merge another configured source into the same slideshow.</string>
     <string name="msg_source_not_configured">Set that source up first, then merge it in.</string>
+    <!-- Which source is configured and in use (source indicator) -->
+    <string name="settings_source_status">Source status</string>
+    <string name="settings_source_role_primary">Primary source</string>
+    <string name="settings_source_role_also">Also playing</string>
+    <string name="settings_source_role_idle">Configured, not playing</string>
+    <string name="settings_source_role_unconfigured">Not configured</string>
+    <string name="settings_source_role_fallback">Fallback when nothing is reachable</string>
+    <string name="settings_source_state_in_use">in use now</string>
+    <string name="settings_source_state_cached">offline, playing cached photos</string>
+    <string name="settings_source_state_offline">offline</string>
+    <plurals name="settings_source_photo_count">
+        <item quantity="one">%1$d photo indexed</item>
+        <item quantity="other">%1$d photos indexed</item>
+    </plurals>
+    <string name="settings_source_use_primary">Use as primary</string>
+    <string name="settings_source_also_play">Also play</string>
+    <string name="settings_source_stop_merging">Stop merging</string>
     <string name="source_kind_local">Local folder</string>
     <string name="source_kind_smb">SMB share</string>
     <string name="source_kind_synology">Synology NAS</string>

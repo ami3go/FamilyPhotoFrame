@@ -71,7 +71,12 @@ internal fun PhotosSettings(
     vm: SlideshowViewModel,
     onManageFolders: () -> Unit,
 ) {
+    // First card on the page: which source is configured, which one is actually feeding
+    // the slideshow, and how to switch between them without retyping a connection.
+    SourceStatusCard(state, vm)
+
     SettingsSectionCard("Local source") {
+        SourceStatusBadge(state, ActiveSourceKind.LOCAL_SAF)
         Text(
             stringResource(R.string.settings_source_hint),
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
@@ -227,6 +232,7 @@ internal fun SynologySection(state: SlideshowUiState, vm: SlideshowViewModel) {
     var thumbs by remember(syn?.useThumbnails) { mutableStateOf(syn?.useThumbnails ?: true) }
 
     SettingsSectionCard(stringResource(R.string.settings_synology)) {
+        SourceStatusBadge(state, ActiveSourceKind.SYNOLOGY)
         Text(
             stringResource(R.string.settings_syn_hint),
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 14.sp,
@@ -367,6 +373,7 @@ internal fun WebDavSection(state: SlideshowUiState, vm: SlideshowViewModel) {
     var password by remember { mutableStateOf("") }
 
     SettingsSectionCard(stringResource(R.string.settings_dav)) {
+        SourceStatusBadge(state, ActiveSourceKind.WEBDAV)
         Text(
             stringResource(R.string.settings_dav_hint),
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 14.sp,
@@ -420,6 +427,7 @@ internal fun SmbSection(state: SlideshowUiState, vm: SlideshowViewModel) {
     var password by remember(smb) { mutableStateOf("") }
 
     SettingsSectionCard(stringResource(R.string.settings_smb)) {
+        SourceStatusBadge(state, ActiveSourceKind.SMB)
         SmbField(host, { host = it }, R.string.smb_host)
         SmbField(share, { share = it }, R.string.smb_share)
         SmbField(path, { path = it }, R.string.smb_path)

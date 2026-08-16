@@ -101,6 +101,7 @@ import com.example.familyphotoframe.domain.engine.toDisplayPhoto
 import com.example.familyphotoframe.domain.engine.RecoveryPolicy
 import com.example.familyphotoframe.domain.engine.SourceRecoveryCoordinator
 import com.example.familyphotoframe.domain.engine.SourcePoolPolicy
+import com.example.familyphotoframe.domain.engine.SourceStatusPolicy
 import com.example.familyphotoframe.util.ImageFormatSupport
 import com.example.familyphotoframe.web.WebServerController
 import com.example.familyphotoframe.web.WebPreviewFrame
@@ -282,6 +283,11 @@ class SlideshowViewModel(
     private val unavailablePoolIds = linkedSetOf<String>()
     /** Sources whose bounded recovery backoff has reached its terminal interval. */
     private val exhaustedUnavailablePoolIds = linkedSetOf<String>()
+
+    /** Latest stored source configuration, so status rows can be republished off-collector. */
+    @Volatile private var currentSourceConfig: ActiveSource = ActiveSource()
+    /** Indexed row count per source id, refreshed with the health summary. */
+    @Volatile private var indexedPhotosBySource: Map<String, Int> = emptyMap()
 
     /** The source the user actually selected; owns the `on_unreachable` decision. */
     private var chosenSlot: ActivatedSlot? = null
@@ -606,6 +612,7 @@ class SlideshowViewModel(
         val effectiveTransition = playlist.transition ?: s.transition
         val effectiveCollage = playlist.collageMode?.let { s.portraitCollage.copy(mode = it) } ?: s.portraitCollage
         lastSettings = s
+        currentSourceConfig = s.source
         _state.update {
             it.copy(
                 aspectMode = s.aspectMode,
@@ -643,6 +650,8 @@ class SlideshowViewModel(
                 configurableKinds = ActiveSourceKind.entries
                     .filter { it != s.source.kind && isConfigured(it, s.source) }
                     .toSet(),
+                activeSourceKind = s.source.kind,
+                sourceStatuses = buildSourceStatuses(s.source, it.stalePlayback),
                 onUnreachable = s.onUnreachable,
                 webPin = services.webServer.visiblePin(),
                 webUrl = services.webServer.url(),
@@ -1611,6 +1620,9 @@ class SlideshowViewModel(
                 )
             }
         }
+        // Single funnel for every pool change, so the source indicator never lags behind
+        // an activation, a recovery promotion, or a demotion to cached playback.
+        publishSourceStatuses()
     }
 
     /**
@@ -3158,12 +3170,73 @@ class SlideshowViewModel(
         }
     }
 
-    private fun isConfigured(kind: ActiveSourceKind, source: ActiveSource): Boolean = when (kind) {
-        ActiveSourceKind.LOCAL_SAF -> !source.treeUri.isNullOrBlank()
-        ActiveSourceKind.SMB -> source.smb?.host?.isNotBlank() == true && source.smb?.share?.isNotBlank() == true
-        ActiveSourceKind.SYNOLOGY -> source.synology?.baseUrl?.isNotBlank() == true
-        ActiveSourceKind.WEBDAV -> source.webdav?.baseUrl?.isNotBlank() == true
-        ActiveSourceKind.NONE, ActiveSourceKind.SAMPLES -> false
+    private fun isConfigured(kind: ActiveSourceKind, source: ActiveSource): Boolean =
+        SourceStatusPolicy.isConfigured(kind, source)
+
+    /**
+     * Promote an already-configured source to primary without retyping its connection.
+     * Samples are allowed here too, which is what the "use samples" button does.
+     */
+    fun setPrimarySource(kind: ActiveSourceKind) {
+        viewModelScope.launch {
+            val current = services.settings.settings.first().source
+            if (kind == current.kind) return@launch
+            if (kind != ActiveSourceKind.SAMPLES && !isConfigured(kind, current)) {
+                _state.update {
+                    it.copy(transientNotice = appContext.getString(R.string.msg_source_not_configured))
+                }
+                return@launch
+            }
+            updateSettingsAndRefresh(SourceRefreshTrigger.SOURCE_SETTINGS_CHANGED) { s ->
+                s.copy(
+                    source = s.source.copy(
+                        kind = kind,
+                        displayName = primaryDisplayName(kind, s.source),
+                        // A primary listed again as a co-primary would duplicate the pool.
+                        alsoPlay = s.source.alsoPlay - kind,
+                    )
+                )
+            }
+        }
+    }
+
+    private fun primaryDisplayName(kind: ActiveSourceKind, source: ActiveSource): String = when (kind) {
+        // The SAF display name is captured when the folder is picked and cannot be rebuilt.
+        ActiveSourceKind.LOCAL_SAF -> source.displayName
+        ActiveSourceKind.SMB -> source.smb?.let { "${it.host}/${it.share}" }.orEmpty()
+        ActiveSourceKind.SYNOLOGY -> source.synology?.baseUrl.orEmpty()
+        ActiveSourceKind.WEBDAV -> source.webdav?.baseUrl.orEmpty()
+        ActiveSourceKind.NONE, ActiveSourceKind.SAMPLES -> ""
+    }
+
+    /** One bounded COUNT per built-in source; runs on the health cadence, never per frame. */
+    private suspend fun refreshIndexedPhotoCounts() {
+        val ids = SourceStatusPolicy.orderedKinds.mapNotNull(::sourceIdFor) +
+            ServiceLocator.SOURCE_FALLBACK
+        indexedPhotosBySource = ids.distinct().associateWith { id ->
+            runCatching { services.photoDao.countForSource(id) }.getOrDefault(0)
+        }
+        publishSourceStatuses()
+    }
+
+    private fun buildSourceStatuses(source: ActiveSource, stalePlayback: Boolean) =
+        SourceStatusPolicy.statuses(
+            source = source,
+            unavailableSourceIds = unavailablePoolIds.toSet(),
+            stalePlayback = stalePlayback,
+            indexedPhotos = indexedPhotosBySource,
+            sourceIdFor = ::sourceIdFor,
+            fallbackSourceId = ServiceLocator.SOURCE_FALLBACK,
+        )
+
+    /**
+     * Republish the source indicator after pool membership changes outside the settings
+     * collector — a health-loop demotion, a recovery promotion, or a fresh activation.
+     */
+    private fun publishSourceStatuses() {
+        _state.update {
+            it.copy(sourceStatuses = buildSourceStatuses(currentSourceConfig, it.stalePlayback))
+        }
     }
 
     // ---- automatic index refresh (spec §20) -------------------------------------
@@ -4345,6 +4418,7 @@ class SlideshowViewModel(
     }
 
     private suspend fun refreshHealth() {
+        refreshIndexedPhotoCounts()
         val total = runCatching { services.photoDao.count() }.getOrDefault(0)
         val heifFlag = if (services.allowHeifPlayback) 1 else 0
         val eligible = runCatching {

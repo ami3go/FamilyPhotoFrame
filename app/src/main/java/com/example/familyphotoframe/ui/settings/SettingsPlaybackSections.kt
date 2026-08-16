@@ -305,14 +305,7 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel, o
         )
         for (kind in state.configurableKinds) {
             ToggleRow(
-                stringResource(
-                    when (kind) {
-                        ActiveSourceKind.LOCAL_SAF -> R.string.source_kind_local
-                        ActiveSourceKind.SMB -> R.string.source_kind_smb
-                        ActiveSourceKind.SYNOLOGY -> R.string.source_kind_synology
-                        else -> R.string.source_kind_webdav
-                    },
-                ),
+                sourceKindLabel(kind),
                 kind in state.alsoPlay,
             ) { enabled -> vm.setAlsoPlay(kind, enabled) }
         }
