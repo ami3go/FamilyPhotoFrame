@@ -56,6 +56,21 @@ class ImageBlurTest {
         assertEquals(60, out.size)
     }
 
+    /**
+     * The blur reuses the caller's buffer as scratch to avoid a full-frame allocation on
+     * every transition, so the result must still be correct when it aliases the input.
+     */
+    @Test fun blurResultIsCorrectEvenThoughTheInputBufferIsReused() {
+        val w = 9
+        val h = 7
+        fun fresh() = IntArray(w * h) { index -> argb(255, index % 256, (index * 3) % 256, 40) }
+        val reference = ImageBlur.boxBlur(fresh(), w, h, radius = 2).copyOf()
+
+        val input = fresh()
+        val out = ImageBlur.boxBlur(input, w, h, radius = 2)
+        assertTrue(out.contentEquals(reference))
+    }
+
     @Test fun downsampleBudgetMatchesSpec() {
         // Spec §10.2: blur must come from a heavily downsampled bitmap (<= 256 px).
         assertTrue(ImageBlur.MAX_DIMENSION_PX <= 256)

@@ -51,6 +51,7 @@ class WebUiContractTest {
         // Low-memory options, reachable from a browser as well as the frame.
         assertTrue(js.contains("decodeColorDepth"))
         assertTrue(js.contains("cachePlaybackPool"))
+        assertTrue(js.contains("decodeResolution"))
         assertTrue(js.contains("device-memory-card"))
         // Source indicator: which source is set up, which one is playing, and the
         // switches that promote or merge one without retyping a connection.

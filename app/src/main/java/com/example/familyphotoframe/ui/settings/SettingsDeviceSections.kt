@@ -67,6 +67,7 @@ import com.example.familyphotoframe.data.settings.UploadDuplicatePolicy
 import com.example.familyphotoframe.data.weather.TemperatureUnits
 import com.example.familyphotoframe.domain.schedule.RescanSchedule
 import com.example.familyphotoframe.data.settings.DecodeColorDepth
+import com.example.familyphotoframe.data.settings.DecodeResolution
 import com.example.familyphotoframe.ui.slideshow.SlideshowUiState
 import com.example.familyphotoframe.ui.slideshow.SlideshowViewModel
 import com.example.familyphotoframe.web.QrCodes
@@ -112,6 +113,14 @@ internal fun LowMemorySettings(state: SlideshowUiState, vm: SlideshowViewModel) 
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             fontSize = 14.sp,
         )
+        Text(
+            stringResource(
+                if (state.memoryTier.isLow) R.string.settings_lowmem_tier_low
+                else R.string.settings_lowmem_tier_standard
+            ),
+            color = MaterialTheme.colorScheme.primary,
+            fontSize = 14.sp,
+        )
 
         Text(stringResource(R.string.settings_color_depth))
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -141,6 +150,32 @@ internal fun LowMemorySettings(state: SlideshowUiState, vm: SlideshowViewModel) 
                     DecodeColorDepth.LOW_MEMORY -> R.string.settings_color_depth_low_hint
                 }
             ),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            fontSize = 14.sp,
+        )
+
+        Text(stringResource(R.string.settings_decode_resolution))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilterChip(
+                    state.decodeResolution == DecodeResolution.AUTO,
+                    { vm.setDecodeResolution(DecodeResolution.AUTO) },
+                    { Text(stringResource(R.string.settings_color_depth_auto)) },
+                )
+                FilterChip(
+                    state.decodeResolution == DecodeResolution.FULL_PANEL,
+                    { vm.setDecodeResolution(DecodeResolution.FULL_PANEL) },
+                    { Text(stringResource(R.string.settings_decode_resolution_full)) },
+                )
+            }
+            FilterChip(
+                state.decodeResolution == DecodeResolution.REDUCED,
+                { vm.setDecodeResolution(DecodeResolution.REDUCED) },
+                { Text(stringResource(R.string.settings_color_depth_low)) },
+            )
+        }
+        Text(
+            stringResource(R.string.settings_decode_resolution_hint),
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             fontSize = 14.sp,
         )

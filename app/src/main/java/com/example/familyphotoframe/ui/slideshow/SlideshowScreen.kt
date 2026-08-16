@@ -46,7 +46,10 @@ import com.example.familyphotoframe.data.settings.PortraitCollageMode
 import com.example.familyphotoframe.data.settings.PortraitFallback
 import com.example.familyphotoframe.domain.engine.DecodeFailure
 import com.example.familyphotoframe.domain.engine.DecodeFailureStage
+import com.example.familyphotoframe.data.settings.DecodeResolution
 import com.example.familyphotoframe.domain.engine.DecodeColorPolicy
+import com.example.familyphotoframe.domain.engine.DeviceMemoryTier
+import com.example.familyphotoframe.domain.engine.DeviceMemoryTierPolicy
 import com.example.familyphotoframe.domain.engine.DisplayPhoto
 import com.example.familyphotoframe.domain.engine.CollageLayout
 import com.example.familyphotoframe.domain.engine.PhotoOrientation
@@ -470,8 +473,19 @@ private fun PlayingContent(
     // same collage companions while still giving the full dwell interval to prepare next.
     suspend fun build(photo: DisplayPhoto, fastManual: Boolean = false): PrepareSlideResult {
         suspend fun prepare(): PrepareSlideResult {
-        val decodeW = (targetW * memoryProtection.decodeScale).roundToInt().coerceAtLeast(1)
-        val decodeH = (targetH * memoryProtection.decodeScale).roundToInt().coerceAtLeast(1)
+        // Two independent scales: a static one that keeps a small-memory frame from ever
+        // decoding more pixels than it can see the point of, and the guard's reactive one
+        // that steps down further once pressure has already appeared.
+        val baselineScale = when (state.decodeResolution) {
+            DecodeResolution.FULL_PANEL -> 1f
+            DecodeResolution.REDUCED ->
+                DeviceMemoryTierPolicy.decodeScaleFor(DeviceMemoryTier.LOW, targetW, targetH)
+            DecodeResolution.AUTO ->
+                DeviceMemoryTierPolicy.decodeScaleFor(state.memoryTier, targetW, targetH)
+        }
+        val effectiveScale = baselineScale * memoryProtection.decodeScale
+        val decodeW = (targetW * effectiveScale).roundToInt().coerceAtLeast(1)
+        val decodeH = (targetH * effectiveScale).roundToInt().coerceAtLeast(1)
         val configuredMaxPhotos = state.portraitCollage.maxPhotosClamped
         val memoryMaxPhotos = memoryProtection.maxCollagePhotos
         val maxPhotos = minOf(configuredMaxPhotos, memoryMaxPhotos)

@@ -50,6 +50,7 @@ import com.example.familyphotoframe.data.settings.CollageGap
 import com.example.familyphotoframe.data.settings.CollageLayoutPreference
 import com.example.familyphotoframe.data.settings.CollageOrientationFilter
 import com.example.familyphotoframe.data.settings.DecodeColorDepth
+import com.example.familyphotoframe.data.settings.DecodeResolution
 import com.example.familyphotoframe.data.settings.CollageScaleMode
 import com.example.familyphotoframe.data.settings.PortraitCollageMode
 import com.example.familyphotoframe.data.settings.PortraitCollageSettings
@@ -632,6 +633,8 @@ class SlideshowViewModel(
                 showPerformanceOverlay = s.showPerformanceOverlay,
                 decodeColorDepth = s.decodeColorDepth,
                 cachePlaybackPool = s.cachePlaybackPool,
+                decodeResolution = s.decodeResolution,
+                memoryTier = services.memoryTier,
                 autoStartOnBoot = s.autoStartOnBoot,
                 web = s.web,
                 schedule = s.schedule,
@@ -4485,6 +4488,10 @@ class SlideshowViewModel(
 
     fun setDecodeColorDepth(depth: DecodeColorDepth) {
         viewModelScope.launch { services.settings.update { it.copy(decodeColorDepth = depth) } }
+    }
+
+    fun setDecodeResolution(resolution: DecodeResolution) {
+        viewModelScope.launch { services.settings.update { it.copy(decodeResolution = resolution) } }
     }
 
     fun setCachePlaybackPool(enabled: Boolean) {

@@ -141,7 +141,7 @@ class SlideshowEngine(
      * heaps this frame runs on cannot spare. Keyed by everything the query depends on,
      * and dropped outright whenever the pool is reconfigured or the index is rewritten.
      */
-    private class CachedPool(val key: String, val ids: List<Long>, val loadedAtElapsedMs: Long)
+    private class CachedPool(val key: String, val ids: LongArray, val loadedAtElapsedMs: Long)
 
     @Volatile private var cachePlaybackPool: Boolean = true
     private var cachedPrimaryPool: CachedPool? = null
@@ -1085,10 +1085,10 @@ class SlideshowEngine(
             SelectionMode.FOLDER_BALANCED_SHUFFLE -> emptyList()
         }
 
-        val pool = if (!cachePlaybackPool || selectionMode == SelectionMode.ON_THIS_DAY) {
+        val pool: LongArray = if (!cachePlaybackPool || selectionMode == SelectionMode.ON_THIS_DAY) {
             // The on-this-day pool is already an in-memory list pushed by the ViewModel,
             // so there is nothing to save by caching it a second time.
-            queryPool()
+            queryPool().toLongArray()
         } else {
             val key = PlaybackPoolCachePolicy.key(
                 selectionMode = selectionMode,
@@ -1111,7 +1111,9 @@ class SlideshowEngine(
             if (reusable) {
                 slot!!.ids
             } else {
-                queryPool().also { loaded ->
+                // Converted immediately: the DAO's boxed list becomes garbage now
+                // instead of being retained for the life of the cache entry.
+                queryPool().toLongArray().also { loaded ->
                     val entry = CachedPool(key, loaded, now)
                     if (fromFallback) cachedFallbackPool = entry else cachedPrimaryPool = entry
                 }

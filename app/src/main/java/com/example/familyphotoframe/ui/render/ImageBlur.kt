@@ -22,16 +22,24 @@ object ImageBlur {
     const val DEFAULT_RADIUS = 6
 
     /**
-     * Blur [pixels] (ARGB_8888, row-major, length == width * height) in place-safe
-     * fashion, returning a new array. Alpha is preserved per pixel.
+     * Blur [pixels] (ARGB_8888, row-major, length == width * height). Alpha is preserved
+     * per pixel.
+     *
+     * **[pixels] is used as scratch space and its contents are not preserved.** Read the
+     * returned array, which may or may not be the same instance. This runs on every
+     * transition, and reusing the caller's buffer removes one full-frame allocation per
+     * slide on frames that have none to spare.
      */
     fun boxBlur(pixels: IntArray, width: Int, height: Int, radius: Int = DEFAULT_RADIUS): IntArray {
         require(width > 0 && height > 0) { "width and height must be positive" }
         require(pixels.size == width * height) { "pixels must be width * height" }
         if (radius <= 0) return pixels.copyOf()
 
-        val horizontal = blurPass(pixels, width, height, radius, horizontal = true)
-        return blurPass(horizontal, width, height, radius, horizontal = false)
+        val horizontal = blurPass(pixels, width, height, radius, horizontal = true, out = null)
+        // The horizontal pass output is dead once the vertical pass has read it, so the
+        // vertical pass writes into `pixels` instead of allocating a third buffer. One
+        // less full-frame IntArray per slide, and this runs on every transition.
+        return blurPass(horizontal, width, height, radius, horizontal = false, out = pixels)
     }
 
     private fun blurPass(
@@ -40,8 +48,13 @@ object ImageBlur {
         height: Int,
         radius: Int,
         horizontal: Boolean,
+        /** Scratch buffer to write into; allocated when null. Never aliases [src]. */
+        out: IntArray?,
     ): IntArray {
-        val out = IntArray(src.size)
+        require(out == null || (out.size == src.size && out !== src)) {
+            "out must be a distinct buffer of the same size"
+        }
+        val out = out ?: IntArray(src.size)
         val lineLength = if (horizontal) width else height
         val lineCount = if (horizontal) height else width
         val effectiveRadius = radius.coerceAtMost(lineLength - 1).coerceAtLeast(0)

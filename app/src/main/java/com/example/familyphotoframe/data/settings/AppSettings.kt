@@ -259,6 +259,15 @@ enum class MotionMode { NONE, KEN_BURNS }
  */
 enum class DecodeColorDepth { AUTO, FULL, LOW_MEMORY }
 
+/**
+ * How many pixels a slide is decoded at.
+ *
+ * [AUTO] decodes at panel resolution on capable frames and caps it on low-memory ones,
+ * where the panel's last few hundred thousand pixels cost real heap and resolve detail
+ * nobody sees from across a room.
+ */
+enum class DecodeResolution { AUTO, FULL_PANEL, REDUCED }
+
 /** How portrait photos are grouped on a landscape frame. */
 enum class PortraitCollageMode { OFF, AUTOMATIC, ALWAYS_TWO, PREFER_THREE }
 
@@ -822,6 +831,8 @@ data class AppSettings(
      * only where the heap can afford it.
      */
     val decodeColorDepth: DecodeColorDepth = DecodeColorDepth.AUTO,
+    /** Decoded pixel count per slide; see [DecodeResolution]. */
+    val decodeResolution: DecodeResolution = DecodeResolution.AUTO,
     /**
      * Reuse the playback id list between slides instead of re-reading the whole photo
      * index on every advance (spec §9.6 pools). Off restores the previous behaviour.

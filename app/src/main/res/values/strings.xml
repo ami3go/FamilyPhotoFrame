@@ -157,6 +157,11 @@
     <string name="settings_color_depth_auto_hint">Full colour on frames with memory to spare, half-size pixels on frames without. Recommended.</string>
     <string name="settings_color_depth_full_hint">Always decode at full colour. Best quality, and twice the memory per photo.</string>
     <string name="settings_color_depth_low_hint">Always use half-size pixels. Halves the memory each photo needs; smooth skies may show faint banding.</string>
+    <string name="settings_lowmem_tier_low">This frame is treated as low-memory, so the automatic options economise.</string>
+    <string name="settings_lowmem_tier_standard">This frame has memory to spare, so the automatic options keep full quality.</string>
+    <string name="settings_decode_resolution">Photo detail</string>
+    <string name="settings_decode_resolution_full">Full panel</string>
+    <string name="settings_decode_resolution_hint">How many pixels each photo is decoded at. Reducing it saves memory and is hard to see from normal viewing distance.</string>
     <string name="settings_pool_cache">Reuse the photo list between slides</string>
     <string name="settings_pool_cache_hint">Avoids re-reading the whole photo index for every photo shown. Turn off only if newly added photos take too long to appear.</string>
 

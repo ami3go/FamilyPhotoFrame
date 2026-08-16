@@ -1,5 +1,6 @@
 package com.example.familyphotoframe
 
+import android.app.ActivityManager
 import android.content.Context
 import android.net.Uri
 import android.os.Build
@@ -49,6 +50,8 @@ import com.example.familyphotoframe.web.WebUploadManager
 import com.example.familyphotoframe.maintenance.FactoryResetCoordinator
 import com.example.familyphotoframe.util.AppDispatchers
 import com.example.familyphotoframe.util.DefaultAppDispatchers
+import com.example.familyphotoframe.domain.engine.DeviceMemoryTier
+import com.example.familyphotoframe.domain.engine.DeviceMemoryTierPolicy
 import com.example.familyphotoframe.util.ImageFormatSupport
 import com.example.familyphotoframe.util.ImageMemoryBudget
 import java.io.File
@@ -72,7 +75,28 @@ class ServiceLocator(private val appContext: Context) {
     /** Runtime playback capability; indexing remains device-independent. */
     val allowHeifPlayback: Boolean = ImageFormatSupport.supportsPlatformHeif(Build.VERSION.SDK_INT)
 
-    val diagnostics: DiagnosticsLog by lazy { DiagnosticsLog() }
+    /**
+     * Decided once from signals that are all available before the first decode, so an
+     * old tablet starts economical instead of discovering it should have been. Read by
+     * the image cache budget, the diagnostics ring and the slideshow's decode sizing.
+     */
+    val memoryTier: DeviceMemoryTier by lazy {
+        val activityManager = appContext.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val totalRamBytes = activityManager?.let { manager ->
+            runCatching {
+                ActivityManager.MemoryInfo().also(manager::getMemoryInfo).totalMem
+            }.getOrDefault(0L)
+        } ?: 0L
+        DeviceMemoryTierPolicy.tier(
+            lowRamFlagged = activityManager?.isLowRamDevice == true,
+            heapMaxBytes = Runtime.getRuntime().maxMemory(),
+            totalRamBytes = totalRamBytes,
+        )
+    }
+
+    val diagnostics: DiagnosticsLog by lazy {
+        DiagnosticsLog(capacity = DeviceMemoryTierPolicy.diagnosticsRingCapacity(memoryTier))
+    }
 
     /** Lock-free crash/ANR context populated by normal runtime owners. */
     val diagnosticRuntimeState: DiagnosticRuntimeState = DiagnosticRuntimeState()
@@ -285,7 +309,10 @@ class ServiceLocator(private val appContext: Context) {
      * ever shown — spec §10.2) and crossfade handled by the composable, not Coil.
      */
     val imageLoader: ImageLoader by lazy {
-        val cacheBytes = ImageMemoryBudget.bytesForHeap(Runtime.getRuntime().maxMemory())
+        val cacheBytes = ImageMemoryBudget.bytesForHeap(
+            maxHeapBytes = Runtime.getRuntime().maxMemory(),
+            lowMemoryTier = memoryTier.isLow,
+        )
         ImageLoader.Builder(appContext)
             .crossfade(false)
             .memoryCache {

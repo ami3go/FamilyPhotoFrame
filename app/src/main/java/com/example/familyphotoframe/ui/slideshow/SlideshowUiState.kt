@@ -113,6 +113,12 @@ data class SlideshowUiState(
         com.example.familyphotoframe.data.settings.DecodeColorDepth.AUTO,
     /** Reuse the playback id list between slides instead of re-querying the index. */
     val cachePlaybackPool: Boolean = true,
+    /** Decoded pixel count preference; see DeviceMemoryTierPolicy.decodeScaleFor. */
+    val decodeResolution: com.example.familyphotoframe.data.settings.DecodeResolution =
+        com.example.familyphotoframe.data.settings.DecodeResolution.AUTO,
+    /** How much room this device has; decided once at startup. */
+    val memoryTier: com.example.familyphotoframe.domain.engine.DeviceMemoryTier =
+        com.example.familyphotoframe.domain.engine.DeviceMemoryTier.STANDARD,
     /** Rendered weather string, or null when unavailable/disabled (spec §11). */
     val weatherText: String? = null,
     val weather: com.example.familyphotoframe.data.settings.WeatherSettings =
