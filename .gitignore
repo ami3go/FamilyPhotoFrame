@@ -33,6 +33,9 @@ build/
 gradle-app.setting
 .gradletasknamecache
 
+# Kotlin compiler session/scratch state, written on every build
+.kotlin/
+
 # Local configuration file (contains SDK path, may contain signing paths)
 local.properties
 
