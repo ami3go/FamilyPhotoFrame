@@ -493,6 +493,12 @@ class SlideshowViewModel(
             return null
         }
 
+        // Qualified: an unqualified call would bind to this override, not the ViewModel's.
+        override suspend fun capturePerformanceSample(): String? {
+            this@SlideshowViewModel.capturePerformanceSample()
+            return null
+        }
+
         override suspend fun factoryReset(): String? {
             services.webServer.beginTerminalMaintenance()
             // From this point the operation is terminal. Finish (or fail and restart)

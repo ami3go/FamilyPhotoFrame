@@ -93,6 +93,8 @@ class WebServerController(
     private val allowHeif: Boolean = true,
     private val diagnosticRuntimeState: DiagnosticRuntimeState = DiagnosticRuntimeState(),
     private val localThumbnailCache: com.example.familyphotoframe.data.cache.LocalThumbnailCache? = null,
+    /** Mirrors the tier line the frame's own Device page shows; see DeviceMemoryTierPolicy. */
+    private val lowMemoryTier: Boolean = false,
 ) {
     /** Permission-free device snapshot; see BatteryTelemetry's own doc comment. */
     private val batteryTelemetry = BatteryTelemetry(context)
@@ -109,6 +111,9 @@ class WebServerController(
         suspend fun previewOnThisDay(): String? = "On this day preview is unavailable"
         suspend fun restartApplication(): String? = "Application restart is unavailable"
         suspend fun factoryReset(): String? = "Factory reset is unavailable"
+
+        /** Frame timing lives in the running UI, so this is only possible while it is up. */
+        suspend fun capturePerformanceSample(): String? = "Performance capture needs the frame running"
     }
 
     var controls: FrameControls? = null
@@ -372,6 +377,7 @@ class WebServerController(
                 put("heapMaxMb", runtime.maxMemory() / MB)
                 put("pssMb", Debug.getPss() / 1024)
                 put("imageCacheMb", 0)
+                put("memoryTier", if (lowMemoryTier) "LOW" else "STANDARD")
                 put("localThumbnailCacheEnabled", s.localThumbnailCache.enabled)
                 put("localThumbnailCacheUsageBytes", localThumbnailCache?.currentSizeBytes() ?: 0L)
                 put("localThumbnailCacheMaxBytes", localThumbnailCache?.effectiveMaxBytes() ?: s.localThumbnailCache.maxBytes)
@@ -643,6 +649,7 @@ class WebServerController(
             }
             "restart_app" -> withControls { it.restartApplication() }
             "factory_reset" -> withControls { it.factoryReset() }
+            "capture_performance_sample" -> withControls { it.capturePerformanceSample() }
                 else -> "Unknown maintenance action"
             }
         }

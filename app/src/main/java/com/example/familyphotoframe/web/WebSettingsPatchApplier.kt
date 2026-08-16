@@ -237,6 +237,7 @@ internal class WebSettingsPatchApplier(
                 next = next.copy(decodeResolution = DecodeResolution.valueOf(v))
             }
             bool("cachePlaybackPool")?.let { next = next.copy(cachePlaybackPool = it) }
+            bool("showPerformanceOverlay")?.let { next = next.copy(showPerformanceOverlay = it) }
             str("portraitCollageMode")?.let { v ->
                 next = next.copy(portraitCollage = next.portraitCollage.copy(
                     mode = PortraitCollageMode.valueOf(v),

@@ -260,7 +260,7 @@ class ServiceLocator(private val appContext: Context) {
     val webServer: WebServerController by lazy {
         WebServerController(
             settings, photoDao, engine, diagnostics, appContext, webUploadManager, rememberedBrowsers,
-            allowHeifPlayback, diagnosticRuntimeState, localThumbnailCache,
+            allowHeifPlayback, diagnosticRuntimeState, localThumbnailCache, memoryTier.isLow,
         )
     }
 

@@ -138,4 +138,17 @@ class WebSettingsJsonTest {
         assertEquals("false",tuned.getValue("cachePlaybackPool").jsonPrimitive.content)
     }
 
+    /** The frame's Device page also carries the performance overlay; the web tab mirrors it. */
+    @Test
+    fun performanceOverlayIsProjectedForWebParity() {
+        val defaults=WebSettingsJson.redactedConfig(AppSettings(),nextScheduleAction="none")
+        assertEquals("false",defaults.getValue("showPerformanceOverlay").jsonPrimitive.content)
+
+        val enabled=WebSettingsJson.redactedConfig(
+            AppSettings(showPerformanceOverlay=true),
+            nextScheduleAction="none",
+        )
+        assertEquals("true",enabled.getValue("showPerformanceOverlay").jsonPrimitive.content)
+    }
+
 }

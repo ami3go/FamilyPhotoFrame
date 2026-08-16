@@ -1,5 +1,6 @@
 package com.example.familyphotoframe.web
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -7,8 +8,10 @@ import org.junit.Test
 class WebUiContractTest {
     @Test fun shellContainsAllTopLevelTabsAndExternalAssets() {
         val html = SetupPage.HTML
-        listOf("overview", "photos", "playback", "collage", "display", "schedule", "device", "diagnostics", "backup", "about")
-            .forEach { assertTrue("missing $it tab", html.contains("id=\"tab-$it\"")) }
+        listOf(
+            "overview", "photos", "playback", "collage", "display", "schedule",
+            "device", "web", "diagnostics", "backup", "about",
+        ).forEach { assertTrue("missing $it tab", html.contains("id=\"tab-$it\"")) }
         // Assets are cache-busted, so the shell references the revisioned URLs.
         assertTrue(html.contains("/assets/app-${WebUiAssets.REVISION}.css"))
         assertTrue(html.contains("/assets/app-${WebUiAssets.REVISION}.js"))
@@ -53,6 +56,27 @@ class WebUiContractTest {
         assertTrue(js.contains("cachePlaybackPool"))
         assertTrue(js.contains("decodeResolution"))
         assertTrue(js.contains("device-memory-card"))
+        // Device tab mirrors the frame's own Device page: Startup, Performance, Memory.
+        // Web-server administration moved to its own tab so the device options are not
+        // buried under a page titled "Web control".
+        assertTrue(js.contains("function renderDevice()"))
+        assertTrue(js.contains("function renderWebControl()"))
+        assertTrue(js.contains("renderWebControl()"))
+        assertTrue(js.contains("['device','Device'"))
+        assertTrue(js.contains("['web','Web control'"))
+        assertTrue(js.contains("pageTitle('Device'"))
+        assertTrue(js.contains("pageTitle('Web control'"))
+        assertTrue(js.contains("device-startup-card"))
+        assertTrue(js.contains("device-performance-card"))
+        assertTrue(js.contains("photos-local-cache-card"))
+        assertTrue(js.contains("showPerformanceOverlay"))
+        assertTrue(js.contains("capture_performance_sample"))
+        assertTrue(js.contains("memoryTier"))
+        // autoStartOnBoot has exactly one control, on Device, so the two pages cannot disagree.
+        assertTrue(js.contains("toggleControl('autoStartOnBoot'"))
+        assertEquals(1, Regex("toggleControl\\('autoStartOnBoot'").findAll(js).count())
+        // Web-only cards must not remain on the Device tab.
+        assertFalse(js.contains("el('tab-device').innerHTML=pageTitle('Web control'"))
         // Source indicator: which source is set up, which one is playing, and the
         // switches that promote or merge one without retyping a connection.
         assertTrue(js.contains("function sourceStatusCard()"))

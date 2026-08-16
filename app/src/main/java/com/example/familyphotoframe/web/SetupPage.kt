@@ -88,6 +88,7 @@ object SetupPage {
       <section id="tab-display" class="tab-page hidden" data-tab="display"></section>
       <section id="tab-schedule" class="tab-page hidden" data-tab="schedule"></section>
       <section id="tab-device" class="tab-page hidden" data-tab="device"></section>
+      <section id="tab-web" class="tab-page hidden" data-tab="web"></section>
       <section id="tab-diagnostics" class="tab-page hidden" data-tab="diagnostics"></section>
       <section id="tab-backup" class="tab-page hidden" data-tab="backup"></section>
       <section id="tab-about" class="tab-page hidden" data-tab="about"></section>
