@@ -115,7 +115,7 @@ object DiagnosticEventCatalog {
         "sameFolderCandidateCount", "portraitCandidateCount", "squareCandidateCount",
         "landscapeCandidateCount", "evaluatedTwoPhotoCombinations",
         "evaluatedThreePhotoCombinations", "evaluatedLayoutCount", "folderTier",
-        "orientationTier", "screenCoverage", "averageCropLoss", "maximumCropLoss",
+        "orientationTier", "anchorOrientation", "screenCoverage", "averageCropLoss", "maximumCropLoss",
         "timeDistanceScore", "recentPenalty", "decisionReason", "actualDurationMs",
         "collageMode", "collageOrientationFilter", "collageLayoutPreference",
         "configuredMaxCollagePhotos", "memoryMaxCollagePhotos",
@@ -146,7 +146,7 @@ object DiagnosticEventCatalog {
     )
 
     private val memoryFields = setOf(
-        "trigger", "reason", "level", "previousLevel", "memoryProtectionLevel",
+        "trigger", "reason", "level", "response", "previousLevel", "memoryProtectionLevel",
         "heapUsedKb", "heapMaxKb", "heapBeforeKb", "heapAfterKb", "freedKb",
         "nativeHeapKb", "pssKb",
         "rssKb", "imageCacheKb", "imageCacheMaxKb", "imageCacheBeforeKb", "beforeKb",

@@ -248,16 +248,88 @@ class PortraitCollagePolicyTest {
         assertEquals(CollageLayout.THREE_COLUMNS, decision.layout)
     }
 
-    @Test fun fillNeverOverridesAnAnchorTheFilterExcludes() {
+    @Test fun anchorTheFilterExcludesIsShownAloneWithoutFill() {
         val anchor = meta(1, 1.78f, PhotoOrientation.LANDSCAPE, order = -1)
         val candidates = listOf(meta(2, .60f, PhotoOrientation.PORTRAIT, order = 0))
         assertNull(
             PortraitCollagePolicy.chooseBestPresentation(
                 PortraitCollageMode.PREFER_THREE, screenW, screenH, anchor, candidates, 3, now,
                 orientationFilter = CollageOrientationFilter.PORTRAIT_ONLY,
-                fillWithOtherOrientations = true,
+                fillWithOtherOrientations = false,
             )
         )
+    }
+
+    /**
+     * Field behaviour that prompted this: under a vertical filter every landscape anchor
+     * was shown alone while a dozen portrait companions sat available.
+     */
+    @Test fun fillLetsAnAnchorTheFilterExcludesStillFormACollage() {
+        val anchor = meta(1, 1.78f, PhotoOrientation.LANDSCAPE, order = -1)
+        val candidates = listOf(
+            meta(2, .60f, PhotoOrientation.PORTRAIT, order = 0),
+            meta(3, .61f, PhotoOrientation.PORTRAIT, order = 1),
+        )
+        val decision = PortraitCollagePolicy.chooseBestPresentation(
+            PortraitCollageMode.PREFER_THREE, screenW, screenH, anchor, candidates, 3, now,
+            orientationFilter = CollageOrientationFilter.PORTRAIT_ONLY,
+            fillWithOtherOrientations = true,
+        )!!
+        assertEquals(3, decision.photoIds.size)
+        assertEquals(1L, decision.photoIds.first())
+        assertEquals("ORIENTATION_FILL_ANCHOR_RELAXED", decision.decisionReason)
+    }
+
+    /** The excluded anchor still seats preferred-orientation companions ahead of its own kind. */
+    @Test fun anExcludedAnchorPrefersCompanionsTheFilterWanted() {
+        val anchor = meta(1, 1.78f, PhotoOrientation.LANDSCAPE, order = -1)
+        val candidates = listOf(
+            meta(2, 1.80f, PhotoOrientation.LANDSCAPE, order = 0),
+            meta(3, .60f, PhotoOrientation.PORTRAIT, order = 1),
+            meta(4, .61f, PhotoOrientation.PORTRAIT, order = 2),
+        )
+        val decision = PortraitCollagePolicy.chooseBestPresentation(
+            PortraitCollageMode.PREFER_THREE, screenW, screenH, anchor, candidates, 3, now,
+            orientationFilter = CollageOrientationFilter.PORTRAIT_ONLY,
+            fillWithOtherOrientations = true,
+        )!!
+        assertEquals(setOf(1L, 3L, 4L), decision.photoIds.toSet())
+    }
+
+    /** A landscape-only filter has the mirror-image gap; the same relaxation covers it. */
+    @Test fun fillRelaxesAnExcludedAnchorUnderALandscapeFilterToo() {
+        val anchor = meta(1, .60f, PhotoOrientation.PORTRAIT, order = -1)
+        val candidates = listOf(
+            meta(2, 1.78f, PhotoOrientation.LANDSCAPE, order = 0),
+            meta(3, 1.80f, PhotoOrientation.LANDSCAPE, order = 1),
+        )
+        val decision = PortraitCollagePolicy.chooseBestPresentation(
+            PortraitCollageMode.PREFER_THREE, screenW, screenH, anchor, candidates, 3, now,
+            orientationFilter = CollageOrientationFilter.LANDSCAPE_ONLY,
+            fillWithOtherOrientations = true,
+        )!!
+        assertEquals(3, decision.photoIds.size)
+        assertEquals("ORIENTATION_FILL_ANCHOR_RELAXED", decision.decisionReason)
+    }
+
+    /**
+     * SAME_AS_ANCHOR admits every anchor by definition, so the anchor relaxation must never
+     * engage for it. Companion filling may still borrow an orientation to complete a frame —
+     * that is the older ORIENTATION_FILL_RELAXED path and is unaffected here.
+     */
+    @Test fun sameAsAnchorNeverTakesTheAnchorRelaxedPath() {
+        val anchor = meta(1, 1.78f, PhotoOrientation.LANDSCAPE, order = -1)
+        val candidates = listOf(
+            meta(2, 1.80f, PhotoOrientation.LANDSCAPE, order = 0),
+            meta(3, .60f, PhotoOrientation.PORTRAIT, order = 1),
+        )
+        val decision = PortraitCollagePolicy.chooseBestPresentation(
+            PortraitCollageMode.PREFER_THREE, screenW, screenH, anchor, candidates, 3, now,
+            orientationFilter = CollageOrientationFilter.SAME_AS_ANCHOR,
+            fillWithOtherOrientations = true,
+        )!!
+        assertEquals(1L, decision.photoIds.first())
+        assertTrue(decision.decisionReason != "ORIENTATION_FILL_ANCHOR_RELAXED")
     }
 
     @Test fun alwaysTwoSelectsExactlyTwoPhotos() {

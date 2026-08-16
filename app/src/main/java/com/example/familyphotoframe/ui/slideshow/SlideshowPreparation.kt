@@ -498,6 +498,7 @@ internal suspend fun prepareSlide(
             forcedAspect: AspectMode? = null,
             eventReason: String? = null,
             allowTransitionBlur: Boolean = true,
+            eventDetails: Map<String, String> = emptyMap(),
         ): PrepareSlideResult {
             return when (val decoded = decodeAnchorCacheable(resolvedAnchor, targetW, targetH)) {
                 is DecodePhotoResult.Ready -> {
@@ -515,6 +516,7 @@ internal suspend fun prepareSlide(
                             prepareMs = SystemClock.elapsedRealtime() - startedAt,
                             decodedBytes = result.slide.decodedBytes,
                             reason = eventReason,
+                            details = eventDetails,
                         )
                     }
                     result
@@ -523,10 +525,17 @@ internal suspend fun prepareSlide(
             }
         }
 
+        // Only the blurred backdrop costs an extra full-frame allocation, so it is the
+        // only part of the user's choice memory pressure overrides.
+        val requestedFallback = portraitFallbackAspect(portraitFallback)
+        val allowedFallback = if (requestedFallback == AspectMode.FIT_BLUR && !allowBlurredBackground) {
+            AspectMode.FIT_COLOR
+        } else requestedFallback
+
         if (collageMode == PortraitCollageMode.OFF) return prepareSingle()
         if (maxCollagePhotos < 2) {
             return prepareSingle(
-                forcedAspect = if (photo.metadataOrientation() == PhotoOrientation.PORTRAIT) AspectMode.FIT_COLOR else null,
+                forcedAspect = if (photo.metadataOrientation() == PhotoOrientation.PORTRAIT) allowedFallback else null,
                 eventReason = "memory_guard_single_photo",
                 allowTransitionBlur = false,
             )
@@ -670,10 +679,6 @@ internal suspend fun prepareSlide(
         }
 
         val mutableCandidates = inspectedCandidates.toMutableList()
-        val requestedFallback = portraitFallbackAspect(portraitFallback)
-        val allowedFallback = if (requestedFallback == AspectMode.FIT_BLUR && !allowBlurredBackground) {
-            AspectMode.FIT_COLOR
-        } else requestedFallback
 
         fun diagnosticsFor(decision: CollageDecision): Map<String, String> {
             val effectiveMaxPhotos = maxCollagePhotos.coerceIn(1, 3)
@@ -746,6 +751,9 @@ internal suspend fun prepareSlide(
                 val fallbackMode = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) {
                     allowedFallback
                 } else null
+                // Why a frame stayed single is not answerable from the reason alone: an
+                // anchor the filter excluded and an anchor with no companions left both
+                // land here and want opposite fixes.
                 return prepareSingle(
                     forcedAspect = fallbackMode,
                     eventReason = if (fallbackMode != requestedFallback && fallbackMode != null) {
@@ -753,6 +761,17 @@ internal suspend fun prepareSlide(
                     } else {
                         "insufficient_compatible_photos"
                     },
+                    eventDetails = mapOf(
+                        "anchorOrientation" to anchorInspected.meta.orientation.name,
+                        "collageOrientationFilter" to collageOrientationFilter.name,
+                        "candidateCount" to mutableCandidates.size.toString(),
+                        "portraitCandidateCount" to
+                            mutableCandidates.count { it.meta.orientation == PhotoOrientation.PORTRAIT }.toString(),
+                        "landscapeCandidateCount" to
+                            mutableCandidates.count { it.meta.orientation == PhotoOrientation.LANDSCAPE }.toString(),
+                        "squareCandidateCount" to
+                            mutableCandidates.count { it.meta.orientation == PhotoOrientation.SQUARE_OR_UNKNOWN }.toString(),
+                    ),
                 )
             }
 

@@ -220,9 +220,22 @@ object PortraitCollagePolicy {
         if (mode == PortraitCollageMode.OFF || maxPhotos < 2 || screenWidth <= 0 || screenHeight <= 0) {
             return null
         }
-        // The anchor itself always has to satisfy the filter. A photo the user excluded from
-        // collages is meant to be presented on its own, and that wastes no screen area.
-        if (!orientationAllowed(anchor.orientation, anchor.orientation, orientationFilter)) return null
+        // An anchor the filter excludes cannot lead a strict collage. Shown alone it wastes
+        // no screen area, which is why that was once the end of it — but it also means a
+        // landscape never joins a frame under a vertical filter, however many companions
+        // are waiting. When the user asked for other orientations to fill rather than leave
+        // a single, that applies to the anchor too: go straight to the relaxed pass, where
+        // filterMissCount still seats every preferred-orientation companion first.
+        if (!orientationAllowed(anchor.orientation, anchor.orientation, orientationFilter)) {
+            if (!fillWithOtherOrientations || orientationFilter == CollageOrientationFilter.ANY) {
+                return null
+            }
+            return evaluateFiltered(
+                mode, screenWidth, screenHeight, anchor, candidates, maxPhotos, nowEpochMs,
+                CollageOrientationFilter.ANY, layoutPreference,
+                preferredFilter = orientationFilter,
+            )?.decision(reasonOverride = "ORIENTATION_FILL_ANCHOR_RELAXED")
+        }
 
         val strict = evaluateFiltered(
             mode, screenWidth, screenHeight, anchor, candidates, maxPhotos, nowEpochMs,

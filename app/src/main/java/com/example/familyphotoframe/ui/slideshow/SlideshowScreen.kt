@@ -496,14 +496,11 @@ private fun PlayingContent(
             resolveModel = resolveModel,
             loadCollageCandidates = loadCollageCandidates,
             probeRemoteDimensions = probeRemoteDimensions,
-            collageMode = if (fastManual) {
-                PortraitCollageMode.OFF
-            } else if (maxPhotos >= 2) {
-                state.portraitCollage.mode
-            } else {
-                PortraitCollageMode.OFF
-            },
-            maxCollagePhotos = maxPhotos.coerceAtLeast(2),
+            // A memory-driven limit is passed through as the limit it is, not laundered
+            // into mode OFF: prepareSlide's own guard branch then records why the frame
+            // dropped to a single photo, which "the user turned collages off" would not.
+            collageMode = if (fastManual) PortraitCollageMode.OFF else state.portraitCollage.mode,
+            maxCollagePhotos = maxPhotos,
             configuredMaxCollagePhotos = configuredMaxPhotos,
             memoryMaxCollagePhotos = memoryMaxPhotos,
             portraitFallback = state.portraitCollage.fallback,

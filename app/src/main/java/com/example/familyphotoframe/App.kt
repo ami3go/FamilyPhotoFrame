@@ -4,7 +4,6 @@ import android.app.Application
 import android.app.ActivityManager
 import android.app.AlarmManager
 import android.app.PendingIntent
-import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -31,6 +30,8 @@ import com.example.familyphotoframe.domain.engine.PlaybackMemoryState
 import com.example.familyphotoframe.domain.engine.MemorySelfRecoveryAction
 import com.example.familyphotoframe.domain.engine.MemorySelfRecoveryPolicy
 import com.example.familyphotoframe.domain.engine.MemorySelfRecoveryState
+import com.example.familyphotoframe.domain.engine.TrimMemoryPolicy
+import com.example.familyphotoframe.domain.engine.TrimMemoryResponse
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -420,32 +421,34 @@ class App : Application() {
             services.diagnosticsBulkSink.lastError == null
 
     /**
-     * [ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW] is deprecated because Android 15+ no
-     * longer delivers these levels, but `minSdk = 21` and the target frame hardware still
-     * does, so the check is retained deliberately.
+     * The `RUNNING_*` levels are deprecated because Android 15+ no longer delivers them,
+     * but `minSdk = 21` and the target frame hardware still does, so [TrimMemoryPolicy]
+     * keeps reading them deliberately. It also keeps the background LRU levels away from
+     * the playback guard — see the policy for why that distinction matters here.
      */
-    @Suppress("DEPRECATION")
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
+        val response = TrimMemoryPolicy.classify(level)
         services.diagnostics.log(
             DiagnosticsLog.Category.MEMORY, "TRIM_MEMORY",
             "level" to level.toString(),
+            "response" to response.name,
         )
-        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+        if (TrimMemoryPolicy.shouldClearImageCache(level)) {
             clearImageMemoryCache("trim_$level")
         }
-        val severe = level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
-            level >= ComponentCallbacks2.TRIM_MEMORY_MODERATE
-        val runningLow = level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW
-        if (severe || runningLow) {
-            val previous = services.playbackMemoryGuard.snapshot()
-            val current = services.playbackMemoryGuard.recordSystemPressure(
-                nowElapsedMs = SystemClock.elapsedRealtime(),
-                severe = severe,
-            )
-            if (current.level != previous.level) {
-                onMemoryProtectionChanged(previous, current, "trim_$level", clearCaches = false)
-            }
+        val severe = when (response) {
+            TrimMemoryResponse.SEVERE_PRESSURE -> true
+            TrimMemoryResponse.RUNNING_PRESSURE -> false
+            TrimMemoryResponse.BACKGROUND_ONLY, TrimMemoryResponse.NONE -> return
+        }
+        val previous = services.playbackMemoryGuard.snapshot()
+        val current = services.playbackMemoryGuard.recordSystemPressure(
+            nowElapsedMs = SystemClock.elapsedRealtime(),
+            severe = severe,
+        )
+        if (current.level != previous.level) {
+            onMemoryProtectionChanged(previous, current, "trim_$level", clearCaches = false)
         }
     }
 
