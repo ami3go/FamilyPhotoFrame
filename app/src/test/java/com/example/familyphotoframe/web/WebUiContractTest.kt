@@ -108,6 +108,11 @@ class WebUiContractTest {
         // A real switch, styled from the checkbox so no markup depends on it.
         assertTrue(css.contains(".switch-line input{appearance:none"))
         assertTrue(css.contains(".switch-line input:checked{background:var(--accent)"))
+        // The switch must not be accompanied by a rendered On/Off word. savePatch updates
+        // state without re-rendering, so that text stayed at its initial value and read the
+        // opposite of the switch on every tab status polling does not rebuild.
+        assertFalse(js.contains("(value?'On':'Off')"))
+        assertTrue(js.contains("function toggleControl(id,value,setting){return '<label class=\"switch-line\">"))
         assertTrue(js.contains("photos-local-cache-card"))
         assertTrue(js.contains("showPerformanceOverlay"))
         assertTrue(js.contains("capture_performance_sample"))
