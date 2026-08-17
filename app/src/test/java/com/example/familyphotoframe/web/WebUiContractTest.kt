@@ -41,8 +41,6 @@ class WebUiContractTest {
         assertTrue(css.contains(":focus-visible"))
         assertTrue(css.contains("prefers-reduced-motion"))
         assertTrue(css.contains(".settings-row>*,.setting-control>*{min-width:0;max-width:100%}"))
-        assertTrue(css.contains(".display-layout{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))"))
-        assertTrue(css.contains(".display-layout{grid-template-columns:1fr}"))
         assertTrue(css.contains(".display-layout .brightness-period-row{grid-template-columns:1fr"))
         assertTrue(css.contains(".brightness-period-control{display:grid;grid-template-columns:"))
         assertTrue(js.contains("<div class=\"display-layout\"><div class=\"stack\">"))
@@ -83,14 +81,33 @@ class WebUiContractTest {
         assertTrue(js.contains("pageTitle('Web control'"))
         assertTrue(js.contains("device-startup-card"))
         assertTrue(js.contains("device-performance-card"))
-        // Cards pack down two columns instead of sharing grid rows, so a short card does
-        // not leave a hole beside a tall one and nothing is stranded on its own row.
-        assertTrue(js.contains("<div class=\"card-columns\">"))
-        assertEquals(4, Regex("<div class=\\\\?\"card-column\\\\?\">").findAll(js).count())
-        assertTrue(css.contains(".card-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))"))
-        assertTrue(css.contains(".card-column{display:grid;gap:16px;align-content:start"))
-        assertTrue(css.contains(".card-columns{grid-template-columns:1fr}"))
-        assertTrue(css.contains(".card-columns .settings-row{grid-template-columns:1fr;gap:8px}"))
+        // Settings read as one column of hairline-separated groups rather than boxed cards.
+        // Side-by-side groups only worked because each sat on its own surface; with the
+        // surface gone they read as a broken table, so every layout wrapper is a block.
+        assertTrue(css.contains(".card{background:transparent;border:0"))
+        assertTrue(css.contains("box-shadow:none"))
+        assertTrue(css.contains(".card-grid{display:block}"))
+        assertFalse(js.contains("card-column"))
+        assertFalse(css.contains("card-column"))
+        assertTrue(css.contains(".stack{display:block"))
+        assertTrue(css.contains(".display-layout{display:block}"))
+        assertTrue(css.contains(".photos-grid{display:block}"))
+        // A capped measure keeps a label and its control readable as a pair.
+        assertTrue(css.contains(".tab-page{max-width:940px"))
+        // One rule closes every row. :first-of-type/:last-of-type silently miss whenever a
+        // non-row element sits at either end of a group, which is how a button row once
+        // left its group open, so neither may come back for the separators.
+        assertTrue(css.contains(".settings-row{display:grid"))
+        assertTrue(css.contains("border-top:0;border-bottom:1px solid var(--border)"))
+        assertFalse(css.contains(".settings-row:first-of-type"))
+        assertFalse(css.contains(".settings-row:last-of-type"))
+        // Section rhythm comes from the section's own margin; a wrapper gap used to add to
+        // it, so spacing depended on whether two groups happened to share a parent.
+        assertTrue(css.contains(".card{background:transparent;border:0;border-radius:0;padding:0;box-shadow:none;min-width:0;overflow-wrap:anywhere;display:block;margin:0 0 34px}"))
+        assertFalse(css.contains(".stack{display:grid;gap:16px"))
+        // A real switch, styled from the checkbox so no markup depends on it.
+        assertTrue(css.contains(".switch-line input{appearance:none"))
+        assertTrue(css.contains(".switch-line input:checked{background:var(--accent)"))
         assertTrue(js.contains("photos-local-cache-card"))
         assertTrue(js.contains("showPerformanceOverlay"))
         assertTrue(js.contains("capture_performance_sample"))
