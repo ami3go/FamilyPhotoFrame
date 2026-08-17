@@ -18,6 +18,21 @@ class WebUiContractTest {
         assertFalse(html.contains("<script>"))
     }
 
+    /**
+     * The asset URLs are served `immutable` for a year, so a revision that does not move
+     * with the content pins every browser that already cached the bundle to the old one.
+     * Deriving it from the bytes is what makes that impossible; pin the derivation so it
+     * cannot quietly become a literal again.
+     */
+    @Test fun assetRevisionIsDerivedFromAssetContent() {
+        val expected = "v" + Integer.toHexString(31 * WebUiCss.VALUE.hashCode() + WebUiScript.VALUE.hashCode())
+        assertEquals(expected, WebUiAssets.REVISION)
+        assertEquals(WebUiAssets.REVISION, WebUiAssets.REVISION)
+        assertTrue(WebUiAssets.REVISION.startsWith("v"))
+        assertTrue(WebUiAssets.REVISION.length > 1)
+        assertTrue(WebUiAssets.REVISION.all { it == 'v' || it.isDigit() || it in 'a'..'f' })
+    }
+
     @Test fun assetsContainResponsiveAccessibleAndLowOverheadContracts() {
         val css = WebUiAssets.CSS
         val js = WebUiAssets.JS
@@ -68,10 +83,27 @@ class WebUiContractTest {
         assertTrue(js.contains("pageTitle('Web control'"))
         assertTrue(js.contains("device-startup-card"))
         assertTrue(js.contains("device-performance-card"))
+        // Cards pack down two columns instead of sharing grid rows, so a short card does
+        // not leave a hole beside a tall one and nothing is stranded on its own row.
+        assertTrue(js.contains("<div class=\"card-columns\">"))
+        assertEquals(4, Regex("<div class=\\\\?\"card-column\\\\?\">").findAll(js).count())
+        assertTrue(css.contains(".card-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))"))
+        assertTrue(css.contains(".card-column{display:grid;gap:16px;align-content:start"))
+        assertTrue(css.contains(".card-columns{grid-template-columns:1fr}"))
+        assertTrue(css.contains(".card-columns .settings-row{grid-template-columns:1fr;gap:8px}"))
         assertTrue(js.contains("photos-local-cache-card"))
         assertTrue(js.contains("showPerformanceOverlay"))
         assertTrue(js.contains("capture_performance_sample"))
         assertTrue(js.contains("memoryTier"))
+        // Every tab built from status must be re-rendered when status arrives. The web tab
+        // was omitted, so Identity kept its pre-status render and showed a column of
+        // dashes for the whole session.
+        assertTrue(
+            js.contains("renderOverview();renderDevice();renderWebControl();renderAbout();renderDiagnosticDeviceGrid()")
+        )
+        // Policy buttons wrap instead of overflowing the card they sit in.
+        assertTrue(css.contains(".remember-policy-actions{flex-wrap:wrap}"))
+        assertFalse(css.contains(".remember-policy-actions{flex-wrap:nowrap}"))
         // autoStartOnBoot has exactly one control, on Device, so the two pages cannot disagree.
         assertTrue(js.contains("toggleControl('autoStartOnBoot'"))
         assertEquals(1, Regex("toggleControl\\('autoStartOnBoot'").findAll(js).count())
