@@ -33,6 +33,26 @@ class WebUiContractTest {
         assertTrue(WebUiAssets.REVISION.all { it == 'v' || it.isDigit() || it in 'a'..'f' })
     }
 
+    /**
+     * Every class the stylesheet targets must still be produced by the client or the shell.
+     *
+     * A rule whose selector no longer matches anything is invisible: it costs bytes, and it
+     * reads to the next person as though the layout it describes is still in use. Two of the
+     * defects in this file's history were exactly that kind of leftover — a render function
+     * shadowed by a later reassignment, and column wrappers kept after the columns went — so
+     * the orphans are worth failing on rather than leaving to be noticed.
+     */
+    @Test fun everyStyledClassIsStillRendered() {
+        val css = WebUiAssets.CSS
+        val markup = WebUiAssets.JS + SetupPage.HTML
+        val orphans = Regex("\\.([a-zA-Z][\\w-]+)").findAll(css)
+            .map { it.groupValues[1] }
+            .distinct()
+            .filterNot { markup.contains(it) }
+            .toList()
+        assertTrue("stylesheet targets classes nothing renders: $orphans", orphans.isEmpty())
+    }
+
     @Test fun assetsContainResponsiveAccessibleAndLowOverheadContracts() {
         val css = WebUiAssets.CSS
         val js = WebUiAssets.JS
