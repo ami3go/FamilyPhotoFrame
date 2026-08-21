@@ -627,11 +627,29 @@ class SlideshowEngine(
                 val currentId = _ui.value.current?.id
                 val hasContent = currentId != null
                 val waitingForRender = currentId != null && renderedCurrentId != currentId
-                if (paused || asleep || interactionHold || !hasContent || waitingForRender) {
-                    // Do not start or continue the dwell countdown while the selected
-                    // photo is still resolving/decoding. The UI keeps the previous bitmap
-                    // visible and wakes this loop with Rendered (or Next on failure).
+                if (paused || asleep || interactionHold || !hasContent) {
+                    // These waits are genuinely open-ended: nothing but an explicit
+                    // command (resume, wake, content becoming available) should end them.
                     handle(commands.receive())
+                } else if (waitingForRender) {
+                    // Do not start the dwell countdown while the selected photo is still
+                    // resolving/decoding. The UI keeps the previous bitmap visible and
+                    // wakes this loop with Rendered (or Next on failure) — normally well
+                    // under RENDER_ACK_TIMEOUT_MS. Bounded, unlike the waits above,
+                    // because a dropped acknowledgment must not freeze playback forever.
+                    val cmd = withTimeoutOrNull(RENDER_ACK_TIMEOUT_MS) { commands.receive() }
+                    if (cmd == null) {
+                        _ui.value.current?.let {
+                            diagnostics.log(
+                                DiagnosticsLog.Category.ENGINE,
+                                "RENDER_ACK_TIMEOUT",
+                                "photoToken" to diagnosticToken(it.stableId.ifBlank { it.id.toString() }, "photo"),
+                            )
+                        }
+                        advance(forward = true)
+                    } else {
+                        handle(cmd)
+                    }
                 } else {
                     // A full interval starts only after successful visible presentation;
                     // any manual command still pre-empts it immediately.
@@ -1207,6 +1225,19 @@ class SlideshowEngine(
          */
         const val POOL_CACHE_MAX_AGE_MS = 5L * 60_000L
         const val HISTORY_SKIP_LIMIT = 100
+
+        /**
+         * Backstop for a dropped render acknowledgment. The UI reports rendering via
+         * [reportRendered] once a selection is visible; if that report is ever lost (a
+         * UI-side bug skips the call, e.g. a reselected candidate matching the already
+         * -committed slide bypassed its only call site), the loop would otherwise block
+         * on [commands] with no timeout and freeze playback silently and indefinitely.
+         * This bounds that wait so a lost acknowledgment self-heals into a retry instead.
+         * Comfortably above observed decode/collage-evaluation durations (single-digit
+         * seconds even for multi-candidate remote probing) so it never fires for a
+         * merely slow — as opposed to lost — render.
+         */
+        const val RENDER_ACK_TIMEOUT_MS = 30_000L
 
         /** Never-matching placeholder that keeps the bound list non-empty; see [pickFrom]. */
         val NO_FOLDER_SENTINEL = listOf("\u0000")
