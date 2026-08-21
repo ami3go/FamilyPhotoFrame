@@ -1,5 +1,16 @@
 package com.example.familyphotoframe.domain.engine
 
+/**
+ * Failure count marking a photo this device cannot decode at all, as opposed to one that
+ * merely failed a few times.
+ *
+ * Deliberately far above any `temporarilySuppressAfterDecodeFailures` threshold so the two
+ * cases stay distinguishable in the same column: transient suppression is expired after a
+ * while, permanent suppression never is. Shared rather than engine-private because the
+ * expiry path has to recognise the sentinel to leave it alone.
+ */
+const val PERMANENT_DECODE_FAILURE_COUNT = 1_000_000
+
 /** Stage at which a selected photo failed to become visible. */
 enum class DecodeFailureStage {
     CAPABILITY,

@@ -520,6 +520,29 @@ interface PhotoDao {
     @Query("UPDATE photos SET decodeFailureCount = 0, lastDecodeFailureAtEpochMs = NULL WHERE sourceId = :sourceId")
     suspend fun clearSuppression(sourceId: String)
 
+    /**
+     * Expires stale decode suppression, making it temporary as its setting name promises.
+     *
+     * `temporarilySuppressAfterDecodeFailures` only ever set a threshold; nothing read
+     * [PhotoItemEntity.lastDecodeFailureAtEpochMs] back, so a row suppressed during an
+     * outage stayed invisible for the life of the install — a rescan preserves the count
+     * for unchanged files, and the only reset was an in-process recovery promotion that a
+     * restart skips. Rows suppressed as permanently unsupported are excluded by
+     * [permanentCount] so an unplayable format is not retried forever.
+     *
+     * @return number of rows released.
+     */
+    @Query(
+        """
+        UPDATE photos SET decodeFailureCount = 0, lastDecodeFailureAtEpochMs = NULL
+        WHERE decodeFailureCount > 0
+          AND decodeFailureCount < :permanentCount
+          AND lastDecodeFailureAtEpochMs IS NOT NULL
+          AND lastDecodeFailureAtEpochMs < :olderThanEpochMs
+        """
+    )
+    suspend fun expireDecodeSuppression(olderThanEpochMs: Long, permanentCount: Int): Int
+
     @Query("SELECT * FROM photos WHERE id = :id")
     suspend fun byId(id: Long): PhotoItemEntity?
 

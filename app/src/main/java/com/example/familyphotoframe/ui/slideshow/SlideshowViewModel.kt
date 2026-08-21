@@ -96,6 +96,7 @@ import com.example.familyphotoframe.data.source.SynologyConnection
 import com.example.familyphotoframe.data.source.SynologyCredentials
 import com.example.familyphotoframe.domain.engine.DecodeFailure
 import com.example.familyphotoframe.domain.engine.DecodeFailureStage
+import com.example.familyphotoframe.domain.engine.PERMANENT_DECODE_FAILURE_COUNT
 import com.example.familyphotoframe.domain.engine.DisplayPhoto
 import com.example.familyphotoframe.domain.engine.HostLifecycleGate
 import com.example.familyphotoframe.domain.engine.PortraitCollagePolicy
@@ -1052,6 +1053,8 @@ class SlideshowViewModel(
         chosenSlot = null
         remotePrimaryCachedOnly = false
         remotePrimarySourceId = null
+
+        expireStaleDecodeSuppression()
 
         val localUploadCount = cancellableOrDefault(0) {
             indexSource(services.localUploadSource, ServiceLocator.SOURCE_LOCAL_UPLOADS, request)
@@ -4868,6 +4871,33 @@ class SlideshowViewModel(
         }
     }
 
+    /**
+     * Releases rows suppressed by failures old enough to be stale, on every source apply.
+     *
+     * A frame that loses its NAS overnight comes back to photos still marked as failures,
+     * and nothing else clears them automatically: a rescan preserves the count for
+     * unchanged files, and the recovery promotion that calls `clearSuppression` only runs
+     * if the demote and the promote happen in the same process. A restart in between —
+     * which is exactly what a frame does — skips it, so the share returns healthy and the
+     * frame still shows nothing.
+     */
+    private suspend fun expireStaleDecodeSuppression() {
+        val cutoff = System.currentTimeMillis() - DECODE_SUPPRESSION_TTL_MS
+        val released = cancellableOrDefault(0) {
+            services.photoDao.expireDecodeSuppression(
+                olderThanEpochMs = cutoff,
+                permanentCount = PERMANENT_DECODE_FAILURE_COUNT,
+            )
+        }
+        if (released > 0) {
+            diagnostics.logEvent(
+                "DECODE_SUPPRESSION_EXPIRED",
+                mapOf("count" to released.toString(), "durationMs" to DECODE_SUPPRESSION_TTL_MS.toString()),
+                DiagnosticContext(origin = DiagnosticOrigin.APP),
+            )
+        }
+    }
+
     private suspend fun markPlaybackSourceUnavailable(sourceId: String) {
         if (sourceId !in activeRemoteSources) return
         val newlyUnavailable = unavailablePoolIds.add(sourceId)
@@ -5125,6 +5155,17 @@ class SlideshowViewModel(
 
         /** Step clear of the slot just served so it cannot re-trigger. */
         const val RESCAN_SETTLE_MS = 5L * 60_000L
+
+        /**
+         * How long a decode suppression survives before it is released and the photo is
+         * given another chance.
+         *
+         * Twenty-four hours is chosen so an outage lasting a night heals by the next day
+         * without a genuinely broken file being retried every few minutes: a file that is
+         * really unreadable simply fails its way back to the threshold. Formats this device
+         * cannot decode at all are marked permanent instead and are never expired.
+         */
+        const val DECODE_SUPPRESSION_TTL_MS = 24L * 60L * 60L * 1_000L
         /**
          * How many displayable rows must exist before playback starts from a still-running
          * scan. Small enough that a first-ever scan starts showing photos within seconds,

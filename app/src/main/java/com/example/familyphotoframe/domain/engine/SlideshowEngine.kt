@@ -551,12 +551,7 @@ class SlideshowEngine(
                 activeReservation = null
                 _ui.value = _ui.value.copy(reservedCandidateIds = emptyList())
             }
-            val now = System.currentTimeMillis()
-            if (failure.permanent) {
-                dao.suppressDecode(failure.photoId, now, PERMANENT_DECODE_FAILURE_COUNT)
-            } else {
-                dao.recordDecodeFailure(failure.photoId, now)
-            }
+            persistSuppression(failure)
             diagnostics.log(
                 DiagnosticsLog.Category.DECODE,
                 if (failure.permanent) "DECODE_UNSUPPORTED" else "DECODE_FAILED",
@@ -569,6 +564,17 @@ class SlideshowEngine(
                 "reason" to failure.reason.orEmpty(),
             )
             commands.trySend(Command.Next)
+        }
+    }
+
+    /** Applies [DecodeSuppressionPolicy]; this function owns only the write. */
+    private suspend fun persistSuppression(failure: DecodeFailure) {
+        val now = System.currentTimeMillis()
+        when (DecodeSuppressionPolicy.outcomeFor(failure)) {
+            DecodeSuppressionOutcome.NONE -> Unit
+            DecodeSuppressionOutcome.COUNT -> dao.recordDecodeFailure(failure.photoId, now)
+            DecodeSuppressionOutcome.PERMANENT ->
+                dao.suppressDecode(failure.photoId, now, PERMANENT_DECODE_FAILURE_COUNT)
         }
     }
 
@@ -585,12 +591,7 @@ class SlideshowEngine(
                     _ui.value = _ui.value.copy(reservedCandidateIds = remaining)
                 }
             }
-            val now = System.currentTimeMillis()
-            if (failure.permanent) {
-                dao.suppressDecode(failure.photoId, now, PERMANENT_DECODE_FAILURE_COUNT)
-            } else {
-                dao.recordDecodeFailure(failure.photoId, now)
-            }
+            persistSuppression(failure)
             diagnostics.log(
                 DiagnosticsLog.Category.DECODE, "COLLAGE_CANDIDATE_FAILED",
                 "photoToken" to diagnosticToken(failure.photoId.toString(), "photo"),
@@ -1192,7 +1193,6 @@ class SlideshowEngine(
 
 
     private companion object {
-        const val PERMANENT_DECODE_FAILURE_COUNT = 1_000_000
         /**
          * How many stale queue entries to skip before giving up on a pick. Small on
          * purpose: each miss is a database round-trip, and a pool that misses this many
