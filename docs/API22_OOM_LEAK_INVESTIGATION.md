@@ -1,9 +1,9 @@
 # API 22 OOM leak investigation (2026-08)
 
-Status: **root cause not yet identified.** The leak is characterised and reproducible;
-the retaining structure is still unknown. This document records what is established, what
-has been ruled out, and how to resume — including two invalid measurements that should not
-be repeated.
+Status: **root cause found and fixed; not yet verified on hardware.** One leaked
+`CIFSContext` per displayed photo. Fixed by reusing and closing SMB sessions. This document
+records the evidence, what was ruled out along the way, and how to re-run the measurement —
+including three invalid runs that should not be repeated.
 
 Related: [`API22_MEMORY_SOAK_TEST.md`](API22_MEMORY_SOAK_TEST.md),
 [`FamilyPhotoFrame_v52.10_API22_Memory_Hardening.md`](FamilyPhotoFrame_v52.10_API22_Memory_Hardening.md).
@@ -55,9 +55,11 @@ Heap growth tracks **playback activity**, not wall-clock time:
 | `d1fa2f1c` | yes             | 10.08 MB/h → **OOM at 14.2 h** | —        | —        |
 | `323005da` | no (night mode) | flat across 8.7 h              | 2.6      | —        |
 
-**Roughly 86 KB is retained per photo displayed.** At ~141 slides/h that reproduces the
-observed ~11.8 MB/h, and ~14 h of playback fills the 174 MB heap. An idle frame never crashes,
-which is why the fault only appears on frames left running all day.
+**Retention is per photo displayed, not per hour.** These field sessions implied ~86 KB/slide;
+the controlled soak below measured ~151 KB/slide directly, the difference being that field
+sessions include idle stretches where the frame advanced no photos. Either figure fills the
+174 MB heap in roughly fourteen hours at normal cadence. An idle frame never crashes, which is
+why the fault only appears on frames left running all day.
 
 ## Ruled out
 
@@ -68,12 +70,59 @@ which is why the fault only appears on frames left running all day.
 | Diagnostics ring buffer | `DiagnosticsLog` bounded at 1000 entries. |
 | `DiagnosticOperationTracker` / `DiagnosticRateController` | Both bounded, trimmed, and expiry-checked. |
 | Web server registries | `BoundedHttpAsyncRunner.running` is removed in `closed()`. |
-| jcifs SMB context | A single lazily-created shared `CIFSContext`, not per-request. |
+| ~~jcifs SMB context~~ | **This exoneration was wrong — see Root cause.** `SmbPhotoSource` does hold one lazily-created shared `CIFSContext`, so reading that class alone looks fine. What matters is how many `SmbPhotoSource` instances exist, and that is decided in `SlideshowViewModel`. Checking the owner without checking its lifetime cost several hours. |
 | `java.util.regex.Matcher` churn | **Investigated and rejected.** Counts grew 610 → 25 254 over 32 min, but a reference-graph walk showed only 2 694 had *any* inbound reference — the rest were unreachable garbage, not retention. |
 
 The Matcher result is worth keeping in mind: `DiagnosticPrivacyPolicy.protect()` runs up to
 16 regexes per field per event, which is real allocation churn on this device, but it is
 **not** the leak.
+
+## Root cause
+
+**Every displayed photo created a `CIFSContext` that was never closed.**
+
+`onDisplayedPhotoChanged` fires on each photo change and passes `::resolveSourceById` into
+three backfills — EXIF current, EXIF next, and content hash. `resolveSourceById` built a fresh
+`PhotoSource` on every call, by design; its own comment said *"Sources are constructed on
+demand rather than held in a registry."* That is harmless for a cheap source, but
+`SmbPhotoSource` lazily creates a `CIFSContext` owning a jcifs transport pool and buffer
+cache, and `PhotoSource` had no close hook, so nothing ever released them.
+
+Measured over a 7-hour, 8-dump soak with per-dump playback verification:
+
+| evidence | value |
+|---|---|
+| slides displayed (dump 1 → 6) | 673 |
+| `jcifs.config.PropertyConfiguration` created | **+678** — one per photo |
+| `byte[]` growth | **+87.5 MB of 101.9 MB total (86%)** |
+| live `Smb2ReadRequest` / `Smb2ReadResponse` | 8 939 each, still holding read buffers |
+| unclosed `SmbFileHandleImpl` | 42 |
+| inbound edges to the 687 contexts | 29 715 — **all reachable, none garbage** |
+| retained per slide | ~151 KB |
+
+At ~151 KB/slide the 174 MB heap is exhausted after ~1 150 slides, about fourteen hours,
+matching the observed crashes. The control case is in the same run: when playback stopped at
+slide 680, the heap went flat (122.9 → 119.6 → 120.0 MB) for three more hours.
+
+### The fix
+
+- `PhotoSource.close()` added with a no-op default — sources that open a connection per call
+  hold nothing between calls.
+- `SmbPhotoSource` keeps its `lazy` delegate so `close()` can distinguish a source that never
+  connected from one that must be torn down, without creating the context to find out.
+- `resolveSourceById` prefers the active playback source, then a retained backfill source, and
+  only then builds. Because building suspends, it re-checks afterwards and closes the loser of
+  a concurrent build — otherwise the two backfills race and drop one context unclosed.
+- `releaseResolvedSources()` replaces bare map clears in `applySource` and the stop path, and
+  runs in `onCleared` so sessions do not outlive the ViewModel across a configuration change.
+- The one-shot SMB connection tests close their session in a `finally`.
+
+### Still open
+
+The fix accounts for 86% of measured growth. The remaining 14% has **not** been proven to be
+ordinary churn rather than a second, smaller leak, and the fix has **not** yet been verified on
+hardware. Re-run the soak below on a build containing it and confirm the heap stays flat across
+several thousand slides.
 
 ## Invalid measurements — do not repeat
 
@@ -81,10 +130,17 @@ The Matcher result is worth keeping in mind: `DiagnosticPrivacyPolicy.protect()`
    barely cycling photos.
 2. **A 6-hour overnight capture (23:23→05:27) showed a completely flat heap.** This was
    worthless: the frame's own brightness schedule blacks the screen 23:00–07:00
-   (`brightnessAutomation.periods`, `night` period, `action: BLACK_SCREEN`). The frame was
-   asleep by design for the entire window.
+   (`brightnessAutomation.periods`, `night` period, `action: BLACK_SCREEN`) when
+   `brightnessAutomation.mode` is not `MANUAL`. The frame was asleep by design for the
+   entire window.
+3. **A 2.6-hour capture where the slide counter never moved off 130.** Playback was verified
+   once at the start and then trusted for the rest of the run; the engine had in fact dropped
+   into `DEGRADED_NO_CONTENT`. Eight dumps, no signal.
 
-**Always confirm slides are advancing before trusting any heap measurement.**
+**Always confirm slides are advancing before trusting any heap measurement — and confirm it at
+every sample, not once at the start.** The soak script records the cumulative slide count
+alongside every dump for exactly this reason: a run whose slide count is flat is void, and that
+must be visible in the log rather than inferred afterwards.
 
 ## How to resume
 
