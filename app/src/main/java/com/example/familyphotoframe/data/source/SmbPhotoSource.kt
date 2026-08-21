@@ -54,7 +54,10 @@ class SmbPhotoSource(
 
     private val shareBase = "smb://${conn.host}/${conn.share}/"
 
-    private val context: CIFSContext by lazy {
+    // Held as the delegate, not just the value, so [close] can tell an unused source
+    // (nothing to release) from one that actually opened a connection. Touching the
+    // value to find out would create the very context we are trying to avoid.
+    private val contextDelegate = lazy {
         val props = Properties().apply {
             put("jcifs.smb.client.minVersion", "SMB202")   // SMB2+ only (no SMB1)
             put("jcifs.smb.client.maxVersion", "SMB311")
@@ -67,6 +70,20 @@ class SmbPhotoSource(
         base.withCredentials(
             NtlmPasswordAuthenticator(credentials.domain, credentials.user, credentials.password)
         )
+    }
+
+    private val context: CIFSContext by contextDelegate
+
+    /**
+     * Closes the jcifs context, releasing its transport pool and buffer cache.
+     *
+     * On API 22 those buffers live on the same ~174 MB Java heap as decoded bitmaps, so a
+     * context that is dropped without being closed costs roughly 130 KB that no GC can
+     * reclaim while the transport is still registered.
+     */
+    override fun close() {
+        if (!contextDelegate.isInitialized()) return
+        runCatching { contextDelegate.value.close() }
     }
 
     private fun rootUrl(): String {

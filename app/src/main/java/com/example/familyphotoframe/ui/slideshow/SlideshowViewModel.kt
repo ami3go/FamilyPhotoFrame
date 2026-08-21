@@ -264,6 +264,15 @@ class SlideshowViewModel(
     private val activeRemoteSources = mutableMapOf<String, PhotoSource>()
 
     /**
+     * Sources built for background backfill when the photo's source is not the active
+     * playback source. Kept separate from [activeRemoteSources] because membership there
+     * means "this source is serving playback" — [markPlaybackSourceUnavailable] keys off
+     * it — while these exist only so EXIF/hash reads do not build a fresh session each
+     * time. Both maps are released together by [releaseResolvedSources].
+     */
+    private val backfillSources = mutableMapOf<String, PhotoSource>()
+
+    /**
      * True while a remote primary is unreachable and the frame is playing its already
      * cached photos instead of the bundled samples (spec §9.3 `on_unreachable`).
      * [remotePrimarySourceId] scopes it so a stale flag can never affect a different
@@ -382,6 +391,10 @@ class SlideshowViewModel(
         // life of the process, with a fresh one added on each recreation.
         frameStats.stop()
         frameStatsJob?.cancel()
+        // Remote sessions outlive the ViewModel unless released here: on a configuration
+        // change the replacement instance builds its own, and the old transports would
+        // stay registered with nothing left to close them.
+        releaseResolvedSources()
         services.webServer.controls = null
         super.onCleared()
     }
@@ -408,9 +421,14 @@ class SlideshowViewModel(
                         SmbConnection(smb.host, smb.share, smb.path),
                         SmbCredentials(smb.domain, smb.user, password),
                     )
-                    appContext.getString(smbHealthMessageRes(sourceTestWithDiagnostics(
-                        src, "SMB", 8_000, DiagnosticOrigin.WEB_UI, configRevision,
-                    )))
+                    // One-shot test: release the session instead of pooling it.
+                    try {
+                        appContext.getString(smbHealthMessageRes(sourceTestWithDiagnostics(
+                            src, "SMB", 8_000, DiagnosticOrigin.WEB_UI, configRevision,
+                        )))
+                    } finally {
+                        runCatching { src.close() }
+                    }
                 }
                 ActiveSourceKind.SYNOLOGY -> {
                     val syn = s.source.synology ?: return appContext.getString(R.string.msg_syn_error)
@@ -581,7 +599,7 @@ class SlideshowViewModel(
             intervalSeconds = currentIntervalSeconds(),
             maxFailures = currentMaxFailures(),
         )
-        activeRemoteSources.clear()
+        releaseResolvedSources()
         primaryPoolIds.clear()
         unavailablePoolIds.clear()
         exhaustedUnavailablePoolIds.clear()
@@ -1027,7 +1045,7 @@ class SlideshowViewModel(
         obsoleteRecoveryJobs.forEach { it.join() }
         recoveryRuntimes.values.forEach { it.wake.close() }
         recoveryRuntimes.clear()
-        activeRemoteSources.clear()
+        releaseResolvedSources()
         primaryPoolIds.clear()
         unavailablePoolIds.clear()
         exhaustedUnavailablePoolIds.clear()
@@ -2841,13 +2859,19 @@ class SlideshowViewModel(
                 SmbConnection(draft.host, draft.share, draft.path),
                 SmbCredentials(draft.domain, draft.user, effectivePassword),
             )
-            val res = smbHealthMessageRes(sourceTestWithDiagnostics(
-                src,
-                "SMB",
-                8_000,
-                DiagnosticOrigin.ANDROID_UI,
-                diagnosticToken(draft.toString(), "config"),
-            ))
+            // A connection test is one-shot: close the session rather than leaving it
+            // pooled, or every press of Test leaks a context.
+            val res = try {
+                smbHealthMessageRes(sourceTestWithDiagnostics(
+                    src,
+                    "SMB",
+                    8_000,
+                    DiagnosticOrigin.ANDROID_UI,
+                    diagnosticToken(draft.toString(), "config"),
+                ))
+            } finally {
+                runCatching { src.close() }
+            }
             _state.update { it.copy(smbTestResult = appContext.getString(res)) }
         }
     }
@@ -3881,11 +3905,41 @@ class SlideshowViewModel(
     }
 
     /**
-     * Builds the [PhotoSource] that owns a photo, from current settings. Sources are
-     * constructed on demand rather than held in a registry, so this mirrors the
-     * resolution done for scanning.
+     * Returns the [PhotoSource] that owns a photo, reusing an existing session.
+     *
+     * This runs per displayed photo (EXIF and content-hash backfill), so it must not build
+     * a source each time: [SmbPhotoSource] owns a `CIFSContext` with its own transport pool
+     * and buffer cache, and one per photo exhausted the API 22 heap in about fourteen hours.
+     * Prefer the active playback source, then a previously built backfill source, and only
+     * construct — and retain — as a last resort.
      */
     private suspend fun resolveSourceById(sourceId: SourceId): PhotoSource? = try {
+        resolvedSource(sourceId)
+            ?: buildSourceById(sourceId)?.let { built ->
+                // Building suspends (settings read, secret reveal), so the EXIF and hash
+                // backfills can both miss above and both build one. Re-check afterwards
+                // and keep a single session: the loser is closed here, because dropping
+                // it unclosed is exactly the leak this method exists to prevent.
+                val winner = resolvedSource(sourceId)
+                if (winner != null) {
+                    runCatching { built.close() }
+                    winner
+                } else {
+                    backfillSources[sourceId.value] = built
+                    built
+                }
+            }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun resolvedSource(sourceId: SourceId): PhotoSource? =
+        activeRemoteSources[sourceId.value] ?: backfillSources[sourceId.value]
+
+    /** Constructs a source from current settings. Callers cache; see [resolveSourceById]. */
+    private suspend fun buildSourceById(sourceId: SourceId): PhotoSource? = try {
         when (sourceId.value) {
             ServiceLocator.SOURCE_FALLBACK -> services.fallbackSource
             ServiceLocator.SOURCE_LOCAL_SAF ->
@@ -3923,6 +3977,24 @@ class SlideshowViewModel(
         throw e
     } catch (e: Exception) {
         null
+    }
+
+    /**
+     * Drops every resolved source and releases the transport each one owns.
+     *
+     * Called wherever the source set is replaced or playback stops. Clearing the maps alone
+     * is not enough: an unclosed `CIFSContext` keeps its buffers reachable, so the heap
+     * never recovers. Closing is best-effort — a source that fails to close must not stop
+     * the rest from being released, or abort the reconfigure that triggered this.
+     */
+    private fun releaseResolvedSources() {
+        // The two maps are disjoint by construction, and closing twice is harmless, so
+        // this deliberately does not deduplicate: skipping a close leaks, repeating one
+        // does not.
+        val resolved = activeRemoteSources.values.toList() + backfillSources.values.toList()
+        activeRemoteSources.clear()
+        backfillSources.clear()
+        resolved.forEach { source -> runCatching { source.close() } }
     }
 
     /**

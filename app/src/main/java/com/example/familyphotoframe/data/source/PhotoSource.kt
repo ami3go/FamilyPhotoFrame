@@ -140,4 +140,14 @@ interface PhotoSource {
 
     /** Re-open bytes for a previously indexed item, using its [PhotoItem.openToken]. */
     suspend fun openStream(item: PhotoItem, options: OpenOptions = OpenOptions()): InputStream
+
+    /**
+     * Releases any long-lived transport this source owns.
+     *
+     * Sources that open a connection per call hold nothing between calls, so the default
+     * is a no-op. Implementations that keep a session — notably [SmbPhotoSource], whose
+     * `CIFSContext` owns a buffer cache and a transport pool — must release it here, and
+     * whoever built the source must call this once it is no longer the active source.
+     */
+    fun close() {}
 }
