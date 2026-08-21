@@ -751,6 +751,18 @@ private fun PlayingContent(
         }
         if (committedHandle == targetHandle) {
             transitionState = TransitionState.Committed(target.anchor.id)
+            // The reselected candidate is already the visible slide (a candidate pool
+            // with one eligible photo reselects the same handle on every advance) — no
+            // transition runs, so this is the only place that can report it rendered.
+            // Skipping this call left the engine's waitingForRender wait blocked with no
+            // timeout, freezing playback until an external command (e.g. a keypress)
+            // broke the deadlock by chance.
+            onRendered(
+                target.anchor.id,
+                target.photos.map { it.id },
+                target.dataSources,
+                (target as? PreparedSlide.Collage)?.layout?.name,
+            )
             return@LaunchedEffect
         }
 
