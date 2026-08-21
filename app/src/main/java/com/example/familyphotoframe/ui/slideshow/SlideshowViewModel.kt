@@ -3744,8 +3744,17 @@ class SlideshowViewModel(
                 val now = System.currentTimeMillis()
                 val overrideActive = config.manualOverrideUntilEpochMs == Long.MAX_VALUE ||
                     config.manualOverrideUntilEpochMs > now
-                if (config.scheduleEnabled && !overrideActive) {
-                    val match = PlaylistSchedule.activeRule(config.scheduleRules, now)
+                if (!overrideActive) {
+                    // An expired manual override (e.g. from On This Day, or a timed
+                    // playlist activation) must revert regardless of whether day/time
+                    // schedule switching is separately enabled — otherwise a frame with
+                    // scheduling off (the default) stays parked on the override's
+                    // playlist forever once its window passes.
+                    val match = if (config.scheduleEnabled) {
+                        PlaylistSchedule.activeRule(config.scheduleRules, now)
+                    } else {
+                        null
+                    }
                     val target = match?.rule?.playlistId ?: config.defaultPlaylistId
                     if (config.playlists.any { it.id == target && it.enabled } && target != config.activePlaylistId) {
                         services.settings.update { latest ->
