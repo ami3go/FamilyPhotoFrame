@@ -123,6 +123,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
@@ -220,7 +221,6 @@ class SlideshowViewModel(
     private val sourceRefreshRequestLock = Mutex()
     private val sourceApplyRequests = MutableStateFlow<SourceApplyRequest?>(null)
     private val sourceRefreshCompleted = MutableStateFlow(-1L)
-    private var lastRequestedSourceSignature: String? = null
     private var lastObservedSourceSignature: String? = null
     private data class ExplicitSourceChange(
         val trigger: SourceRefreshTrigger,
@@ -256,22 +256,10 @@ class SlideshowViewModel(
     private val contentHashJobs = mutableMapOf<String, Job>()
 
     /**
-     * Remote sources currently active, keyed by source id, for `MediaCache` routing.
-     *
-     * A map rather than a single reference because the primary pool may now merge
-     * several sources (e.g. a local folder plus a NAS): [resolveModel] has to hand
-     * `MediaCache` the source that actually owns the photo being displayed.
+     * Remote playback and background-backfill sources. One registry owns promotion,
+     * loser cleanup, and teardown so credential suspensions cannot strand duplicates.
      */
-    private val activeRemoteSources = mutableMapOf<String, PhotoSource>()
-
-    /**
-     * Sources built for background backfill when the photo's source is not the active
-     * playback source. Kept separate from [activeRemoteSources] because membership there
-     * means "this source is serving playback" — [markPlaybackSourceUnavailable] keys off
-     * it — while these exist only so EXIF/hash reads do not build a fresh session each
-     * time. Both maps are released together by [releaseResolvedSources].
-     */
-    private val backfillSources = mutableMapOf<String, PhotoSource>()
+    private val remoteSources = RemoteSourceRegistry()
 
     /**
      * True while a remote primary is unreachable and the frame is playing its already
@@ -383,6 +371,9 @@ class SlideshowViewModel(
     }
 
     override fun onCleared() {
+        // No replacement follows ViewModel destruction, so leave backfill construction
+        // blocked permanently before asking its jobs to stop.
+        remoteSources.beginReplacement()
         recoveryRuntimes.values.forEach { it.wake.close() }
         recoveryRuntimes.clear()
         contentHashJobs.values.forEach { it.cancel() }
@@ -566,6 +557,9 @@ class SlideshowViewModel(
         sourceApplyJob?.cancelAndJoin()
         sourceApplyJob = null
         sourceApplyRequests.value = null
+        // The process will restart after reset; no new metadata source may be retained
+        // between the final registry release and that restart.
+        remoteSources.beginReplacement()
 
         val obsoleteRecoveryJobs = recoveryJobs.toList()
         recoveryJobs.clear()
@@ -854,17 +848,19 @@ class SlideshowViewModel(
             sourceRequestFields(request, stage = "APPLY_STARTED"),
             request.operation.context(),
         )
-        val sourceChanged = lastRequestedSourceSignature?.let { it != request.signature } == true
-        lastRequestedSourceSignature = request.signature
-        if (sourceChanged) cancelObsoleteIndexWork(request.operation.operationId)
-
-        // applySource and its helpers use the current settings for scan filters, playlist
-        // source restrictions, failure limits, and fallback policy. Pin them to the same
-        // repository snapshot that produced this request.
-        lastSettings = request.settings
-        val activeKinds = request.settings.source.let { listOf(it.kind) + it.alsoPlay }
-        if (ActiveSourceKind.SYNOLOGY !in activeKinds) pendingSynologyOtp = null
+        val replacementGeneration = remoteSources.beginReplacement()
         try {
+            // applySource replaces every resolved source instance even for a manual
+            // rebuild whose settings signature is unchanged. Its scans and background
+            // hash pass own the old instance, so they must unwind before it is closed.
+            cancelObsoleteIndexWork(request.operation.operationId)
+
+            // applySource and its helpers use the current settings for scan filters,
+            // playlist restrictions, failure limits, and fallback policy. Pin them to
+            // the same repository snapshot that produced this request.
+            lastSettings = request.settings
+            val activeKinds = request.settings.source.let { listOf(it.kind) + it.alsoPlay }
+            if (ActiveSourceKind.SYNOLOGY !in activeKinds) pendingSynologyOtp = null
             applySource(request.settings.source, request)
             diagnostics.logEvent(
                 "SOURCE_POOL_CONFIGURED",
@@ -901,6 +897,7 @@ class SlideshowViewModel(
                 )
             }
         } finally {
+            remoteSources.finishReplacement(replacementGeneration)
             if (activeSourceRequest === request) activeSourceRequest = null
             synchronized(sourceRequestEnqueueLock) {
                 if (sourceApplyRequests.value === request) sourceApplyRequests.value = null
@@ -968,8 +965,10 @@ class SlideshowViewModel(
     }
 
     /**
-     * A source/configuration switch must not sit behind an obsolete long NAS scan.
-     * Same-signature rebuild requests retain the existing single-flight job and coalesce.
+     * A source replacement must not retain work that owns the previous source instance.
+     * This includes same-signature rebuilds: [applySource] always creates a fresh remote
+     * source, so coalescing with the old instance would hand the replacement request a
+     * scan result whose follow-up hash pass can no longer open that source.
      */
     private suspend fun cancelObsoleteIndexWork(replacementOperationId: String) {
         val obsoleteFlights = scanFlightsLock.withLock {
@@ -983,7 +982,7 @@ class SlideshowViewModel(
                     "trigger" to flight.trigger.name,
                     "configRevision" to flight.configRevision,
                     "supersededByOperationId" to replacementOperationId,
-                    "cancellationReason" to "SOURCE_CONFIGURATION_CHANGED",
+                    "cancellationReason" to "SOURCE_INSTANCE_REPLACED",
                     "completionState" to "SUPERSEDED",
                 ),
                 DiagnosticContext(
@@ -992,7 +991,7 @@ class SlideshowViewModel(
                     parentOperationId = flight.parentOperationId,
                 ),
             )
-            flight.deferred.cancel(CancellationException("SOURCE_CONFIGURATION_CHANGED"))
+            flight.deferred.cancel(CancellationException("SOURCE_INSTANCE_REPLACED"))
         }
         obsoleteFlights.forEach { flight ->
             try {
@@ -1255,18 +1254,12 @@ class SlideshowViewModel(
                 if (isChosen) fallBackToFirstRun()
                 null
             } else {
-                // A backfill build for this same source may already be open (see
-                // resolveSourceById). Promoting to active always builds fresh — current
-                // settings win over whatever the backfill source was built with — so the
-                // stale entry must be closed here, or it leaks as a second, orphaned,
-                // never-closed session that nothing but the next full teardown reaches.
-                backfillSources.remove(ServiceLocator.SOURCE_SMB)?.let { runCatching { it.close() } }
                 val password = services.secretStore.reveal(smb.credentialRef) ?: ""
                 val src = services.smbSource(
                     SmbConnection(smb.host, smb.share, smb.path),
                     SmbCredentials(smb.domain, smb.user, password),
                 )
-                activeRemoteSources[ServiceLocator.SOURCE_SMB] = src
+                remoteSources.promote(ServiceLocator.SOURCE_SMB, src)
                 val healthy = healthCheckWithDiagnostics(src, kind, 8_000, request) is SourceHealth.Ok
                 if (healthy) {
                     startEarlyPlaybackWatcher(ServiceLocator.SOURCE_SMB, "SMB")
@@ -1291,8 +1284,6 @@ class SlideshowViewModel(
                 if (isChosen) fallBackToFirstRun()
                 null
             } else {
-                // See the matching comment in the SMB branch above.
-                backfillSources.remove(ServiceLocator.SOURCE_SYNOLOGY)?.let { runCatching { it.close() } }
                 val password = services.secretStore.reveal(syn.credentialRef) ?: ""
                 val src = services.synologySource(
                     SynologyConnection(
@@ -1305,7 +1296,7 @@ class SlideshowViewModel(
                     // The one-time code is only ever held in memory, for this login.
                     SynologyCredentials(syn.user, password, pendingSynologyOtp),
                 )
-                activeRemoteSources[ServiceLocator.SOURCE_SYNOLOGY] = src
+                remoteSources.promote(ServiceLocator.SOURCE_SYNOLOGY, src)
                 pendingSynologyOtp = null
                 val health = healthCheckWithDiagnostics(src, kind, 10_000, request)
                 val healthy = health is SourceHealth.Ok
@@ -1340,8 +1331,6 @@ class SlideshowViewModel(
                 if (isChosen) fallBackToFirstRun()
                 null
             } else {
-                // See the matching comment in the SMB branch above.
-                backfillSources.remove(ServiceLocator.SOURCE_WEBDAV)?.let { runCatching { it.close() } }
                 val password = services.secretStore.reveal(dav.credentialRef) ?: ""
                 val src = services.webDavSource(
                     WebDavConnection(
@@ -1352,7 +1341,7 @@ class SlideshowViewModel(
                     ),
                     WebDavCredentials(dav.user, password),
                 )
-                activeRemoteSources[ServiceLocator.SOURCE_WEBDAV] = src
+                remoteSources.promote(ServiceLocator.SOURCE_WEBDAV, src)
                 val health = healthCheckWithDiagnostics(src, kind, 10_000, request)
                 val healthy = health is SourceHealth.Ok
                 if (healthy) {
@@ -1811,8 +1800,8 @@ class SlideshowViewModel(
                     base + mapOf(
                         "completionState" to "CANCELLED",
                         "cancellationReason" to if (
-                            cancelled.message == "SOURCE_CONFIGURATION_CHANGED"
-                        ) "SOURCE_CONFIGURATION_CHANGED" else "CALLER_CANCELLED",
+                            cancelled.message == "SOURCE_INSTANCE_REPLACED"
+                        ) "SOURCE_INSTANCE_REPLACED" else "CALLER_CANCELLED",
                         "reconciled" to "false",
                         "scanOwnerOperationId" to flight.operationId,
                     ),
@@ -1918,8 +1907,14 @@ class SlideshowViewModel(
      * previous source job, while recovery starts a fresh bounded pass after connectivity
      * returns. The backfiller stops on a fully failed batch to avoid retry storms.
      */
-    private fun scheduleContentHashBackfill(source: PhotoSource) {
-        contentHashJobs.remove(source.id.value)?.cancel()
+    private suspend fun scheduleContentHashBackfill(source: PhotoSource) {
+        // Removing a job from the map without joining it makes it invisible to the next
+        // source teardown while it may still own an SMB stream. Drain the prior pass
+        // before publishing its replacement as the sole tracked job for this source.
+        val previous = contentHashJobs.remove(source.id.value)
+        previous?.cancel()
+        if (previous != null) withContext(NonCancellable) { previous.join() }
+        currentCoroutineContext().ensureActive()
         contentHashJobs[source.id.value] = viewModelScope.launch {
             var totalIndexed = 0
             var totalFailed = 0
@@ -2615,7 +2610,7 @@ class SlideshowViewModel(
         val cacheResult = if (remotePrimaryCachedOnly && display.sourceId == remotePrimarySourceId) {
             services.mediaCache.resolveIfCached(item)
         } else {
-            val src = activeRemoteSources[display.sourceId]
+            val src = remoteSources.active(display.sourceId)
                 ?: return PhotoModelResolution.Failed(
                     DecodeFailure(
                         photoId = display.id,
@@ -2705,7 +2700,7 @@ class SlideshowViewModel(
             is MediaCache.ResolveResult.Failed -> Unit
         }
 
-        val source = activeRemoteSources[display.sourceId] ?: return null
+        val source = remoteSources.active(display.sourceId) ?: return null
         val dimensions = withTimeoutOrNull(REMOTE_COLLAGE_PROBE_TIMEOUT_MS) {
             withContext(Dispatchers.IO) {
                 try {
@@ -3891,6 +3886,9 @@ class SlideshowViewModel(
     private var exifJob: Job? = null
     @Volatile private var lastHashPhotoId: Long? = null
     private var contentHashJob: Job? = null
+    private val sourceConsumerJobsLock = Any()
+    /** Includes cancelled jobs until they have actually finished unwinding. */
+    private val sourceConsumerJobs = mutableSetOf<Job>()
 
     /**
      * When the displayed photo changes, clear any stale backfilled EXIF and, if this
@@ -3911,14 +3909,14 @@ class SlideshowViewModel(
         contentHashJob?.cancel()
         if (lastHashPhotoId != current.id) {
             lastHashPhotoId = current.id
-            contentHashJob = viewModelScope.launch {
+            contentHashJob = launchSourceConsumer {
                 val hash = services.contentHashBackfiller.backfill(current.id, ::resolveSourceById)
                 if (hash != null) engine.reconcileShuffle()
             }
         }
 
         exifJob?.cancel()
-        exifJob = viewModelScope.launch {
+        exifJob = launchSourceConsumer {
             val exif = services.exifBackfiller.backfill(current.id, ::resolveSourceById)
             // Only publish if this photo is still the one on screen — the slideshow may
             // have advanced while the read was in flight.
@@ -3928,6 +3926,16 @@ class SlideshowViewModel(
             // Warm the next photo so its overlay is ready when it appears.
             model.next?.let { services.exifBackfiller.backfill(it.id, ::resolveSourceById) }
         }
+    }
+
+    /** Tracks superseded per-slide jobs until completion, not just until replacement. */
+    private fun launchSourceConsumer(block: suspend () -> Unit): Job {
+        val job = viewModelScope.launch { block() }
+        synchronized(sourceConsumerJobsLock) { sourceConsumerJobs += job }
+        job.invokeOnCompletion {
+            synchronized(sourceConsumerJobsLock) { sourceConsumerJobs -= job }
+        }
+        return job
     }
 
     /**
@@ -3940,29 +3948,18 @@ class SlideshowViewModel(
      * construct — and retain — as a last resort.
      */
     private suspend fun resolveSourceById(sourceId: SourceId): PhotoSource? = try {
-        resolvedSource(sourceId)
+        remoteSources.resolved(sourceId.value)
             ?: buildSourceById(sourceId)?.let { built ->
-                // Building suspends (settings read, secret reveal), so the EXIF and hash
-                // backfills can both miss above and both build one. Re-check afterwards
-                // and keep a single session: the loser is closed here, because dropping
-                // it unclosed is exactly the leak this method exists to prevent.
-                val winner = resolvedSource(sourceId)
-                if (winner != null) {
-                    runCatching { built.close() }
-                    winner
-                } else {
-                    backfillSources[sourceId.value] = built
-                    built
-                }
+                // Building suspends (settings read, secret reveal), so another backfill
+                // or an activation may win before this resumes. The registry rechecks
+                // atomically and closes this instance if it lost.
+                remoteSources.retainBackfill(sourceId.value, built)
             }
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
         null
     }
-
-    private fun resolvedSource(sourceId: SourceId): PhotoSource? =
-        activeRemoteSources[sourceId.value] ?: backfillSources[sourceId.value]
 
     /** Constructs a source from current settings. Callers cache; see [resolveSourceById]. */
     private suspend fun buildSourceById(sourceId: SourceId): PhotoSource? = try {
@@ -4006,18 +4003,18 @@ class SlideshowViewModel(
     }
 
     /**
-     * Cancels the EXIF and content-hash backfill jobs — the only jobs that call
-     * [resolveSourceById] and then read from the returned source — and waits for them
-     * to finish unwinding. Must run before [releaseResolvedSources], or a job's
-     * in-flight read gets its source closed out from under it: the same mid-read-close
-     * pattern that left jcifs `response_map` entries unreleased in
-     * `RemoteImageBoundsProbe`, just reached through a different trigger.
+     * Cancels the per-slide EXIF and content-hash jobs that can build a backfill source,
+     * then waits for their registry updates to finish before the registry is cleared.
+     * Scan flights and the per-source background hash jobs are drained separately by
+     * [cancelObsoleteIndexWork]. Display/cache reads are not ViewModel-owned jobs;
+     * [SmbPhotoSource] protects those with operation-scoped CIFS context leases.
      */
     private suspend fun cancelAndJoinSourceConsumingJobs() {
-        exifJob?.cancel()
-        contentHashJob?.cancel()
-        exifJob?.join()
-        contentHashJob?.join()
+        val jobs = synchronized(sourceConsumerJobsLock) {
+            sourceConsumerJobs.toList().also { sourceConsumerJobs.clear() }
+        }
+        jobs.forEach { it.cancel() }
+        jobs.forEach { it.join() }
         exifJob = null
         contentHashJob = null
     }
@@ -4027,26 +4024,24 @@ class SlideshowViewModel(
      * for it — best-effort, same as the rest of that teardown path.
      */
     private fun cancelSourceConsumingJobs() {
-        exifJob?.cancel()
-        contentHashJob?.cancel()
+        val jobs = synchronized(sourceConsumerJobsLock) {
+            sourceConsumerJobs.toList().also { sourceConsumerJobs.clear() }
+        }
+        jobs.forEach { it.cancel() }
+        exifJob = null
+        contentHashJob = null
     }
 
     /**
      * Drops every resolved source and releases the transport each one owns.
      *
-     * Called wherever the source set is replaced or playback stops. Clearing the maps alone
-     * is not enough: an unclosed `CIFSContext` keeps its buffers reachable, so the heap
-     * never recovers. Closing is best-effort — a source that fails to close must not stop
-     * the rest from being released, or abort the reconfigure that triggered this.
+     * Called wherever the source set is replaced or playback stops. Dropping registry
+     * references alone is not enough: an unclosed `CIFSContext` keeps its buffers
+     * reachable, so the heap never recovers. Registry release is best-effort and closes
+     * every distinct source it owned.
      */
     private fun releaseResolvedSources() {
-        // The two maps are disjoint by construction, and closing twice is harmless, so
-        // this deliberately does not deduplicate: skipping a close leaks, repeating one
-        // does not.
-        val resolved = activeRemoteSources.values.toList() + backfillSources.values.toList()
-        activeRemoteSources.clear()
-        backfillSources.clear()
-        resolved.forEach { source -> runCatching { source.close() } }
+        remoteSources.releaseAll()
     }
 
     /**
@@ -4948,7 +4943,7 @@ class SlideshowViewModel(
     }
 
     private suspend fun markPlaybackSourceUnavailable(sourceId: String) {
-        if (sourceId !in activeRemoteSources) return
+        if (!remoteSources.containsActive(sourceId)) return
         val newlyUnavailable = unavailablePoolIds.add(sourceId)
         recoveryRuntimes[sourceId]?.let { runtime ->
             runtime.coordinator.markPlaybackUnavailable()

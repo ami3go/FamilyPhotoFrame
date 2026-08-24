@@ -16,8 +16,10 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.FilterInputStream
 import java.io.InputStream
 import java.util.Properties
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.coroutineContext
 
 /** SMB credentials resolved from the Keystore SecretStore just before use (never stored here as plaintext beyond this object's lifetime). */
@@ -54,61 +56,41 @@ class SmbPhotoSource(
 
     private val shareBase = "smb://${conn.host}/${conn.share}/"
 
-    // Guards contextDelegate and [closed] together so a context can never be created
-    // after close() has already decided there was nothing to release (the delegate's
-    // own SYNCHRONIZED mode only protects its single initialization, not this check).
-    // NONE is safe here because every access — including first initialization — now
-    // goes through requireOpenContext() under this same lock.
-    private val closeLock = Any()
-    @Volatile private var closed = false
-
-    // Held as the delegate, not just the value, so [close] can tell an unused source
-    // (nothing to release) from one that actually opened a connection. Touching the
-    // value to find out would create the very context we are trying to avoid.
-    private val contextDelegate = lazy(LazyThreadSafetyMode.NONE) {
-        val props = Properties().apply {
-            put("jcifs.smb.client.minVersion", "SMB202")   // SMB2+ only (no SMB1)
-            put("jcifs.smb.client.maxVersion", "SMB311")
-            put("jcifs.smb.client.connTimeout", conn.connectionTimeoutMs.toString())
-            put("jcifs.smb.client.soTimeout", conn.readTimeoutMs.toString())
-            put("jcifs.smb.client.responseTimeout", conn.readTimeoutMs.toString())
-            put("jcifs.smb.client.dfs.disabled", "true")   // simple NAS: skip DFS lookups
-        }
-        val base: CIFSContext = BaseContext(PropertyConfiguration(props))
-        base.withCredentials(
-            NtlmPasswordAuthenticator(credentials.domain, credentials.user, credentials.password)
-        )
-    }
-
     /**
-     * Every call site that needs the context goes through here instead of touching
-     * [contextDelegate] directly, so "closed" and "materialize the context" can never
-     * interleave: without this, close() could see nothing initialized yet and return,
-     * while a concurrent caller (e.g. a backfill job racing a teardown) initializes a
-     * fresh context a moment later that nothing will ever close again.
+     * One CIFS context is shared by every operation on this source. A lease spans the
+     * whole blocking operation (or the returned stream's lifetime), so close() can mark
+     * the source permanently closed without destroying a transport that is still serving
+     * a scan, image decode, cache fill, EXIF read, or dimension probe.
      */
-    private fun requireOpenContext(): CIFSContext = synchronized(closeLock) {
-        check(!closed) { "SmbPhotoSource(${id.value}) used after close()" }
-        contextDelegate.value
-    }
+    private val contextOwner = DeferredCloseResource(
+        factory = {
+            val props = Properties().apply {
+                put("jcifs.smb.client.minVersion", "SMB202")   // SMB2+ only (no SMB1)
+                put("jcifs.smb.client.maxVersion", "SMB311")
+                put("jcifs.smb.client.connTimeout", conn.connectionTimeoutMs.toString())
+                put("jcifs.smb.client.soTimeout", conn.readTimeoutMs.toString())
+                put("jcifs.smb.client.responseTimeout", conn.readTimeoutMs.toString())
+                put("jcifs.smb.client.dfs.disabled", "true")   // simple NAS: skip DFS lookups
+            }
+            val base: CIFSContext = BaseContext(PropertyConfiguration(props))
+            base.withCredentials(
+                NtlmPasswordAuthenticator(credentials.domain, credentials.user, credentials.password)
+            )
+        },
+        closer = { context -> runCatching { context.close() } },
+    )
 
     /**
-     * Closes the jcifs context, releasing its transport pool and buffer cache, and
-     * permanently marks this source closed so it cannot be silently reopened by a
-     * caller racing this call (see [requireOpenContext]).
+     * Permanently rejects new work. The jcifs context and its transport pool are closed
+     * immediately when idle, or by the final in-flight operation/stream when one is
+     * still using them. This avoids both reopening-after-close and mid-request teardown.
      *
      * On API 22 those buffers live on the same ~174 MB Java heap as decoded bitmaps, so a
      * context that is dropped without being closed costs roughly 130 KB that no GC can
      * reclaim while the transport is still registered.
      */
     override fun close() {
-        synchronized(closeLock) {
-            if (closed) return
-            closed = true
-            if (contextDelegate.isInitialized()) {
-                runCatching { contextDelegate.value.close() }
-            }
-        }
+        contextOwner.close()
     }
 
     private fun rootUrl(): String {
@@ -117,80 +99,113 @@ class SmbPhotoSource(
     }
 
     override suspend fun healthCheck(timeoutMs: Long): SourceHealth = withContext(io) {
-        withTimeoutOrNull(timeoutMs) {
-            try {
-                val root = SmbFile(rootUrl(), requireOpenContext())
-                when {
-                    !root.exists() -> SourceHealth.Missing
-                    !root.isDirectory -> SourceHealth.ProviderError("not_a_directory")
-                    else -> SourceHealth.Ok
+        val lease = contextOwner.acquire()
+        try {
+            withTimeoutOrNull(timeoutMs) {
+                try {
+                    val root = SmbFile(rootUrl(), lease.value)
+                    when {
+                        !root.exists() -> SourceHealth.Missing
+                        !root.isDirectory -> SourceHealth.ProviderError("not_a_directory")
+                        else -> SourceHealth.Ok
+                    }
+                } catch (e: SmbAuthException) {
+                    SourceHealth.NeedsPermission
+                } catch (e: Exception) {
+                    SourceErrorMapper.toHealth(e)
                 }
-            } catch (e: SmbAuthException) {
-                SourceHealth.NeedsPermission
-            } catch (e: Exception) {
-                SourceErrorMapper.toHealth(e)
-            }
-        } ?: SourceHealth.Unavailable
+            } ?: SourceHealth.Unavailable
+        } finally {
+            lease.close()
+        }
     }
 
     override fun scan(previousCursor: ScanCursor?, options: ScanOptions): Flow<ScanEvent> = flow {
-        val stack = ArrayDeque<SmbFile>()
-        stack.addLast(SmbFile(rootUrl(), requireOpenContext()))
-        var scanned = 0L
+        val lease = contextOwner.acquire()
+        try {
+            val stack = ArrayDeque<SmbFile>()
+            stack.addLast(SmbFile(rootUrl(), lease.value))
+            var scanned = 0L
 
-        while (stack.isNotEmpty()) {
-            coroutineContext.ensureActive()
-            val dir = stack.removeLast()
-            val children = try {
-                dir.listFiles()
-            } catch (e: SmbAuthException) {
-                emit(ScanEvent.Error(relPath(dir), SourceError.AuthFailed)); return@flow
-            } catch (e: Exception) {
-                emit(ScanEvent.Error(relPath(dir), SourceErrorMapper.map(e))); continue
-            } ?: continue
-
-            for (child in children) {
+            while (stack.isNotEmpty()) {
                 coroutineContext.ensureActive()
-                val rawName = child.name
-                val name = rawName.trimEnd('/')
-                val isDir = try { child.isDirectory } catch (e: Exception) { false }
+                val dir = stack.removeLast()
+                val children = try {
+                    dir.listFiles()
+                } catch (e: SmbAuthException) {
+                    emit(ScanEvent.Error(relPath(dir), SourceError.AuthFailed)); return@flow
+                } catch (e: Exception) {
+                    emit(ScanEvent.Error(relPath(dir), SourceErrorMapper.map(e))); continue
+                } ?: continue
 
-                if (isDir) {
-                    if (options.allowsFolder(name)) {
-                        stack.addLast(child)
+                for (child in children) {
+                    coroutineContext.ensureActive()
+                    val rawName = child.name
+                    val name = rawName.trimEnd('/')
+                    val isDir = try { child.isDirectory } catch (e: Exception) { false }
+
+                    if (isDir) {
+                        if (options.allowsFolder(name)) {
+                            stack.addLast(child)
+                        }
+                        continue
                     }
-                    continue
-                }
-                if (!options.allowsFile(name)) continue
-                if (!SupportedFormats.isSupported(name, null)) continue
+                    if (!options.allowsFile(name)) continue
+                    if (!SupportedFormats.isSupported(name, null)) continue
 
-                val size = try { child.length() } catch (e: Exception) { 0L }
-                val modified = try { child.lastModified } catch (e: Exception) { 0L }
-                val normalized = relPath(child)
-                emit(
-                    ScanEvent.FileFound(
-                        PhotoItem(
-                            stableId = StableId.of(id.value, normalized, size, modified),
-                            sourceId = id,
-                            normalizedPath = normalized,
-                            folderName = normalized.substringBeforeLast('/', "").substringAfterLast('/'),
-                            fileName = name,
-                            mimeType = null,
-                            sizeBytes = size,
-                            fileModifiedEpochMs = modified,
-                            openToken = child.path,   // smb:// URL; no credentials in it
+                    val size = try { child.length() } catch (e: Exception) { 0L }
+                    val modified = try { child.lastModified } catch (e: Exception) { 0L }
+                    val normalized = relPath(child)
+                    emit(
+                        ScanEvent.FileFound(
+                            PhotoItem(
+                                stableId = StableId.of(id.value, normalized, size, modified),
+                                sourceId = id,
+                                normalizedPath = normalized,
+                                folderName = normalized.substringBeforeLast('/', "").substringAfterLast('/'),
+                                fileName = name,
+                                mimeType = null,
+                                sizeBytes = size,
+                                fileModifiedEpochMs = modified,
+                                openToken = child.path,   // smb:// URL; no credentials in it
+                            )
                         )
                     )
-                )
-                scanned++
-                if (scanned % 100 == 0L) emit(ScanEvent.DirectoryProgress(relPath(dir), scanned))
+                    scanned++
+                    if (scanned % 100 == 0L) emit(ScanEvent.DirectoryProgress(relPath(dir), scanned))
+                }
             }
+            emit(ScanEvent.Finished(ScanCursor("smb:${System.currentTimeMillis()}")))
+        } finally {
+            lease.close()
         }
-        emit(ScanEvent.Finished(ScanCursor("smb:${System.currentTimeMillis()}")))
     }.flowOn(io)
 
-    override suspend fun openStream(item: PhotoItem, options: OpenOptions): InputStream =
-        withContext(io) { SmbFile(item.openToken, requireOpenContext()).inputStream }
+    override suspend fun openStream(item: PhotoItem, options: OpenOptions): InputStream = withContext(io) {
+        val lease = contextOwner.acquire()
+        try {
+            LeaseReleasingInputStream(SmbFile(item.openToken, lease.value).inputStream, lease)
+        } catch (error: Throwable) {
+            lease.close()
+            throw error
+        }
+    }
+
+    private class LeaseReleasingInputStream(
+        input: InputStream,
+        private val lease: DeferredCloseResource.Lease<CIFSContext>,
+    ) : FilterInputStream(input) {
+        private val closed = AtomicBoolean(false)
+
+        override fun close() {
+            if (!closed.compareAndSet(false, true)) return
+            try {
+                super.close()
+            } finally {
+                lease.close()
+            }
+        }
+    }
 
     /** Path within the share, relative to the configured root. */
     private fun relPath(f: SmbFile): String = f.path.removePrefix(shareBase).trimEnd('/')

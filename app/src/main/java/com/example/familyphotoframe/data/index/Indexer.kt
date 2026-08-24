@@ -282,8 +282,8 @@ class Indexer(
                     "exifMisses" to exifFailures.toString(),
                     "reconciled" to "false",
                     "completionState" to "CANCELLED",
-                    "cancellationReason" to if (cancelled.message == "SOURCE_CONFIGURATION_CHANGED") {
-                        "SOURCE_CONFIGURATION_CHANGED"
+                    "cancellationReason" to if (cancelled.message == "SOURCE_INSTANCE_REPLACED") {
+                        "SOURCE_INSTANCE_REPLACED"
                     } else {
                         "COROUTINE_CANCELLED"
                     },

@@ -108,13 +108,22 @@ slide 680, the heap went flat (122.9 → 119.6 → 120.0 MB) for three more hour
 
 - `PhotoSource.close()` added with a no-op default — sources that open a connection per call
   hold nothing between calls.
-- `SmbPhotoSource` keeps its `lazy` delegate so `close()` can distinguish a source that never
-  connected from one that must be torn down, without creating the context to find out.
-- `resolveSourceById` prefers the active playback source, then a retained backfill source, and
-  only then builds. Because building suspends, it re-checks afterwards and closes the loser of
-  a concurrent build — otherwise the two backfills race and drop one context unclosed.
-- `releaseResolvedSources()` replaces bare map clears in `applySource` and the stop path, and
-  runs in `onCleared` so sessions do not outlive the ViewModel across a configuration change.
+- `SmbPhotoSource` owns its lazily-created context through operation leases. `close()` rejects
+  new work immediately, but an active scan or stream keeps the context alive until its `finally`
+  or stream `close()` releases the last lease; teardown can no longer destroy a transport in the
+  middle of an SMB request.
+- A synchronized remote-source registry prefers the active playback source, then a retained
+  backfill source, and only then builds. Because construction suspends, winner selection is
+  atomic afterwards and every loser is closed. A replacement-generation gate also rejects late
+  backfill builds while a source apply is in progress.
+- Every source apply now cancels and joins old scan flights and background hash passes even when
+  the settings signature is unchanged. Superseded per-slide EXIF/hash jobs remain tracked until
+  they finish unwinding instead of disappearing from teardown as soon as they are cancelled.
+- Registry release runs in `applySource`, factory reset, and `onCleared`, so sessions do not
+  outlive the ViewModel across a configuration change.
+- Bounds-only collage probes close after the decoder has the metadata it needs; they do not read
+  the remainder of the 256 KiB cap. jcifs removes synchronous request-map entries in its own
+  send/receive `finally`, while the SMB operation lease makes the early stream close safe.
 - The one-shot SMB connection tests close their session in a `finally`.
 
 ### Still open
