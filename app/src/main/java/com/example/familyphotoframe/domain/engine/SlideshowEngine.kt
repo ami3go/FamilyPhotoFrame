@@ -1,6 +1,7 @@
 package com.example.familyphotoframe.domain.engine
 
 import com.example.familyphotoframe.data.db.PhotoDao
+import com.example.familyphotoframe.data.db.FolderSelectionSql
 import com.example.familyphotoframe.data.db.PhotoItemEntity
 import com.example.familyphotoframe.data.diagnostics.DiagnosticsLog
 import com.example.familyphotoframe.data.diagnostics.diagnosticToken
@@ -15,6 +16,8 @@ import com.example.familyphotoframe.slideshow.shuffle.ShuffleAdvanceResult
 import com.example.familyphotoframe.slideshow.shuffle.ShuffleScopeKeyFactory
 import com.example.familyphotoframe.util.ImageFormatSupport
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -53,6 +56,7 @@ class SlideshowEngine(
         /** Restart the dwell timer after the selected bitmap is actually on screen. */
         data object Rendered : Command
         data object InteractionHoldChanged : Command
+        data object VisibilityHoldChanged : Command
         data class PreviewFolderOnce(val folderKey: String) : Command
         data object ReconcileShuffle : Command
     }
@@ -71,6 +75,10 @@ class SlideshowEngine(
     @Volatile private var asleep: Boolean = false
     /** Temporary UI hold: pauses only the automatic dwell timer, not playback state. */
     @Volatile private var interactionHold: Boolean = false
+    @Volatile private var hostActive: Boolean = false
+    @Volatile private var surfaceObscured: Boolean = false
+    /** Survives conflation with lifecycle wakeups until a visible loop applies it. */
+    @Volatile private var reselectPending: Boolean = false
     @Volatile private var selectionMode: SelectionMode = SelectionMode.FOLDER_BALANCED_SHUFFLE
     @Volatile private var favoritesOnly: Boolean = false
     @Volatile private var activePlaylistId: String = "builtin_all"
@@ -81,9 +89,8 @@ class SlideshowEngine(
     /**
      * Folder names to restrict playback to (spec §9.4). Empty means "all folders".
      *
-     * Held as a list because it is passed straight to a SQL `IN (...)`; SQLite cannot
-     * parse an empty `IN ()`, so the queries take a companion `allFolders` flag and this
-     * list is padded with a single never-matching entry when the filter is off.
+     * Held as a list for stable scope hashing. DAO calls encode it into one exact-match
+     * SQLite parameter, avoiding the platform bind-variable limit for large libraries.
      */
     @Volatile private var selectedFolders: List<String> = emptyList()
 
@@ -122,6 +129,8 @@ class SlideshowEngine(
     /** Persisted folder-balanced reservation for the selected, not-yet-committed presentation. */
     private var activeReservation: ReservedPresentation? = null
     private var activeShuffleScopeKey: String? = null
+    /** True when an oversized explicit queue is using the persistent bounded selector. */
+    @Volatile private var boundedSelectionFallbackActive: Boolean = false
     /** Current committed slide restored after a non-mutating one-folder preview. */
     private var previewReturnPick: Pick? = null
     /**
@@ -142,10 +151,13 @@ class SlideshowEngine(
      * and dropped outright whenever the pool is reconfigured or the index is rewritten.
      */
     private class CachedPool(val key: String, val ids: LongArray, val loadedAtElapsedMs: Long)
+    private data class PoolScaleDecision(val key: String, val useFolderBalanced: Boolean)
 
     @Volatile private var cachePlaybackPool: Boolean = true
     private var cachedPrimaryPool: CachedPool? = null
     private var cachedFallbackPool: CachedPool? = null
+    private var primaryScaleDecision: PoolScaleDecision? = null
+    private var fallbackScaleDecision: PoolScaleDecision? = null
 
     private val backStack = ArrayDeque<DisplayPhoto>()
     private val forwardStack = ArrayDeque<DisplayPhoto>()
@@ -170,6 +182,13 @@ class SlideshowEngine(
     fun invalidatePlaybackPool() {
         cachedPrimaryPool = null
         cachedFallbackPool = null
+        primaryScaleDecision = null
+        fallbackScaleDecision = null
+        if (selectionMode != SelectionMode.FOLDER_BALANCED_SHUFFLE) {
+            // Re-evaluate the safety fallback after any membership change; a library can
+            // legitimately shrink back below the explicit-queue threshold.
+            boundedSelectionFallbackActive = false
+        }
     }
 
     fun configure(
@@ -230,7 +249,7 @@ class SlideshowEngine(
             "intervalMs" to (intervalSeconds * 1_000L).toString(),
         )
         if (poolChanged) resetSelectionState()
-        commands.trySend(Command.Reselect)
+        requestReselect()
     }
 
     /**
@@ -251,7 +270,7 @@ class SlideshowEngine(
         this.favoritesOnly = favoritesOnly
         this.selectedFolders = selectedFolders
         resetSelectionState()
-        commands.trySend(Command.Reselect)
+        requestReselect()
     }
 
     /**
@@ -273,7 +292,7 @@ class SlideshowEngine(
         this.unavailableSourceIds = unavailableSourceIds
         this.exhaustedUnavailableSourceIds = exhaustedUnavailableSourceIds
         if (playlistChanged) resetSelectionState()
-        if (playlistChanged || availabilityChanged) commands.trySend(Command.Reselect)
+        if (playlistChanged || availabilityChanged) requestReselect()
     }
 
     fun setTiming(intervalSeconds: Int, maxFailures: Int) {
@@ -302,6 +321,28 @@ class SlideshowEngine(
         commands.trySend(Command.InteractionHoldChanged)
     }
 
+    fun setHostActive(owner: Long, value: Boolean) {
+        val changed = synchronized(loopOwnerLock) {
+            if (loopOwner != owner) return
+            if (hostActive == value) false else {
+                hostActive = value
+                true
+            }
+        }
+        if (changed) commands.trySend(Command.VisibilityHoldChanged)
+    }
+
+    fun setSurfaceObscured(owner: Long, value: Boolean) {
+        val changed = synchronized(loopOwnerLock) {
+            if (loopOwner != owner) return
+            if (surfaceObscured == value) false else {
+                surfaceObscured = value
+                true
+            }
+        }
+        if (changed) commands.trySend(Command.VisibilityHoldChanged)
+    }
+
     fun next() { commands.trySend(Command.Next) }
     fun previous() { commands.trySend(Command.Previous) }
     fun previewFolderOnce(folderKey: String) {
@@ -322,6 +363,11 @@ class SlideshowEngine(
     fun reconcileShuffle() {
         folderBalancedShuffle.invalidateEligibility()
         commands.trySend(Command.ReconcileShuffle)
+    }
+
+    private fun requestReselect() {
+        reselectPending = true
+        commands.trySend(Command.Reselect)
     }
 
     fun resetActiveShuffle(clearHistory: Boolean = false) {
@@ -605,12 +651,18 @@ class SlideshowEngine(
         }
     }
 
+    private val loopOwnerLock = Any()
     private var loopScope: CoroutineScope? = null
+    private var loopJob: Job? = null
+    private var loopOwner = 0L
 
-    /** Start the loop in [scope]; cancelled automatically when the scope is cancelled. */
-    fun start(scope: CoroutineScope) {
-        loopScope = scope
-        scope.launch {
+    /** Start exactly one loop and return an owner token safe across ViewModel overlap. */
+    fun start(scope: CoroutineScope): Long {
+        var predecessor: Job? = null
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            // Cancellation is asynchronous. Waiting for the retired owner eliminates a
+            // brief two-loop window during Activity/ViewModel recreation.
+            predecessor?.join()
             _ui.value = _ui.value.copy(state = EngineState.STARTING)
             val recovered = folderBalancedShuffle.startupRecovery()
             if (recovered > 0) {
@@ -621,13 +673,20 @@ class SlideshowEngine(
                 )
             }
             // Prime first photo.
+            // A configuration published before this point is already visible through
+            // volatile fields and is therefore satisfied by the initial selection.
+            reselectPending = false
             advance(forward = true)
             while (isActive) {
+                if (reselectPending && hostActive && !surfaceObscured) {
+                    applyPendingReselect()
+                    continue
+                }
                 val paused = _ui.value.paused
                 val currentId = _ui.value.current?.id
                 val hasContent = currentId != null
                 val waitingForRender = currentId != null && renderedCurrentId != currentId
-                if (paused || asleep || interactionHold || !hasContent) {
+                if (paused || asleep || interactionHold || !hostActive || surfaceObscured || !hasContent) {
                     // These waits are genuinely open-ended: nothing but an explicit
                     // command (resume, wake, content becoming available) should end them.
                     handle(commands.receive())
@@ -658,18 +717,49 @@ class SlideshowEngine(
                 }
             }
         }
+        val owner = synchronized(loopOwnerLock) {
+            loopOwner += 1L
+            predecessor = loopJob
+            predecessor?.cancel()
+            // The channel is process-owned too. A conflated command left by the retired
+            // UI (for example Rendered/Next during recreation) must not skip the new
+            // owner's freshly primed first slide.
+            while (commands.tryReceive().isSuccess) Unit
+            loopJob = job
+            loopScope = scope
+            hostActive = false
+            surfaceObscured = false
+            loopOwner
+        }
+        job.invokeOnCompletion {
+            synchronized(loopOwnerLock) {
+                if (loopOwner == owner && loopJob === job) {
+                    loopJob = null
+                    loopScope = null
+                }
+            }
+        }
+        job.start()
+        return owner
+    }
+
+    fun stop(owner: Long) {
+        synchronized(loopOwnerLock) {
+            if (loopOwner != owner) return
+            loopJob?.cancel()
+            loopScope = null
+            hostActive = false
+            surfaceObscured = false
+        }
     }
 
     private suspend fun handle(cmd: Command) {
         when (cmd) {
             Command.Next -> advance(forward = true)
             Command.Previous -> advance(forward = false)
-            Command.Reselect -> {
-                cancelActiveReservation("reselect")
-                resetHistory()
-                advance(forward = true)
-            }
+            Command.Reselect -> if (hostActive && !surfaceObscured) applyPendingReselect() else Unit
             Command.InteractionHoldChanged -> Unit
+            Command.VisibilityHoldChanged -> Unit
             Command.SleepChanged -> {
                 diagnostics.log(
                     DiagnosticsLog.Category.ENGINE,
@@ -704,6 +794,15 @@ class SlideshowEngine(
         }
     }
 
+    private suspend fun applyPendingReselect() {
+        // Clear before suspending. A newer configuration arriving during cancellation
+        // or selection sets the flag again and is handled on the next loop iteration.
+        reselectPending = false
+        cancelActiveReservation("reselect")
+        resetHistory()
+        advance(forward = true)
+    }
+
     private fun resetHistory() {
         backStack.clear()
         forwardStack.clear()
@@ -721,6 +820,7 @@ class SlideshowEngine(
         fallbackQueue.reset()
         reservedNext = null
         previewReturnPick = null
+        boundedSelectionFallbackActive = false
     }
 
 
@@ -736,7 +836,9 @@ class SlideshowEngine(
     }
 
     private suspend fun advance(forward: Boolean) {
-        if (selectionMode == SelectionMode.FOLDER_BALANCED_SHUFFLE) {
+        if (selectionMode == SelectionMode.FOLDER_BALANCED_SHUFFLE ||
+            boundedSelectionFallbackActive || activeReservation != null
+        ) {
             advanceFolderBalanced(forward)
             return
         }
@@ -761,7 +863,10 @@ class SlideshowEngine(
             return
         }
         _ui.value.current?.let { pushBounded(backStack, it) }
-        setCurrent(picked, computeNextPreview = true)
+        setCurrent(
+            picked,
+            computeNextPreview = picked.reservation == null && picked.scopeKey == null,
+        )
     }
 
     private suspend fun advanceFolderBalanced(forward: Boolean) {
@@ -907,6 +1012,14 @@ class SlideshowEngine(
         playingFallback = pick.fromFallback
         activeReservation = pick.reservation
         activeShuffleScopeKey = pick.scopeKey ?: activeShuffleScopeKey
+        if (selectionMode != SelectionMode.FOLDER_BALANCED_SHUFFLE) {
+            when {
+                pick.scopeKey != null || pick.reservation != null -> boundedSelectionFallbackActive = true
+                // A one-folder preview temporarily has no scope. Preserve the fallback
+                // marker so its next action returns through persistent history.
+                previewReturnPick == null -> boundedSelectionFallbackActive = false
+            }
+        }
         startupSelectionPending = false
         diagnostics.log(
             DiagnosticsLog.Category.ENGINE, "SLIDE_SELECTED",
@@ -919,7 +1032,9 @@ class SlideshowEngine(
             "selectionMode" to selectionMode.name,
             "active" to (pick.reservation != null).toString(),
         )
-        val canPreselect = computeNextPreview && selectionMode != SelectionMode.FOLDER_BALANCED_SHUFFLE
+        val canPreselect = computeNextPreview &&
+            selectionMode != SelectionMode.FOLDER_BALANCED_SHUFFLE &&
+            !boundedSelectionFallbackActive
         val preview = if (canPreselect) {
             pick().also { reservedNext = it }?.item?.toDisplayPhoto()
         } else null
@@ -933,8 +1048,16 @@ class SlideshowEngine(
             reservedCandidateIds = pick.reservation?.candidatePhotoIds.orEmpty(),
             historyPhotoIds = pick.historyPhotoIds,
             shuffleProgress = progress,
-            cycleShown = if (selectionMode == SelectionMode.FOLDER_BALANCED_SHUFFLE) progress.folderResolved else _ui.value.cycleShown,
-            cycleTotal = if (selectionMode == SelectionMode.FOLDER_BALANCED_SHUFFLE) progress.folderTotal else _ui.value.cycleTotal,
+            cycleShown = if (selectionMode == SelectionMode.FOLDER_BALANCED_SHUFFLE || boundedSelectionFallbackActive) {
+                progress.folderResolved
+            } else {
+                _ui.value.cycleShown
+            },
+            cycleTotal = if (selectionMode == SelectionMode.FOLDER_BALANCED_SHUFFLE || boundedSelectionFallbackActive) {
+                progress.folderTotal
+            } else {
+                _ui.value.cycleTotal
+            },
         )
     }
 
@@ -992,111 +1115,41 @@ class SlideshowEngine(
         val cacheFlag = if (cachedOnly) 1 else 0
         val folders = selectedFolders
         val allFolders = if (folders.isEmpty()) 1 else 0
-        val folderArg = if (folders.isEmpty()) NO_FOLDER_SENTINEL else folders
+        val folderSelection = FolderSelectionSql.encode(folders)
 
-        if (selectionMode == SelectionMode.FOLDER_BALANCED_SHUFFLE) {
-            val relevantUnavailable = if (poolRole == "primary") unavailableSourceIds else emptySet()
-            val relevantExhausted = if (poolRole == "primary") exhaustedUnavailableSourceIds else emptySet()
-            val shuffleSourceIds = (sourceIds + relevantUnavailable).distinct()
-            val revision = ShuffleScopeKeyFactory.eligibilityRevision(
-                ShuffleScopeKeyFactory.EligibilityInputs(
-                    playlistId = activePlaylistId,
-                    sourceIds = shuffleSourceIds,
-                    selectedFolders = folders,
-                    favoritesOnly = favoritesOnly,
-                    cachedOnly = cachedOnly,
-                    maxDecodeFailures = maxFailures,
-                    formatCapabilitySignature = if (allowHeif) "heif-platform" else "heif-excluded",
-                )
-            )
-            val descriptor = ShuffleScopeKeyFactory.scope(
-                playlistId = activePlaylistId,
-                revision = revision,
-                playbackOrder = selectionMode,
+        val useFolderBalanced = selectionMode == SelectionMode.FOLDER_BALANCED_SHUFFLE ||
+            (selectionMode != SelectionMode.ON_THIS_DAY && explicitPoolIsOversized(
+                sourceIds = sourceIds,
+                cachedOnly = cachedOnly,
+                folders = folders,
+                allFolders = allFolders,
+                folderSelection = folderSelection,
                 poolRole = poolRole,
+            ))
+        if (useFolderBalanced) {
+            return pickFolderBalanced(
+                sourceIds = sourceIds,
+                cachedOnly = cachedOnly,
+                folders = folders,
+                poolRole = poolRole,
+                fromFallback = fromFallback,
+                // Keep fallback scopes distinct by the mode the user requested. The
+                // storage algorithm is folder-balanced, but switching two oversized
+                // explicit modes must not silently reuse the other's persisted cursor.
+                playbackOrder = selectionMode,
             )
-            val scopeChanged = activeShuffleScopeKey != descriptor.scopeKey
-            activeShuffleScopeKey = descriptor.scopeKey
-            if (scopeChanged) {
-                // Always restore the persistent cursor to the newest committed entry.
-                // On process startup, however, do not display that committed entry again:
-                // commit-before-display intentionally provides at-most-once recovery.
-                val newest = folderBalancedShuffle.newestHistory(descriptor.scopeKey)
-                if (!startupSelectionPending && newest != null) {
-                    val history = if (historyIsDisplayable(newest)) {
-                        newest
-                    } else {
-                        findValidHistory(descriptor.scopeKey, previous = true)
-                    }
-                    val anchor = history?.photoIds?.firstOrNull()?.let { dao.byId(it) }
-                    if (anchor != null) {
-                        return Pick(
-                            item = anchor,
-                            fromFallback = fromFallback,
-                            scopeKey = descriptor.scopeKey,
-                            historyPhotoIds = history.photoIds,
-                        )
-                    }
-                }
-            }
-            val selectionStartedNs = System.nanoTime()
-            val reservationResult = folderBalancedShuffle.reserveNext(
-                FolderBalancedShuffleCoordinator.PoolConfiguration(
-                    descriptor = descriptor,
-                    sourceIds = shuffleSourceIds,
-                    maxFailures = maxFailures,
-                    favoritesOnly = favoritesOnly,
-                    cachedOnly = cachedOnly,
-                    selectedFolders = folders,
-                    unavailableSourceIds = relevantUnavailable,
-                    exhaustedUnavailableSourceIds = relevantExhausted,
-                ),
-                collageLookahead = collageLookahead,
-            )
-            val selectionElapsedMs = ((System.nanoTime() - selectionStartedNs) / 1_000_000L)
-            diagnostics.log(
-                DiagnosticsLog.Category.ENGINE,
-                "SHUFFLE_SELECTION_TIMING",
-                "elapsedMs" to selectionElapsedMs.toString(),
-                "targetMs" to if (cachedOnly) "50" else "250",
-                "cachedOnly" to cachedOnly.toString(),
-                "result" to if (reservationResult is ShuffleAdvanceResult.Reserved) "reserved" else "empty",
-            )
-            return when (val result = reservationResult) {
-                is ShuffleAdvanceResult.Reserved -> {
-                    val reserved = result.presentation
-                    val row = dao.byId(reserved.anchorPhotoId)
-                    if (row == null || !isRuntimeDisplayable(row)) {
-                        folderBalancedShuffle.releaseAnchorFailure(
-                            reserved.scopeKey,
-                            reserved.reservationId,
-                            reserved.anchorPhotoId,
-                            "reserved_anchor_not_displayable",
-                        )
-                        null
-                    } else {
-                        Pick(
-                            item = row,
-                            fromFallback = fromFallback,
-                            reservation = reserved,
-                            scopeKey = descriptor.scopeKey,
-                        )
-                    }
-                }
-                ShuffleAdvanceResult.Empty -> null
-            }
         }
 
 
         suspend fun queryPool(): List<Long> = when (selectionMode) {
             SelectionMode.SEQUENTIAL ->
-                dao.displayableIds(sourceIds, maxFailures, favFlag, cacheFlag, if (allowHeif) 1 else 0, allFolders, folderArg)
+                dao.displayableIds(sourceIds, maxFailures, favFlag, cacheFlag, if (allowHeif) 1 else 0, allFolders, folderSelection)
             SelectionMode.SHUFFLE_NO_REPEAT ->
-                dao.displayableIds(sourceIds, maxFailures, favFlag, cacheFlag, if (allowHeif) 1 else 0, allFolders, folderArg)
+                dao.displayableIds(sourceIds, maxFailures, favFlag, cacheFlag, if (allowHeif) 1 else 0, allFolders, folderSelection)
             SelectionMode.DATE_TAKEN_NEWEST ->
-                dao.displayableIdsByDateTakenDesc(sourceIds, maxFailures, favFlag, cacheFlag, if (allowHeif) 1 else 0, allFolders, folderArg)
+                dao.displayableIdsByDateTakenDesc(sourceIds, maxFailures, favFlag, cacheFlag, if (allowHeif) 1 else 0, allFolders, folderSelection)
             SelectionMode.DATE_TAKEN_OLDEST ->
-                dao.displayableIdsByDateTakenAsc(sourceIds, maxFailures, favFlag, cacheFlag, if (allowHeif) 1 else 0, allFolders, folderArg)
+                dao.displayableIdsByDateTakenAsc(sourceIds, maxFailures, favFlag, cacheFlag, if (allowHeif) 1 else 0, allFolders, folderSelection)
             // Explicit id list, not a SQL predicate — see setOnThisDayPool.
             SelectionMode.ON_THIS_DAY -> onThisDayIds
             // Returned earlier; explicit branch keeps this when-expression exhaustive
@@ -1116,7 +1169,7 @@ class SlideshowEngine(
                 favoritesOnly = favFlag == 1,
                 cachedOnly = cacheFlag == 1,
                 allowHeif = allowHeif,
-                folders = if (allFolders == 1) emptyList() else folderArg,
+                folders = folders,
             )
             val slot = if (fromFallback) cachedFallbackPool else cachedPrimaryPool
             val now = System.nanoTime() / 1_000_000L
@@ -1152,6 +1205,152 @@ class SlideshowEngine(
             }
         }
         return null
+    }
+
+    /**
+     * Prevent whole-library modes from materializing a multi-array queue beyond the
+     * tested heap budget. Folder-balanced selection preserves no-repeat progress while
+     * keeping memory proportional to folder count plus one folder's members.
+     */
+    private suspend fun explicitPoolIsOversized(
+        sourceIds: List<String>,
+        cachedOnly: Boolean,
+        folders: List<String>,
+        allFolders: Int,
+        folderSelection: String,
+        poolRole: String,
+    ): Boolean {
+        val key = PlaybackPoolCachePolicy.key(
+            selectionMode = selectionMode,
+            sourceIds = sourceIds,
+            maxFailures = maxFailures,
+            favoritesOnly = favoritesOnly,
+            cachedOnly = cachedOnly,
+            allowHeif = allowHeif,
+            folders = folders,
+        )
+        val cached = if (poolRole == "primary") primaryScaleDecision else fallbackScaleDecision
+        if (cached?.key == key) return cached.useFolderBalanced
+
+        val count = dao.displayableCount(
+            sourceIds = sourceIds,
+            maxFailures = maxFailures,
+            favoritesOnly = if (favoritesOnly) 1 else 0,
+            cachedOnly = if (cachedOnly) 1 else 0,
+            allowHeif = if (allowHeif) 1 else 0,
+            allFolders = allFolders,
+            folderSelection = folderSelection,
+        )
+        val decision = PoolScaleDecision(key, count > MAX_EXPLICIT_POOL_IDS)
+        if (poolRole == "primary") primaryScaleDecision = decision else fallbackScaleDecision = decision
+        if (decision.useFolderBalanced) {
+            diagnostics.log(
+                DiagnosticsLog.Category.ENGINE,
+                "EXPLICIT_POOL_BOUNDED_FALLBACK",
+                "requestedMode" to selectionMode.name,
+                "eligiblePhotos" to count.toString(),
+                "limit" to MAX_EXPLICIT_POOL_IDS.toString(),
+                "poolRole" to poolRole,
+            )
+        }
+        return decision.useFolderBalanced
+    }
+
+    private suspend fun pickFolderBalanced(
+        sourceIds: List<String>,
+        cachedOnly: Boolean,
+        folders: List<String>,
+        poolRole: String,
+        fromFallback: Boolean,
+        playbackOrder: SelectionMode,
+    ): Pick? {
+        val relevantUnavailable = if (poolRole == "primary") unavailableSourceIds else emptySet()
+        val relevantExhausted = if (poolRole == "primary") exhaustedUnavailableSourceIds else emptySet()
+        val shuffleSourceIds = (sourceIds + relevantUnavailable).distinct()
+        val revision = ShuffleScopeKeyFactory.eligibilityRevision(
+            ShuffleScopeKeyFactory.EligibilityInputs(
+                playlistId = activePlaylistId,
+                sourceIds = shuffleSourceIds,
+                selectedFolders = folders,
+                favoritesOnly = favoritesOnly,
+                cachedOnly = cachedOnly,
+                maxDecodeFailures = maxFailures,
+                formatCapabilitySignature = if (allowHeif) "heif-platform" else "heif-excluded",
+            )
+        )
+        val descriptor = ShuffleScopeKeyFactory.scope(
+            playlistId = activePlaylistId,
+            revision = revision,
+            playbackOrder = playbackOrder,
+            poolRole = poolRole,
+        )
+        val scopeChanged = activeShuffleScopeKey != descriptor.scopeKey
+        activeShuffleScopeKey = descriptor.scopeKey
+        if (scopeChanged) {
+            val newest = folderBalancedShuffle.newestHistory(descriptor.scopeKey)
+            if (!startupSelectionPending && newest != null) {
+                val history = if (historyIsDisplayable(newest)) {
+                    newest
+                } else {
+                    findValidHistory(descriptor.scopeKey, previous = true)
+                }
+                val anchor = history?.photoIds?.firstOrNull()?.let { dao.byId(it) }
+                if (anchor != null) {
+                    return Pick(
+                        item = anchor,
+                        fromFallback = fromFallback,
+                        scopeKey = descriptor.scopeKey,
+                        historyPhotoIds = history.photoIds,
+                    )
+                }
+            }
+        }
+        val selectionStartedNs = System.nanoTime()
+        val reservationResult = folderBalancedShuffle.reserveNext(
+            FolderBalancedShuffleCoordinator.PoolConfiguration(
+                descriptor = descriptor,
+                sourceIds = shuffleSourceIds,
+                maxFailures = maxFailures,
+                favoritesOnly = favoritesOnly,
+                cachedOnly = cachedOnly,
+                selectedFolders = folders,
+                unavailableSourceIds = relevantUnavailable,
+                exhaustedUnavailableSourceIds = relevantExhausted,
+            ),
+            collageLookahead = collageLookahead,
+        )
+        val selectionElapsedMs = ((System.nanoTime() - selectionStartedNs) / 1_000_000L)
+        diagnostics.log(
+            DiagnosticsLog.Category.ENGINE,
+            "SHUFFLE_SELECTION_TIMING",
+            "elapsedMs" to selectionElapsedMs.toString(),
+            "targetMs" to if (cachedOnly) "50" else "250",
+            "cachedOnly" to cachedOnly.toString(),
+            "result" to if (reservationResult is ShuffleAdvanceResult.Reserved) "reserved" else "empty",
+        )
+        return when (val result = reservationResult) {
+            is ShuffleAdvanceResult.Reserved -> {
+                val reserved = result.presentation
+                val row = dao.byId(reserved.anchorPhotoId)
+                if (row == null || !isRuntimeDisplayable(row)) {
+                    folderBalancedShuffle.releaseAnchorFailure(
+                        reserved.scopeKey,
+                        reserved.reservationId,
+                        reserved.anchorPhotoId,
+                        "reserved_anchor_not_displayable",
+                    )
+                    null
+                } else {
+                    Pick(
+                        item = row,
+                        fromFallback = fromFallback,
+                        reservation = reserved,
+                        scopeKey = descriptor.scopeKey,
+                    )
+                }
+            }
+            ShuffleAdvanceResult.Empty -> null
+        }
     }
 
     /** Query filtering is the fast path; this guard protects restored history/reservations. */
@@ -1224,6 +1423,8 @@ class SlideshowEngine(
          * id is skipped at pick time by the existing runtime-displayable recheck anyway.
          */
         const val POOL_CACHE_MAX_AGE_MS = 5L * 60_000L
+        /** Keeps explicit queues comfortably below the heap budget of API-21 tablets. */
+        const val MAX_EXPLICIT_POOL_IDS = 200_000L
         const val HISTORY_SKIP_LIMIT = 100
 
         /**
@@ -1239,7 +1440,5 @@ class SlideshowEngine(
          */
         const val RENDER_ACK_TIMEOUT_MS = 30_000L
 
-        /** Never-matching placeholder that keeps the bound list non-empty; see [pickFrom]. */
-        val NO_FOLDER_SENTINEL = listOf("\u0000")
     }
 }

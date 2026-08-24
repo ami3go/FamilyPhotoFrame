@@ -13,6 +13,17 @@ interface LocalThumbnailCacheDao {
     @Query("SELECT * FROM local_thumbnail_cache WHERE cacheKey = :key")
     suspend fun get(key: String): LocalThumbnailCacheEntity?
 
+    /** Keyset page used for bounded startup reconciliation with private files. */
+    @Query(
+        """
+        SELECT * FROM local_thumbnail_cache
+        WHERE cacheKey > :afterKey
+        ORDER BY cacheKey ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun reconciliationPage(afterKey: String, limit: Int): List<LocalThumbnailCacheEntity>
+
     @Query("UPDATE local_thumbnail_cache SET lastAccessedAtEpochMs = :ts WHERE cacheKey = :key")
     suspend fun touch(key: String, ts: Long)
 
@@ -25,8 +36,14 @@ interface LocalThumbnailCacheDao {
      * can have several cache entries — one per decode size bucket — and the caller only
      * knows which *photos*, not which exact size-bucketed entries, are protected).
      */
-    @Query("SELECT * FROM local_thumbnail_cache ORDER BY lastAccessedAtEpochMs ASC LIMIT :limit")
-    suspend fun evictionCandidates(limit: Int): List<LocalThumbnailCacheEntity>
+    @Query(
+        "SELECT * FROM local_thumbnail_cache WHERE photoStableId NOT IN (:protectedStableIds) " +
+            "ORDER BY lastAccessedAtEpochMs ASC LIMIT :limit"
+    )
+    suspend fun evictionCandidates(
+        protectedStableIds: List<String>,
+        limit: Int,
+    ): List<LocalThumbnailCacheEntity>
 
     @Query("DELETE FROM local_thumbnail_cache WHERE cacheKey = :key")
     suspend fun delete(key: String)

@@ -101,13 +101,9 @@ sed 's/^package .*//' \
   sed 's/^package .*//' \
     app/src/main/java/com/example/familyphotoframe/domain/randomize/PlaybackQueue.kt
 } > "$PURE/PlaybackQueue.kt"
-{ echo 'import java.util.ArrayDeque'
-  sed 's/^package .*//' \
-    app/src/main/java/com/example/familyphotoframe/domain/randomize/FolderCycleQueue.kt
-} > "$PURE/FolderCycleQueue.kt"
 sed 's/^package .*//' \
-  app/src/main/java/com/example/familyphotoframe/domain/randomize/FolderBalancedPlaybackQueue.kt \
-  > "$PURE/FolderBalancedPlaybackQueue.kt"
+  app/src/main/java/com/example/familyphotoframe/data/db/FolderSelectionSql.kt \
+  > "$PURE/FolderSelectionSql.kt"
 # Persistent folder-balanced shuffle domain/generator/backoff are pure Kotlin.
 sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/data/index/CanonicalPhotoPath.kt \
@@ -126,7 +122,7 @@ sed -e 's/^package .*//' \
 cat > "$PURE/SelectionModeStub.kt" <<'KT'
 enum class SelectionMode {
     SEQUENTIAL, LEAST_RECENT_RANDOM, SHUFFLE_NO_REPEAT, FOLDER_BALANCED_SHUFFLE,
-    DATE_TAKEN_NEWEST, DATE_TAKEN_OLDEST,
+    DATE_TAKEN_NEWEST, DATE_TAKEN_OLDEST, ON_THIS_DAY,
 }
 KT
 # WebDavApi is pure protocol logic (no Android/network); its tolerance of real-world
@@ -144,6 +140,15 @@ sed -n '/^data class ScanOptions/,/^}/p' \
 sed -n '/^data class FilterSettings/,/^}/p' \
   app/src/main/java/com/example/familyphotoframe/data/settings/AppSettings.kt \
   | sed 's/^@Serializable$//' > "$PURE/FilterSettings.kt"
+# Playlist normalization is a persistence/memory boundary. Compile the production
+# implementation with dependency-free type stubs so its aggregate bounds execute here.
+awk '
+  /^\/\*\* User-defined slideshow playlist/ { emit = 1 }
+  emit { print }
+  emit && /^data class PlaylistSettings/ { playlist_settings = 1 }
+  playlist_settings && /^}$/ { exit }
+' app/src/main/java/com/example/familyphotoframe/data/settings/AppSettings.kt \
+  | sed '/^@Serializable$/d' > "$PURE/PlaylistSettings.kt"
 sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/data/settings/SourceRuntimeSignature.kt \
   > "$PURE/SourceRuntimeSignature.kt"

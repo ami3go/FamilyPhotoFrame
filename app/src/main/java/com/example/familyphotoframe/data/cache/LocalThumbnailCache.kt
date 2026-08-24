@@ -6,10 +6,11 @@ import com.example.familyphotoframe.data.db.LocalThumbnailCacheDao
 import com.example.familyphotoframe.data.db.LocalThumbnailCacheEntity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
-import kotlin.math.max
 
 /**
  * Disk cache of decoded-and-downscaled JPEG thumbnails for LOCAL (SAF/fallback) photos.
@@ -44,6 +45,18 @@ class LocalThumbnailCache(
 ) {
     private val dir: File = File(context.filesDir, "localthumbcache").apply { mkdirs() }
     private val tmpSuffixCounter = java.util.concurrent.atomic.AtomicLong(0)
+    private class KeyLock {
+        val mutex = Mutex()
+        var users = 0
+    }
+
+    private val keyLocksGuard = Any()
+    private val keyLocks = HashMap<String, KeyLock>()
+    private val reconcileLock = Mutex()
+    private val evictionLock = Mutex()
+    private val maintenanceLock = Mutex()
+    private val cacheGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+    @Volatile private var reconciled = false
 
     /** Mirrors the ViewModel's rebuild-job progress so the web status endpoint can poll it
      * without a direct reference to the ViewModel. Written by the rebuild job only. */
@@ -56,21 +69,26 @@ class LocalThumbnailCache(
     /** Returns a cached thumbnail file, or null on a miss/disabled/stale entry. */
     suspend fun get(stableId: String, width: Int, height: Int): File? = withContext(io) {
         if (!enabledProvider()) return@withContext null
+        ensureReconciled()
         val key = keyFor(stableId, width, height)
-        val entry = try {
-            dao.get(key)
-        } catch (c: CancellationException) {
-            throw c
-        } catch (_: Exception) {
-            return@withContext null
-        } ?: return@withContext null
-        val f = File(entry.localFilePathPrivate)
-        if (!f.exists()) {
-            dao.delete(key)
-            return@withContext null
+        withKeyLock(key) {
+            maintenanceLock.withLock {
+                val entry = try {
+                    dao.get(key)
+                } catch (c: CancellationException) {
+                    throw c
+                } catch (_: Exception) {
+                    return@withLock null
+                } ?: return@withLock null
+                val f = File(entry.localFilePathPrivate)
+                if (!f.exists()) {
+                    dao.delete(key)
+                    return@withLock null
+                }
+                dao.touch(key, System.currentTimeMillis())
+                f
+            }
         }
-        dao.touch(key, System.currentTimeMillis())
-        f
     }
 
     /**
@@ -88,57 +106,135 @@ class LocalThumbnailCache(
     ) {
         if (!enabledProvider() || bitmap.isRecycled) return
         withContext(io) {
+            ensureReconciled()
             val key = keyFor(stableId, width, height)
-            val target = File(dir, key)
-            val tmp = File(dir, "$key.${tmpSuffixCounter.incrementAndGet()}.part")
-            try {
-                FileOutputStream(tmp).use { out ->
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
-                }
-                if (!tmp.renameTo(target)) {
-                    tmp.copyTo(target, overwrite = true)
+            withKeyLock(key) {
+                val generation = cacheGeneration.get()
+                val target = File(dir, key)
+                val tmp = File(dir, "$key.${tmpSuffixCounter.incrementAndGet()}.part")
+                var targetCommitted = false
+                var indexCommitted = false
+                try {
+                    if (dir.usableSpace <= RESERVED_FREE_BYTES) return@withKeyLock
+                    FileOutputStream(tmp).use { out ->
+                        check(bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)) {
+                            "thumbnail_encode_failed"
+                        }
+                        out.fd.sync()
+                    }
+                    maintenanceLock.withLock {
+                        if (cacheGeneration.get() != generation) return@withLock
+                        if (target.exists() && !target.delete()) return@withLock
+                        if (!tmp.renameTo(target)) return@withLock
+                        targetCommitted = true
+                        val now = System.currentTimeMillis()
+                        dao.put(
+                            LocalThumbnailCacheEntity(
+                                cacheKey = key,
+                                photoStableId = stableId,
+                                sizeBucket = "${width}x${height}",
+                                localFilePathPrivate = target.path,
+                                sizeBytes = target.length(),
+                                createdAtEpochMs = now,
+                                lastAccessedAtEpochMs = now,
+                            )
+                        )
+                        indexCommitted = true
+                    }
+                    if (!indexCommitted) return@withKeyLock
+                    evictIfNeeded(protectedStableIds + stableId)
+                } catch (c: CancellationException) {
+                    if (targetCommitted && !indexCommitted) target.delete()
+                    throw c
+                } catch (_: Exception) {
+                    if (targetCommitted && !indexCommitted) target.delete()
+                } finally {
                     tmp.delete()
                 }
-                val now = System.currentTimeMillis()
-                dao.put(
-                    LocalThumbnailCacheEntity(
-                        cacheKey = key,
-                        photoStableId = stableId,
-                        sizeBucket = "${width}x${height}",
-                        localFilePathPrivate = target.path,
-                        sizeBytes = target.length(),
-                        createdAtEpochMs = now,
-                        lastAccessedAtEpochMs = now,
-                    )
-                )
-                evictIfNeeded(protectedStableIds)
-            } catch (c: CancellationException) {
-                tmp.delete()
-                throw c
-            } catch (_: Exception) {
-                tmp.delete()
             }
         }
     }
 
-    private suspend fun evictIfNeeded(protectedStableIds: Set<String>) {
-        var total = dao.totalSizeBytes()
-        val max = maxBytesProvider()
-        if (total <= max) return
-        val candidates = dao.evictionCandidates(limit = 256)
-        for (c in candidates) {
-            if (total <= max) break
-            if (c.photoStableId in protectedStableIds) continue
-            File(c.localFilePathPrivate).delete()
-            dao.delete(c.cacheKey)
-            total -= c.sizeBytes
+    private suspend fun <T> withKeyLock(key: String, block: suspend () -> T): T {
+        val holder = synchronized(keyLocksGuard) {
+            keyLocks.getOrPut(key, ::KeyLock).also { it.users++ }
+        }
+        var locked = false
+        return try {
+            holder.mutex.lock()
+            locked = true
+            block()
+        } finally {
+            if (locked) holder.mutex.unlock()
+            synchronized(keyLocksGuard) {
+                holder.users--
+                if (holder.users == 0 && keyLocks[key] === holder) keyLocks.remove(key)
+            }
+        }
+    }
+
+    private suspend fun ensureReconciled() {
+        if (reconciled) return
+        reconcileLock.withLock {
+            if (reconciled) return
+            maintenanceLock.withLock {
+                var afterKey = ""
+                while (true) {
+                    val page = dao.reconciliationPage(afterKey, RECONCILIATION_BATCH_SIZE)
+                    if (page.isEmpty()) break
+                    for (entry in page) {
+                        val file = File(entry.localFilePathPrivate)
+                        val owned = file.absoluteFile.parentFile == dir.absoluteFile
+                        if (!owned || !file.isFile) {
+                            dao.delete(entry.cacheKey)
+                            if (owned) file.delete()
+                        }
+                    }
+                    afterKey = page.last().cacheKey
+                    if (page.size < RECONCILIATION_BATCH_SIZE) break
+                }
+                dir.listFiles()?.forEach { file ->
+                    val indexed = if (file.name.endsWith(".part")) null else dao.get(file.name)
+                    val ownsThisFile = indexed != null &&
+                        File(indexed.localFilePathPrivate).absoluteFile == file.absoluteFile
+                    if (!ownsThisFile) file.delete()
+                }
+                reconciled = true
+            }
+        }
+    }
+
+    private suspend fun evictIfNeeded(protectedStableIds: Set<String>) = evictionLock.withLock {
+        maintenanceLock.withLock {
+            val max = maxBytesProvider().coerceAtLeast(0L)
+            var total = dao.totalSizeBytes()
+            val protected = (protectedStableIds + EMPTY_PROTECTED_SENTINEL).toList()
+            while (total > max) {
+                val candidates = dao.evictionCandidates(protected, limit = EVICTION_BATCH_SIZE)
+                if (candidates.isEmpty()) break
+                var removedAny = false
+                for (candidate in candidates) {
+                    if (total <= max) break
+                    val file = File(candidate.localFilePathPrivate)
+                    if (file.exists() && !file.delete()) continue
+                    dao.delete(candidate.cacheKey)
+                    total = subtractSize(total, candidate.sizeBytes)
+                    removedAny = true
+                }
+                if (!removedAny) break
+                total = dao.totalSizeBytes()
+            }
         }
     }
 
     /** Deletes every cached thumbnail. The cache repopulates lazily as photos are shown again. */
     suspend fun clear() = withContext(io) {
-        dao.clear()
-        dir.listFiles()?.forEach { it.delete() }
+        maintenanceLock.withLock {
+            cacheGeneration.incrementAndGet()
+            dao.clear()
+            dir.listFiles()?.forEach { it.delete() }
+            reconciled = true
+        }
         Unit
     }
 
@@ -150,19 +246,32 @@ class LocalThumbnailCache(
     companion object {
         private const val JPEG_QUALITY = 85
         private const val GB = 1024L * 1024L * 1024L
+        private const val EVICTION_BATCH_SIZE = 256
+        private const val RECONCILIATION_BATCH_SIZE = 256
+        private const val EMPTY_PROTECTED_SENTINEL = "__never_a_photo_id__"
 
-        const val MIN_MAX_BYTES = 1L * GB
         const val RESERVED_FREE_BYTES = 2L * GB
 
+        private fun subtractSize(total: Long, removed: Long): Long {
+            val safeRemoved = removed.coerceAtLeast(0L)
+            return if (safeRemoved >= total) 0L else total - safeRemoved
+        }
+
         /**
-         * Clamp a user-requested max size to `[1 GiB, currently-available space - 2 GiB]`.
-         * The ceiling is recomputed against live free space every time — it is not a
-         * one-time setting, since available space genuinely changes as the device is used.
+         * Clamp the configured maximum while preserving 2 GiB of live free space. On a
+         * nearly-full filesystem zero disables new cache growth; forcing a 1 GiB minimum
+         * there would violate the reserve this function promises to keep.
          */
-        fun clampMaxBytes(requestedBytes: Long, context: Context): Long {
-            val free = context.filesDir.usableSpace
-            val ceiling = max(MIN_MAX_BYTES, free - RESERVED_FREE_BYTES)
-            return requestedBytes.coerceIn(MIN_MAX_BYTES, ceiling)
+        fun clampMaxBytes(
+            requestedBytes: Long,
+            context: Context,
+            currentCacheBytes: Long = 0L,
+        ): Long {
+            val free = context.filesDir.usableSpace.coerceAtLeast(0L)
+            val current = currentCacheBytes.coerceAtLeast(0L)
+            val reclaimable = if (current > Long.MAX_VALUE - free) Long.MAX_VALUE else free + current
+            val ceiling = (reclaimable - RESERVED_FREE_BYTES).coerceAtLeast(0L)
+            return requestedBytes.coerceAtLeast(0L).coerceAtMost(ceiling)
         }
     }
 }

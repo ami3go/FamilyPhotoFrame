@@ -4,12 +4,19 @@ import android.content.Context
 import android.graphics.BitmapFactory
 import com.example.familyphotoframe.data.db.CacheIndexDao
 import com.example.familyphotoframe.data.db.CacheIndexEntity
+import com.example.familyphotoframe.data.source.OpenOptions
 import com.example.familyphotoframe.data.source.PhotoItem
 import com.example.familyphotoframe.data.source.PhotoSource
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.File
+import java.io.FileOutputStream
 import java.io.InterruptedIOException
 import java.net.ConnectException
 import java.net.NoRouteToHostException
@@ -45,7 +52,7 @@ class MediaCache(
      */
     private val photoIndex: PhotoCacheIndexWriter? = null,
     /** Max cache size in bytes; defaults to spec §16.1 formula. */
-    private val maxBytesProvider: () -> Long = { defaultMaxBytes(context) },
+    private val maxBytesProvider: (suspend () -> Long)? = null,
 ) {
     /** The slice of [com.example.familyphotoframe.data.db.PhotoDao] this cache may write. */
     interface PhotoCacheIndexWriter {
@@ -74,6 +81,19 @@ class MediaCache(
 
     private val dir: File = File(context.filesDir, "mediacache").apply { mkdirs() }
     private val tmpSuffixCounter = java.util.concurrent.atomic.AtomicLong(0)
+    private class KeyLock {
+        val mutex = Mutex()
+        var users = 0
+    }
+
+    private val keyLocksGuard = Any()
+    private val keyLocks = HashMap<String, KeyLock>()
+    private val transferSlots = Semaphore(MAX_CONCURRENT_TRANSFERS)
+    private val reconcileLock = Mutex()
+    private val evictionLock = Mutex()
+    private val maintenanceLock = Mutex()
+    private val cacheGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+    @Volatile private var reconciled = false
 
     fun keyFor(item: PhotoItem): String = item.stableId
 
@@ -87,31 +107,41 @@ class MediaCache(
         protectedKeys: Set<String>,
     ): ResolveResult = withContext(io) {
         val key = keyFor(item)
-        val existing = try {
-            dao.get(key)
+        try {
+            ensureReconciled()
+            withKeyLock(key) {
+                val cached = maintenanceLock.withLock {
+                    val existing = dao.get(key)
+                    if (existing != null) {
+                        val f = File(existing.localFilePathPrivate)
+                        if (f.exists() && existing.verifiedDecodeOk) {
+                            dao.touch(key, System.currentTimeMillis())
+                            mirrorCacheKey(item.stableId, key)
+                            return@withLock ResolveResult.Ready(f, cacheHit = true)
+                        }
+                        // Stale/missing entry — drop it and re-download.
+                        dao.delete(key)
+                        f.delete()
+                        photoIndex?.clearCacheKey(key)
+                    }
+                    null
+                }
+                if (cached != null) return@withKeyLock cached
+                val generation = cacheGeneration.get()
+                when (val downloaded = transferSlots.withPermit {
+                    download(item, source, key, generation)
+                }) {
+                    is ResolveResult.Ready -> {
+                        evictIfNeeded(protectedKeys + key)
+                        downloaded
+                    }
+                    is ResolveResult.Failed -> downloaded
+                }
+            }
         } catch (c: CancellationException) {
             throw c
         } catch (e: Exception) {
-            return@withContext ResolveResult.Failed(FailureStage.CACHE_LOOKUP, e.javaClass.simpleName)
-        }
-        if (existing != null) {
-            val f = File(existing.localFilePathPrivate)
-            if (f.exists() && existing.verifiedDecodeOk) {
-                dao.touch(key, System.currentTimeMillis())
-                return@withContext ResolveResult.Ready(f, cacheHit = true)
-            }
-            // Stale/missing entry — drop it and re-download.
-            dao.delete(key)
-            f.delete()
-            photoIndex?.clearCacheKey(key)
-        }
-        when (val downloaded = download(item, source, key)) {
-            is ResolveResult.Ready -> {
-                photoIndex?.setCacheKey(item.stableId, key)
-                evictIfNeeded(protectedKeys)
-                downloaded
-            }
-            is ResolveResult.Failed -> downloaded
+            ResolveResult.Failed(FailureStage.CACHE_LOOKUP, e.javaClass.simpleName)
         }
     }
 
@@ -129,37 +159,95 @@ class MediaCache(
      */
     suspend fun resolveIfCached(item: PhotoItem): ResolveResult = withContext(io) {
         val key = keyFor(item)
-        val existing = try {
-            dao.get(key)
+        try {
+            ensureReconciled()
+            withKeyLock(key) {
+                maintenanceLock.withLock {
+                    val existing = dao.get(key)
+                        ?: return@withLock ResolveResult.Failed(FailureStage.CACHE_LOOKUP)
+                    val f = File(existing.localFilePathPrivate)
+                    if (f.exists() && existing.verifiedDecodeOk) {
+                        dao.touch(key, System.currentTimeMillis())
+                        return@withLock ResolveResult.Ready(f, cacheHit = true)
+                    }
+                    dao.delete(key)
+                    f.delete()
+                    photoIndex?.clearCacheKey(key)
+                    ResolveResult.Failed(FailureStage.CACHE_LOOKUP)
+                }
+            }
         } catch (c: CancellationException) {
             throw c
         } catch (e: Exception) {
-            return@withContext ResolveResult.Failed(FailureStage.CACHE_LOOKUP, e.javaClass.simpleName)
-        } ?: return@withContext ResolveResult.Failed(FailureStage.CACHE_LOOKUP)
-        val f = File(existing.localFilePathPrivate)
-        if (f.exists() && existing.verifiedDecodeOk) {
-            dao.touch(key, System.currentTimeMillis())
-            return@withContext ResolveResult.Ready(f, cacheHit = true)
+            ResolveResult.Failed(FailureStage.CACHE_LOOKUP, e.javaClass.simpleName)
         }
-        dao.delete(key)
-        f.delete()
-        photoIndex?.clearCacheKey(key)
-        ResolveResult.Failed(FailureStage.CACHE_LOOKUP)
     }
 
     suspend fun getIfCached(item: PhotoItem): File? =
         (resolveIfCached(item) as? ResolveResult.Ready)?.file
 
-    private suspend fun download(item: PhotoItem, source: PhotoSource, key: String): ResolveResult {
+    /** One producer per stable cache key; waiters re-check the committed entry. */
+    private suspend fun <T> withKeyLock(key: String, block: suspend () -> T): T {
+        val holder = synchronized(keyLocksGuard) {
+            keyLocks.getOrPut(key, ::KeyLock).also { it.users++ }
+        }
+        var locked = false
+        return try {
+            holder.mutex.lock()
+            locked = true
+            block()
+        } finally {
+            if (locked) holder.mutex.unlock()
+            synchronized(keyLocksGuard) {
+                holder.users--
+                if (holder.users == 0 && keyLocks[key] === holder) keyLocks.remove(key)
+            }
+        }
+    }
+
+    private suspend fun mirrorCacheKey(stableId: String, key: String) {
+        try {
+            photoIndex?.setCacheKey(stableId, key)
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Exception) {
+            // The cache entry remains usable; a later hit retries this optional mirror.
+        }
+    }
+
+    private suspend fun download(
+        item: PhotoItem,
+        source: PhotoSource,
+        key: String,
+        generation: Long,
+    ): ResolveResult {
         val target = File(dir, key)
         // Unique per call so concurrent downloads of the same key (e.g. current photo also
         // happens to be the preloaded next photo) never write/delete/rename the same temp file.
         val tmp = File(dir, "$key.${tmpSuffixCounter.incrementAndGet()}.part")
         var stage = FailureStage.SOURCE_READ
+        var targetCommitted = false
+        var indexCommitted = false
         return try {
-            source.openStream(item).use { input ->
-                stage = FailureStage.SOURCE_READ
-                tmp.outputStream().use { out -> input.copyTo(out) }
+            if (dir.usableSpace <= RESERVED_FREE_BYTES) {
+                throw CacheStorageReserveException(RESERVED_FREE_BYTES)
+            }
+            withTimeout(TOTAL_TRANSFER_TIMEOUT_MS) {
+                source.openStream(
+                    item,
+                    OpenOptions(timeoutMs = TOTAL_TRANSFER_TIMEOUT_MS),
+                ).use { input ->
+                    stage = FailureStage.SOURCE_READ
+                    FileOutputStream(tmp).use { out ->
+                        input.copyToCancellable(
+                            output = out,
+                            maxBytes = MAX_ENTRY_BYTES,
+                            minimumUsableBytes = RESERVED_FREE_BYTES,
+                            usableBytes = { dir.usableSpace },
+                        )
+                        out.fd.sync()
+                    }
+                }
             }
             stage = FailureStage.VERIFY_DECODE
             if (!decodes(tmp)) {
@@ -167,28 +255,38 @@ class MediaCache(
                 return ResolveResult.Failed(FailureStage.VERIFY_DECODE)
             }
             stage = FailureStage.CACHE_COMMIT
-            if (!tmp.renameTo(target)) {          // rename can fail across some FS states
-                tmp.copyTo(target, overwrite = true)
-                tmp.delete()
-            }
-            val now = System.currentTimeMillis()
-            dao.put(
-                CacheIndexEntity(
-                    cacheKey = key,
-                    photoStableId = item.stableId,
-                    localFilePathPrivate = target.path,
-                    sizeBytes = target.length(),
-                    createdAtEpochMs = now,
-                    lastAccessedAtEpochMs = now,
-                    verifiedDecodeOk = true,
+            maintenanceLock.withLock {
+                if (cacheGeneration.get() != generation) {
+                    throw java.io.IOException("cache_cleared_during_transfer")
+                }
+                if (target.exists() && !target.delete()) {
+                    throw java.io.IOException("cache_target_replace_failed")
+                }
+                if (!tmp.renameTo(target)) throw java.io.IOException("cache_atomic_rename_failed")
+                targetCommitted = true
+                val now = System.currentTimeMillis()
+                dao.put(
+                    CacheIndexEntity(
+                        cacheKey = key,
+                        photoStableId = item.stableId,
+                        localFilePathPrivate = target.path,
+                        sizeBytes = target.length(),
+                        createdAtEpochMs = now,
+                        lastAccessedAtEpochMs = now,
+                        verifiedDecodeOk = true,
+                    )
                 )
-            )
+                indexCommitted = true
+                mirrorCacheKey(item.stableId, key)
+            }
             ResolveResult.Ready(target, cacheHit = false)
         } catch (c: CancellationException) {
             tmp.delete()
+            if (targetCommitted && !indexCommitted) target.delete()
             throw c
         } catch (e: Exception) {
             tmp.delete()
+            if (targetCommitted && !indexCommitted) target.delete()
             ResolveResult.Failed(
                 stage,
                 e.javaClass.simpleName,
@@ -223,35 +321,104 @@ class MediaCache(
         return opts.outWidth > 0 && opts.outHeight > 0
     }
 
-    private suspend fun evictIfNeeded(protectedKeys: Set<String>) {
-        var total = dao.totalSizeBytes()
-        val max = maxBytesProvider()
-        if (total <= max) return
-        val candidates = dao.evictionCandidates(protectedKeys.toList(), limit = 64)
-        for (c in candidates) {
-            if (total <= max) break
-            File(c.localFilePathPrivate).delete()
-            dao.delete(c.cacheKey)
-            photoIndex?.clearCacheKey(c.cacheKey)
-            total -= c.sizeBytes
+    /** Removes crash leftovers and stale DB rows before the first cache operation. */
+    private suspend fun ensureReconciled() {
+        if (reconciled) return
+        reconcileLock.withLock {
+            if (reconciled) return
+            maintenanceLock.withLock {
+                var afterKey = ""
+                while (true) {
+                    val page = dao.reconciliationPage(afterKey, RECONCILIATION_BATCH_SIZE)
+                    if (page.isEmpty()) break
+                    for (entry in page) {
+                        val file = File(entry.localFilePathPrivate)
+                        val owned = file.absoluteFile.parentFile == dir.absoluteFile
+                        if (!owned || !file.isFile || !entry.verifiedDecodeOk) {
+                            dao.delete(entry.cacheKey)
+                            photoIndex?.clearCacheKey(entry.cacheKey)
+                            if (owned) file.delete()
+                        }
+                    }
+                    afterKey = page.last().cacheKey
+                    if (page.size < RECONCILIATION_BATCH_SIZE) break
+                }
+                dir.listFiles()?.forEach { file ->
+                    val indexed = if (file.name.endsWith(".part")) null else dao.get(file.name)
+                    val ownsThisFile = indexed != null && indexed.verifiedDecodeOk &&
+                        File(indexed.localFilePathPrivate).absoluteFile == file.absoluteFile
+                    if (!ownsThisFile) file.delete()
+                }
+                reconciled = true
+            }
+        }
+    }
+
+    private suspend fun evictIfNeeded(protectedKeys: Set<String>) = evictionLock.withLock {
+        maintenanceLock.withLock {
+            var total = dao.totalSizeBytes()
+            val max = (maxBytesProvider?.invoke() ?: defaultMaxBytes(dir, total)).coerceAtLeast(0L)
+            val protected = (protectedKeys + EMPTY_PROTECTED_SENTINEL).toList()
+            while (total > max) {
+                val candidates = dao.evictionCandidates(protected, limit = EVICTION_BATCH_SIZE)
+                if (candidates.isEmpty()) break
+                var removedAny = false
+                for (candidate in candidates) {
+                    if (total <= max) break
+                    val file = File(candidate.localFilePathPrivate)
+                    if (file.exists() && !file.delete()) continue
+                    dao.delete(candidate.cacheKey)
+                    photoIndex?.clearCacheKey(candidate.cacheKey)
+                    total = subtractSize(total, candidate.sizeBytes)
+                    removedAny = true
+                }
+                if (!removedAny) break
+                total = dao.totalSizeBytes()
+            }
         }
     }
 
     suspend fun clear() = withContext(io) {
-        dao.clear()
-        dir.listFiles()?.forEach { it.delete() }
-        photoIndex?.clearAllCacheKeys()
+        maintenanceLock.withLock {
+            cacheGeneration.incrementAndGet()
+            dao.clear()
+            dir.listFiles()?.forEach { it.delete() }
+            photoIndex?.clearAllCacheKeys()
+            reconciled = true
+        }
         Unit
     }
 
     companion object {
         private const val MB = 1024L * 1024L
+        private const val MAX_CONCURRENT_TRANSFERS = 2
+        private const val EVICTION_BATCH_SIZE = 64
+        private const val RECONCILIATION_BATCH_SIZE = 256
+        private const val EMPTY_PROTECTED_SENTINEL = "__never_a_cache_key__"
+        private const val MAX_ENTRY_BYTES = 256L * MB
+        private const val RESERVED_FREE_BYTES = 512L * MB
+        private const val TOTAL_TRANSFER_TIMEOUT_MS = 2L * 60L * 1000L
 
-        /** Default max: min(1024 MB, 10% of free space), lower bound 64 MB (spec §16.1). */
-        fun defaultMaxBytes(context: Context): Long {
-            val free = context.filesDir.usableSpace
-            val tenPercent = (free * 0.10).toLong()
-            return max(64L * MB, min(1024L * MB, tenPercent))
+        private fun subtractSize(total: Long, removed: Long): Long {
+            val safeRemoved = removed.coerceAtLeast(0L)
+            return if (safeRemoved >= total) 0L else total - safeRemoved
+        }
+
+        /** Default max while always preserving a 512 MiB filesystem safety reserve. */
+        fun defaultMaxBytes(context: Context, currentCacheBytes: Long = 0L): Long =
+            defaultMaxBytes(context.filesDir, currentCacheBytes)
+
+        private fun defaultMaxBytes(storage: File, currentCacheBytes: Long): Long {
+            val free = storage.usableSpace.coerceAtLeast(0L)
+            val current = currentCacheBytes.coerceAtLeast(0L)
+            // Cache bytes are reclaimable. Including them prevents a live max-size
+            // calculation from shrinking as the cache grows, then evicting everything
+            // when free space approaches the reserve.
+            val reclaimable = if (current > Long.MAX_VALUE - free) Long.MAX_VALUE else free + current
+            val ceiling = (reclaimable - RESERVED_FREE_BYTES).coerceAtLeast(0L)
+            if (ceiling == 0L) return 0L
+            val tenPercent = (reclaimable * 0.10).toLong()
+            return min(ceiling, max(64L * MB, min(1024L * MB, tenPercent)))
         }
     }
 }

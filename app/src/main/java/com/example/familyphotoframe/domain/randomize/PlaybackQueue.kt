@@ -50,7 +50,7 @@ class PlaybackQueue {
         private set
 
     val poolSize: Int get() = pool.size
-    val remainingInCycle: Int get() = remainingEnd - remainingHead
+    val remainingInCycle: Int get() = if (shuffle) remainingEnd - remainingHead else pool.size - consumedCount
     fun isEmpty(): Boolean = pool.isEmpty()
 
     /**
@@ -109,7 +109,12 @@ class PlaybackQueue {
             avoidSeamRepeat()
         }
         if (remainingInCycle == 0) return null
-        val position = remaining[remainingHead++]
+        val position = if (shuffle) {
+            remaining[remainingHead++]
+        } else {
+            nextSequentialPosition()
+        }
+        if (position < 0) return null
         markConsumed(position)
         val id = pool[position]
         lastReturned = id
@@ -154,12 +159,14 @@ class PlaybackQueue {
         }
         if (!matched) return
 
-        var write = remainingHead
-        for (read in remainingHead until remainingEnd) {
-            val position = remaining[read]
-            if (!isConsumed(position)) remaining[write++] = position
+        if (shuffle) {
+            var write = remainingHead
+            for (read in remainingHead until remainingEnd) {
+                val position = remaining[read]
+                if (!isConsumed(position)) remaining[write++] = position
+            }
+            remainingEnd = write
         }
-        remainingEnd = write
         lastReturned = lastValid ?: lastReturned
     }
 
@@ -195,13 +202,13 @@ class PlaybackQueue {
             sortedToPool = EMPTY_INTS
             return
         }
-        // Boxed only here, on a genuine pool change, never on the per-slide path.
-        val order = (0 until size).sortedBy { pool[it] }
-        sortedIds = LongArray(size)
+        // Primitive-only index build: the previous sortedBy implementation allocated
+        // one boxed Int plus list nodes per photo and could transiently exhaust old heaps.
+        sortedIds = pool.copyOf().also { it.sort() }
         sortedToPool = IntArray(size)
-        order.forEachIndexed { sortedPosition, poolPosition ->
-            sortedIds[sortedPosition] = pool[poolPosition]
-            sortedToPool[sortedPosition] = poolPosition
+        for (poolPosition in pool.indices) {
+            val sortedPosition = sortedIds.binarySearch(pool[poolPosition])
+            if (sortedPosition >= 0) sortedToPool[sortedPosition] = poolPosition
         }
     }
 
@@ -212,6 +219,12 @@ class PlaybackQueue {
     }
 
     private fun rebuildRemaining(random: Random) {
+        if (!shuffle) {
+            remaining = EMPTY_INTS
+            remainingHead = 0
+            remainingEnd = 0
+            return
+        }
         val owed = IntArray(pool.size - consumedCount)
         var n = 0
         for (position in pool.indices) {
@@ -221,6 +234,12 @@ class PlaybackQueue {
         remaining = owed
         remainingHead = 0
         remainingEnd = n
+    }
+
+    /** Ordered modes need no O(n) position array; scan from the last issued position. */
+    private fun nextSequentialPosition(): Int {
+        while (remainingHead < pool.size && isConsumed(remainingHead)) remainingHead++
+        return if (remainingHead < pool.size) remainingHead++ else -1
     }
 
     /**
@@ -242,6 +261,7 @@ class PlaybackQueue {
      * cannot loop; with a pool of one there is nothing to avoid, so the repeat stands.
      */
     private fun avoidSeamRepeat() {
+        if (!shuffle) return
         if (remainingInCycle < 2) return
         if (pool[remaining[remainingHead]] != lastReturned) return
         val first = remaining[remainingHead]

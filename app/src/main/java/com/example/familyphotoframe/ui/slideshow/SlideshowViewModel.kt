@@ -169,10 +169,13 @@ class SlideshowViewModel(
     val hostGeneration: StateFlow<Long> = _hostGeneration.asStateFlow()
     private val hostLifecycleGate = HostLifecycleGate()
     private val webPinRegenerationInFlight = AtomicBoolean(false)
+    private var engineOwnerToken: Long = 0L
+    private var webControlsOwnerToken: Long = 0L
 
     fun onHostStarted() {
         _hostGeneration.value = hostLifecycleGate.start()
         _hostActive.value = true
+        engine.setHostActive(engineOwnerToken, true)
     }
 
     fun onHostStopped() {
@@ -180,6 +183,7 @@ class SlideshowViewModel(
         // ignores cancellation can therefore never race onStop and commit a stale result.
         _hostGeneration.value = hostLifecycleGate.stop()
         _hostActive.value = false
+        engine.setHostActive(engineOwnerToken, false)
     }
 
     fun hostPlaybackToken(): Long? = hostLifecycleGate.tokenIfActive()
@@ -349,7 +353,7 @@ class SlideshowViewModel(
                 .distinctUntilChangedBy { it.signature to it.refreshToken }
                 .collectLatest(::applySourceRequest)
         }
-        engine.start(viewModelScope)
+        engineOwnerToken = engine.start(viewModelScope)
         healthJob = viewModelScope.launch {
             while (isActive) {
                 refreshHealth()
@@ -385,11 +389,12 @@ class SlideshowViewModel(
         frameStatsJob?.cancel()
         // onCleared cannot suspend, so this can only request cancellation, not await it.
         cancelSourceConsumingJobs()
+        engine.stop(engineOwnerToken)
         // Remote sessions outlive the ViewModel unless released here: on a configuration
         // change the replacement instance builds its own, and the old transports would
         // stay registered with nothing left to close them.
         releaseResolvedSources()
-        services.webServer.controls = null
+        services.webServer.clearControls(webControlsOwnerToken)
         super.onCleared()
     }
 
@@ -421,7 +426,7 @@ class SlideshowViewModel(
                             src, "SMB", 8_000, DiagnosticOrigin.WEB_UI, configRevision,
                         )))
                     } finally {
-                        runCatching { src.close() }
+                        runCatching { src.shutdown() }
                     }
                 }
                 ActiveSourceKind.SYNOLOGY -> {
@@ -437,9 +442,13 @@ class SlideshowViewModel(
                         ),
                         SynologyCredentials(syn.user, password),
                     )
-                    appContext.getString(synologyHealthMessageRes(sourceTestWithDiagnostics(
-                        src, "SYNOLOGY", 10_000, DiagnosticOrigin.WEB_UI, configRevision,
-                    )))
+                    try {
+                        appContext.getString(synologyHealthMessageRes(sourceTestWithDiagnostics(
+                            src, "SYNOLOGY", 10_000, DiagnosticOrigin.WEB_UI, configRevision,
+                        )))
+                    } finally {
+                        runCatching { src.shutdown() }
+                    }
                 }
                 ActiveSourceKind.LOCAL_SAF -> {
                     val uri = s.source.treeUri ?: return appContext.getString(R.string.msg_folder_missing)
@@ -521,14 +530,14 @@ class SlideshowViewModel(
                     services.factoryResetCoordinator.reset()
                     // Keep this request alive long enough to deliver its terminal success;
                     // the process restart then destroys all in-memory web sessions.
-                    services.webServer.controls = null
+                    services.webServer.clearControls(webControlsOwnerToken)
                     scheduleApplicationRestart()
                     null
                 } catch (error: Exception) {
                     // The ViewModel has already been quiesced, and DataStore/cache work
                     // cannot share Room's transaction. Restart into the persisted state
                     // instead of attempting to resume a potentially partial runtime.
-                    services.webServer.controls = null
+                    services.webServer.clearControls(webControlsOwnerToken)
                     scheduleApplicationRestart()
                     "Factory reset failed at a protected boundary: " +
                         error.javaClass.simpleName.ifBlank { "UNKNOWN" } +
@@ -606,7 +615,7 @@ class SlideshowViewModel(
     // Declared after [webControls] so the property is initialized before it is read
     // (Kotlin runs init blocks and property initializers in declaration order).
     init {
-        services.webServer.controls = webControls
+        webControlsOwnerToken = services.webServer.installControls(webControls)
     }
 
     private suspend fun onSettings(s: AppSettings) {
@@ -2882,7 +2891,7 @@ class SlideshowViewModel(
                     diagnosticToken(draft.toString(), "config"),
                 ))
             } finally {
-                runCatching { src.close() }
+                runCatching { src.shutdown() }
             }
             _state.update { it.copy(smbTestResult = appContext.getString(res)) }
         }
@@ -2987,13 +2996,17 @@ class SlideshowViewModel(
                 SynologyConnection(baseUrl = draft.baseUrl, folderPath = draft.folderPath),
                 SynologyCredentials(draft.user, effectivePassword, otpCode.trim().ifBlank { null }),
             )
-            val res = synologyHealthMessageRes(sourceTestWithDiagnostics(
-                src,
-                "SYNOLOGY",
-                10_000,
-                DiagnosticOrigin.ANDROID_UI,
-                diagnosticToken(draft.toString(), "config"),
-            ))
+            val res = try {
+                synologyHealthMessageRes(sourceTestWithDiagnostics(
+                    src,
+                    "SYNOLOGY",
+                    10_000,
+                    DiagnosticOrigin.ANDROID_UI,
+                    diagnosticToken(draft.toString(), "config"),
+                ))
+            } finally {
+                runCatching { src.shutdown() }
+            }
             _state.update { it.copy(smbTestResult = appContext.getString(res)) }
         }
     }
@@ -3008,7 +3021,11 @@ class SlideshowViewModel(
                 SynologyConnection(baseUrl = SynologyApi.normalizeBaseUrl(baseUrl)),
                 SynologyCredentials("", ""),
             )
-            _state.update { it.copy(synologyCertFingerprint = src.probeCertificateFingerprint()) }
+            try {
+                _state.update { it.copy(synologyCertFingerprint = src.probeCertificateFingerprint()) }
+            } finally {
+                runCatching { src.shutdown() }
+            }
         }
     }
 
@@ -3493,6 +3510,9 @@ class SlideshowViewModel(
     fun toggleFavorite() = engine.toggleFavorite()
 
     fun setInteractionHold(held: Boolean) = engine.setInteractionHold(held)
+
+    fun setSurfaceObscured(obscured: Boolean) =
+        engine.setSurfaceObscured(engineOwnerToken, obscured)
 
     fun onVisiblePresentationChanged(photos: List<com.example.familyphotoframe.domain.engine.DisplayPhoto>) {
         _state.update { current ->
@@ -4786,7 +4806,7 @@ class SlideshowViewModel(
             val usage = services.localThumbnailCache.currentSizeBytes()
             val requested = services.settings.settings.first().localThumbnailCache.maxBytes
             val effectiveMax = com.example.familyphotoframe.data.cache.LocalThumbnailCache
-                .clampMaxBytes(requested, appContext)
+                .clampMaxBytes(requested, appContext, usage)
             _state.update {
                 it.copy(
                     localThumbnailCacheUsageBytes = usage,

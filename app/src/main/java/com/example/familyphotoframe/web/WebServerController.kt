@@ -71,6 +71,7 @@ import java.net.NetworkInterface
 import java.io.InputStream
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Owns the embedded web server's lifecycle (spec §15.1). The server is **off by
@@ -116,7 +117,26 @@ class WebServerController(
         suspend fun capturePerformanceSample(): String? = "Performance capture needs the frame running"
     }
 
-    var controls: FrameControls? = null
+    private data class ControlsBinding(val owner: Long, val controls: FrameControls)
+    private val controlsOwner = AtomicLong(0L)
+    private val controlsBinding = AtomicReference<ControlsBinding?>(null)
+
+    /** Publish callbacks with a generation token; older ViewModels cannot clear newer ones. */
+    fun installControls(controls: FrameControls): Long {
+        val owner = controlsOwner.incrementAndGet()
+        controlsBinding.set(ControlsBinding(owner, controls))
+        return owner
+    }
+
+    fun clearControls(owner: Long) {
+        while (true) {
+            val current = controlsBinding.get() ?: return
+            if (current.owner != owner) return
+            if (controlsBinding.compareAndSet(current, null)) return
+        }
+    }
+
+    private fun currentControls(): FrameControls? = controlsBinding.get()?.controls
 
     @Volatile private var server: WebConfigServer? = null
     @Volatile private var security: WebSecurity? = null
@@ -453,7 +473,7 @@ class WebServerController(
          * error.
          */
         private suspend fun withControls(block: suspend (FrameControls) -> String?): String? {
-            val frameControls = controls ?: return "Frame is not running"
+            val frameControls = currentControls() ?: return "Frame is not running"
             return block(frameControls)
         }
 
@@ -474,41 +494,125 @@ class WebServerController(
         }
 
         override suspend fun testSavedSource(): String =
-            controls?.testSavedSource() ?: "Frame is not running"
+            currentControls()?.testSavedSource() ?: "Frame is not running"
 
         override suspend fun settingsRevision(): Long = revisionOf(settings.settings.first())
 
-        override suspend fun foldersJson(): JsonArray {
+        override suspend fun foldersJson(query: FolderPageQuery): JsonObject {
             val s = settings.settings.first()
             val selected = s.selectedFolders
-            val folders = photoDao.folderSummaries(sourceIdsFor(s))
-            return buildJsonArray {
-                folders.forEach { folder ->
-                    add(buildJsonObject {
-                        put("key", folder.selectionKey)
-                        put("sourceId", folder.sourceId)
-                        put("path", folder.displayPath)
-                        put("name", folder.name)
-                        put("photoCount", folder.photoCount)
-                        put(
-                            "selected",
-                            selected.isEmpty() || folder.selectionKey in selected || folder.name in selected,
-                        )
-                    })
-                }
+            val sourceIds = sourceIdsFor(s)
+            val offset = query.offset.coerceAtLeast(0)
+            val limit = query.limit.coerceIn(1, 200)
+            val search = query.search.trim().take(128)
+            val total = photoDao.folderSummaryCount(sourceIds, search)
+            val folders = photoDao.folderSummariesPage(sourceIds, search, limit, offset)
+            return buildJsonObject {
+                put("items", buildJsonArray {
+                    folders.forEach { folder ->
+                        add(buildJsonObject {
+                            put("key", folder.selectionKey)
+                            put("sourceId", folder.sourceId)
+                            put("path", folder.displayPath)
+                            put("name", folder.name)
+                            put("photoCount", folder.photoCount)
+                            put(
+                                "selected",
+                                selected.isEmpty() || folder.selectionKey in selected || folder.name in selected,
+                            )
+                        })
+                    }
+                })
+                put("total", total)
+                put("offset", offset)
+                put("limit", limit)
+                put("hasMore", offset.toLong() + folders.size.toLong() < total)
             }
         }
 
         override suspend fun folderAction(body: JsonObject): JsonObject {
             val action = body["action"]?.jsonPrimitive?.content?.trim().orEmpty()
-            val folderKey = body["folderKey"]?.jsonPrimitive?.content?.trim().orEmpty()
-            require(folderKey.isNotBlank()) { "Missing folder key" }
             val s = settings.settings.first()
-            val valid = photoDao.folderSummaries(sourceIdsFor(s)).any { it.selectionKey == folderKey }
-            require(valid) { "Folder is not available" }
+            val sourceIds = sourceIdsFor(s)
+            val folderKeys = when (action) {
+                "set_selected" -> listOf(
+                    body["folderKey"]?.jsonPrimitive?.content?.trim().orEmpty(),
+                )
+                "set_selected_batch" -> (body["folderKeys"] as? JsonArray).orEmpty()
+                    .map { it.jsonPrimitive.content.trim() }
+                else -> listOf(
+                    body["folderKey"]?.jsonPrimitive?.content?.trim().orEmpty(),
+                )
+            }
+            require(folderKeys.isNotEmpty() && folderKeys.none { it.isBlank() }) {
+                "Missing folder key"
+            }
+            require(folderKeys.size <= FOLDER_SELECTION_PAGE_SIZE) { "Too many folder keys" }
+            require(folderKeys.all { it.length <= MAX_FOLDER_SELECTION_KEY_CHARS && '\u001e' !in it }) {
+                "Invalid folder key"
+            }
+            require(folderKeys.all { photoDao.folderSelectionExists(sourceIds, it) != 0 }) {
+                "Folder is not available"
+            }
+            if (action == "set_selected" || action == "set_selected_batch") {
+                val selected = body["selected"]?.jsonPrimitive?.booleanOrNull
+                    ?: throw IllegalArgumentException("Missing selected state")
+                val allKeys = if (!selected && s.selectedFolders.isEmpty()) {
+                    val total = photoDao.folderSummaryCount(sourceIds, "")
+                    require(total <= MAX_EXPLICIT_FOLDER_SELECTION) {
+                        "Too many folders to represent an all-except-one selection"
+                    }
+                    buildSet {
+                        var offset = 0
+                        var totalChars = 0
+                        while (offset < total) {
+                            val page = photoDao.folderSummariesPage(
+                                sourceIds,
+                                search = "",
+                                limit = FOLDER_SELECTION_PAGE_SIZE,
+                                offset = offset,
+                            )
+                            if (page.isEmpty()) break
+                            page.forEach { folder ->
+                                val key = folder.selectionKey
+                                require(key.length <= MAX_FOLDER_SELECTION_KEY_CHARS && '\u001e' !in key) {
+                                    "Folder key exceeds the supported selection size"
+                                }
+                                if (key !in this) {
+                                    require(totalChars <= MAX_EXPLICIT_FOLDER_SELECTION_CHARS - key.length) {
+                                        "Folder selection is too large to store safely"
+                                    }
+                                    add(key)
+                                    totalChars += key.length
+                                }
+                            }
+                            offset += page.size
+                        }
+                    }
+                } else {
+                    emptySet()
+                }
+                settings.update { current ->
+                    val next = when {
+                        current.selectedFolders.isEmpty() && selected -> emptySet()
+                        current.selectedFolders.isEmpty() -> allKeys - folderKeys.toSet()
+                        selected -> current.selectedFolders + folderKeys
+                        else -> current.selectedFolders - folderKeys.toSet()
+                    }
+                    current.copy(selectedFolders = next)
+                }
+                return buildJsonObject {
+                    put("action", action)
+                    put("changed", folderKeys.size)
+                    put("selected", selected)
+                }
+            }
+            val folderKey = folderKeys.singleOrNull()
+                ?: throw IllegalArgumentException("This action needs one folder key")
             // Resolved once: these callbacks use null to mean success, so folding the
             // "no controls" case into the same elvis would mask every successful action.
-            val frameControls = controls ?: throw IllegalArgumentException("Frame is not running")
+            val frameControls = currentControls()
+                ?: throw IllegalArgumentException("Frame is not running")
             val error = when (action) {
                 "preview_once" -> frameControls.previewFolderOnce(folderKey)
                 "use_in_playlist" -> frameControls.useFolderInActivePlaylist(folderKey)
@@ -675,15 +779,21 @@ class WebServerController(
                     val name = body["name"]?.jsonPrimitive?.content?.trim()?.take(80).orEmpty()
                     require(name.isNotBlank()) { "Playlist name is required" }
                     settings.update { current ->
+                        require(current.playlists.playlists.count { it.id !in PlaylistSettings.BUILT_IN_IDS } <
+                            PlaylistSettings.MAX_USER_PLAYLISTS
+                        ) { "Playlist limit reached" }
                         require(current.playlists.playlists.none { it.name.equals(name, true) }) { "Playlist name already exists" }
+                        val localUploadsOnly = body["localUploadsOnly"]?.jsonPrimitive?.booleanOrNull ?: false
+                        val folderNames = if (localUploadsOnly) emptySet() else current.selectedFolders
+                        requirePlaylistFolderBudget(current.playlists, folderNames)
                         val now = System.currentTimeMillis()
                         val playlist = SlideshowPlaylist(
                             id = "user_${UUID.randomUUID()}",
                             name = name,
                             favoritesOnly = body["favoritesOnly"]?.jsonPrimitive?.booleanOrNull ?: false,
-                            localUploadsOnly = body["localUploadsOnly"]?.jsonPrimitive?.booleanOrNull ?: false,
-                            sourceIds = if (body["localUploadsOnly"]?.jsonPrimitive?.booleanOrNull == true) setOf("local_uploads") else emptySet(),
-                            folderNames = current.selectedFolders,
+                            localUploadsOnly = localUploadsOnly,
+                            sourceIds = if (localUploadsOnly) setOf("local_uploads") else emptySet(),
+                            folderNames = folderNames,
                             selectionMode = SelectionMode.FOLDER_BALANCED_SHUFFLE,
                             intervalSeconds = current.intervalSecondsClamped,
                             transitionSelectionMode = current.transitionSelectionMode,
@@ -710,14 +820,18 @@ class WebServerController(
                     }
                 }
                 "duplicate" -> settings.update { current ->
+                    require(current.playlists.playlists.count { it.id !in PlaylistSettings.BUILT_IN_IDS } <
+                        PlaylistSettings.MAX_USER_PLAYLISTS
+                    ) { "Playlist limit reached" }
                     val original = current.playlists.playlists.firstOrNull { it.id == id }
                         ?: throw IllegalArgumentException("Unknown playlist")
                     val requested = body["name"]?.jsonPrimitive?.content?.trim()?.take(80).orEmpty()
-                    val base = requested.ifBlank { "${original.name} copy" }
+                    val base = requested.ifBlank { "${original.name} copy" }.take(80)
                     var name = base
                     var suffix = 2
                     while (current.playlists.playlists.any { it.name.equals(name, true) }) {
-                        name = "$base $suffix".take(80)
+                        val ending = " $suffix"
+                        name = base.take((80 - ending.length).coerceAtLeast(0)) + ending
                         suffix += 1
                     }
                     val now = System.currentTimeMillis()
@@ -728,6 +842,7 @@ class WebServerController(
                         createdAtEpochMs = now,
                         updatedAtEpochMs = now,
                     )
+                    requirePlaylistFolderBudget(current.playlists, duplicate.folderNames)
                     current.copy(playlists = current.playlists.copy(
                         playlists = current.playlists.playlists + duplicate,
                     ))
@@ -805,6 +920,9 @@ class WebServerController(
                     val end = body["endTime"]?.jsonPrimitive?.content.orEmpty()
                     require(SleepSchedule.parseMinutes(start) != null && SleepSchedule.parseMinutes(end) != null) { "Times must use HH:mm" }
                     settings.update { current ->
+                        require(current.playlists.scheduleRules.size < PlaylistSettings.MAX_SCHEDULE_RULES) {
+                            "Schedule rule limit reached"
+                        }
                         require(current.playlists.playlists.any { it.id == playlistId }) { "Unknown playlist" }
                         val days = (body["daysOfWeek"] as? JsonArray)
                             ?.mapNotNull { it.jsonPrimitive.intOrNull }
@@ -1001,6 +1119,20 @@ class WebServerController(
             .associateWith { id -> runCatching { photoDao.countForSource(id) }.getOrDefault(0) }
         cachedSourceCounts = now to counts
         return counts
+    }
+
+    private fun requirePlaylistFolderBudget(
+        settings: PlaylistSettings,
+        addedFolders: Iterable<String>,
+    ) {
+        val used = settings.playlists.asSequence()
+            .filter { it.id !in PlaylistSettings.BUILT_IN_IDS }
+            .flatMap { it.folderNames.asSequence() }
+            .sumOf { it.length.toLong() }
+        val added = addedFolders.sumOf { it.length.toLong() }
+        require(added <= PlaylistSettings.MAX_TOTAL_PLAYLIST_FOLDER_CHARS - used) {
+            "Playlist folder-selection storage limit reached"
+        }
     }
 
     private fun sourceIdForKind(kind: ActiveSourceKind): String? = when (kind) {
@@ -1217,6 +1349,10 @@ class WebServerController(
         const val PREVIEW_ACTIVE_WINDOW_MS = 90_000L
         const val MB = 1024L * 1024L
         const val SOURCE_COUNT_CACHE_MS = 15_000L
+        const val FOLDER_SELECTION_PAGE_SIZE = 200
+        const val MAX_EXPLICIT_FOLDER_SELECTION = 20_000L
+        const val MAX_FOLDER_SELECTION_KEY_CHARS = 2_048
+        const val MAX_EXPLICIT_FOLDER_SELECTION_CHARS = 2_000_000
 
         /** Every overlay-anchor field the web API accepts; validated as a group. */
     }

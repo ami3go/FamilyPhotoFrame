@@ -69,7 +69,9 @@ class SmbPhotoSource(
                 put("jcifs.smb.client.maxVersion", "SMB311")
                 put("jcifs.smb.client.connTimeout", conn.connectionTimeoutMs.toString())
                 put("jcifs.smb.client.soTimeout", conn.readTimeoutMs.toString())
-                put("jcifs.smb.client.responseTimeout", conn.readTimeoutMs.toString())
+                // Directory enumeration is a request/response operation rather than a
+                // streaming read, so give it the independently configured list bound.
+                put("jcifs.smb.client.responseTimeout", conn.listTimeoutMs.toString())
                 put("jcifs.smb.client.dfs.disabled", "true")   // simple NAS: skip DFS lookups
             }
             val base: CIFSContext = BaseContext(PropertyConfiguration(props))
@@ -184,7 +186,10 @@ class SmbPhotoSource(
     override suspend fun openStream(item: PhotoItem, options: OpenOptions): InputStream = withContext(io) {
         val lease = contextOwner.acquire()
         try {
-            LeaseReleasingInputStream(SmbFile(item.openToken, lease.value).inputStream, lease)
+            DeadlineInputStream(
+                LeaseReleasingInputStream(SmbFile(item.openToken, lease.value).inputStream, lease),
+                options.timeoutMs,
+            )
         } catch (error: Throwable) {
             lease.close()
             throw error

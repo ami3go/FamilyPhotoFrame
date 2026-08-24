@@ -438,7 +438,7 @@ private fun PlayingContent(
      * recreation — but permanent suppressions written to the database survive across
      * sessions and make the in-memory set redundant after the first scan cycle anyway.
      */
-    val permanentlyFailedCandidates = remember { mutableSetOf<Long>() }
+    val permanentlyFailedCandidates = remember { BoundedLongSet(capacity = 512) }
 
     // Snapshot state stores only tiny handles. Decoded bitmap graphs live in [registry].
     var candidateHandle by remember { mutableStateOf<PreparedSlideHandle?>(null) }
@@ -454,6 +454,14 @@ private fun PlayingContent(
     }
 
     fun slide(handle: PreparedSlideHandle?): PreparedSlide? = registry.get(handle)
+
+    fun protectedSlideHandles(): Set<PreparedSlideHandle> = setOfNotNull(
+        candidateHandle,
+        committedHandle,
+        outgoingHandle,
+        incomingHandle,
+        manualCandidateHandle,
+    )
 
     fun publishBitmapInventory() {
         onBitmapInventory(
@@ -585,7 +593,7 @@ private fun PlayingContent(
                         publishBitmapInventory()
                         return@LaunchedEffect
                     }
-                    registry.put(result.slide).also {
+                    registry.put(result.slide, protectedSlideHandles()).also {
                         uncommittedHandle = it
                     }
                 }
@@ -678,7 +686,7 @@ private fun PlayingContent(
                     publishBitmapInventory()
                     return@LaunchedEffect
                 }
-                registry.put(result.slide)
+                registry.put(result.slide, protectedSlideHandles())
                 publishBitmapInventory()
             }
             is PrepareSlideResult.Failed -> {

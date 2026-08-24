@@ -150,4 +150,19 @@ interface PhotoSource {
      * whoever built the source must call this once it is no longer the active source.
      */
     fun close() {}
+
+    /**
+     * Suspended variant used by one-shot operations and orderly application teardown.
+     *
+     * Most sources release synchronously, so the default delegates to [close]. A source
+     * whose shutdown includes network I/O (for example a Synology API logout) overrides
+     * this method so callers that already run in a coroutine can wait for the bounded
+     * cleanup instead of leaving another session behind.
+     */
+    suspend fun shutdown() {
+        close()
+    }
 }
+
+/** Convert a public Long timeout to the positive Int range required by java.net APIs. */
+internal fun Long.toSocketTimeoutMillis(): Int = coerceIn(1L, Int.MAX_VALUE.toLong()).toInt()

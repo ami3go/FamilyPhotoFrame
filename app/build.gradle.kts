@@ -17,7 +17,7 @@ import java.util.Properties
  */
 val releaseYear = 26
 val buildNumber = 40
-val testingVariant: Int? = 1
+val testingVariant: Int? = 2
 
 plugins {
     alias(libs.plugins.android.application)

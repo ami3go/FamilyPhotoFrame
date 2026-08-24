@@ -1,13 +1,25 @@
 fun runPlaybackMemoryPolicyChecks() {
     println("-- low-memory slideshow circuit breaker --")
-    val heap = 100L * 1024L * 1024L
+    // Standard-threshold checks use a modern-sized heap. API-21-era small heaps have
+    // deliberately earlier thresholds and are asserted separately below.
+    val heap = 256L * 1024L * 1024L
 
     val guarded = PlaybackMemoryPolicy.sample(
-        PlaybackMemoryState(), heap * 85L / 100L, heap, 1_000L,
+        PlaybackMemoryState(), (heap * 85L + 99L) / 100L, heap, 1_000L,
     )
     check("85 percent enters guarded mode", PlaybackMemoryLevel.GUARDED, guarded.level)
     check("guarded mode disables preload", false, guarded.allowNextPreload)
     check("guarded mode limits collage to two", 2, guarded.maxCollagePhotos)
+
+    val lowHeap = 100L * 1024L * 1024L
+    val lowHeapGuarded = PlaybackMemoryPolicy.sample(
+        PlaybackMemoryState(), lowHeap * 76L / 100L, lowHeap, 1_000L,
+    )
+    val lowHeapCritical = PlaybackMemoryPolicy.sample(
+        lowHeapGuarded, lowHeap * 86L / 100L, lowHeap, 2_000L,
+    )
+    check("small heaps guard at 75 percent", PlaybackMemoryLevel.GUARDED, lowHeapGuarded.level)
+    check("small heaps become critical at 85 percent", PlaybackMemoryLevel.CRITICAL, lowHeapCritical.level)
 
     val critical = PlaybackMemoryPolicy.sample(
         guarded, heap * 93L / 100L, heap, 2_000L,

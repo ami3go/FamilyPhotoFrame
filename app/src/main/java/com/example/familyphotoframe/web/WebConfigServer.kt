@@ -25,6 +25,12 @@ import java.net.Socket
 import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 
+data class FolderPageQuery(
+    val offset: Int = 0,
+    val limit: Int = 100,
+    val search: String = "",
+)
+
 /** Everything the embedded HTTP layer may ask from the application. */
 interface WebBackend {
     suspend fun statusJson(): JsonObject
@@ -36,7 +42,7 @@ interface WebBackend {
     suspend fun diagnosticsBundle(): InputStream
     suspend fun clearDiagnostics()
     suspend fun settingsRevision(): Long
-    suspend fun foldersJson(): JsonArray
+    suspend fun foldersJson(query: FolderPageQuery): JsonObject
     suspend fun folderAction(body: JsonObject): JsonObject
     suspend fun presentationJson(): JsonObject
     fun previewSnapshot(): WebPreviewFrame?
@@ -72,7 +78,13 @@ abstract class WebBackendAdapter : WebBackend {
     override suspend fun diagnosticsBundle(): InputStream = ByteArrayInputStream(ByteArray(0))
     override suspend fun clearDiagnostics() = Unit
     override suspend fun settingsRevision(): Long = 0L
-    override suspend fun foldersJson(): JsonArray = buildJsonArray { }
+    override suspend fun foldersJson(query: FolderPageQuery): JsonObject = buildJsonObject {
+        put("items", buildJsonArray { })
+        put("total", 0)
+        put("offset", 0)
+        put("limit", query.limit)
+        put("hasMore", false)
+    }
     override suspend fun folderAction(body: JsonObject): JsonObject = buildJsonObject { put("ok", false) }
     override suspend fun presentationJson(): JsonObject = buildJsonObject { }
     override fun previewSnapshot(): WebPreviewFrame? = null
@@ -375,7 +387,12 @@ class WebConfigServer(
                 v1Ok(runBlocking { backend.redactedConfigJson() }, revision)
             }
             uri == "/api/v1/folders" && method == Method.GET -> authed(token) {
-                v1Ok(runBlocking { backend.foldersJson() })
+                val folderQuery = FolderPageQuery(
+                    offset = query(session, "offset")?.toIntOrNull()?.coerceAtLeast(0) ?: 0,
+                    limit = query(session, "limit")?.toIntOrNull()?.coerceIn(1, 200) ?: 100,
+                    search = query(session, "q").orEmpty().trim().take(128),
+                )
+                v1Ok(runBlocking { backend.foldersJson(folderQuery) })
             }
             uri == "/api/v1/presentation/current" && method == Method.GET -> authed(token) {
                 val data = runBlocking { backend.presentationJson() }

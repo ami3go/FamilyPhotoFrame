@@ -25,7 +25,12 @@ internal data class PreparedBitmapInventory(
  */
 internal class PreparedSlideRegistry(
     private val onRetired: (PreparedSlide) -> Unit,
+    private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
 ) {
+    init {
+        require(maxEntries >= 2) { "registry must hold at least outgoing and incoming slides" }
+    }
+
     private val slides = LinkedHashMap<PreparedSlideHandle, PreparedSlide>()
     private val latestByAnchor = HashMap<Long, PreparedSlideHandle>()
     private var nextHandle = 1L
@@ -41,11 +46,28 @@ internal class PreparedSlideRegistry(
         slides[handle]?.let(predicate) == true
     }
 
-    fun put(slide: PreparedSlide): PreparedSlideHandle {
+    fun put(
+        slide: PreparedSlide,
+        protectedHandles: Set<PreparedSlideHandle> = emptySet(),
+    ): PreparedSlideHandle {
         val handle = PreparedSlideHandle(nextHandle++)
         slides[handle] = slide
         latestByAnchor[slide.anchor.id] = handle
+        trimToCapacity(protectedHandles + handle)
         return handle
+    }
+
+    /**
+     * Prefer retiring speculative/old entries. If a caller ever protects more handles
+     * than the invariant permits, oldest-first retirement still enforces the hard heap
+     * bound instead of trusting a comment while bitmap graphs grow without limit.
+     */
+    private fun trimToCapacity(protectedHandles: Set<PreparedSlideHandle>) {
+        while (slides.size > maxEntries) {
+            val victim = slides.keys.firstOrNull { it !in protectedHandles }
+                ?: slides.keys.first()
+            remove(victim)
+        }
     }
 
     fun remove(handle: PreparedSlideHandle?) {
@@ -105,6 +127,55 @@ internal class PreparedSlideRegistry(
         if (replacement == null) latestByAnchor.remove(anchorId)
         else latestByAnchor[anchorId] = replacement
     }
+
+    private companion object {
+        const val DEFAULT_MAX_ENTRIES = 4
+    }
+}
+
+/** Small thread-safe race bridge; permanent failures themselves are persisted in Room. */
+internal class BoundedLongSet(private val capacity: Int) : AbstractMutableSet<Long>() {
+    private val lock = Any()
+    private val values = LinkedHashMap<Long, Unit>(capacity, 0.75f, true)
+
+    init {
+        require(capacity > 0)
+    }
+
+    override val size: Int get() = synchronized(lock) { values.size }
+
+    override fun iterator(): MutableIterator<Long> {
+        val snapshot = synchronized(lock) { values.keys.toMutableList() }
+        val iterator = snapshot.iterator()
+        var last: Long? = null
+        return object : MutableIterator<Long> {
+            override fun hasNext(): Boolean = iterator.hasNext()
+            override fun next(): Long = iterator.next().also { last = it }
+            override fun remove() {
+                val value = last ?: throw IllegalStateException("next() has not been called")
+                synchronized(lock) { values.remove(value) }
+                iterator.remove()
+                last = null
+            }
+        }
+    }
+
+    override fun add(element: Long): Boolean = synchronized(lock) {
+        val added = values.put(element, Unit) == null
+        while (values.size > capacity) values.remove(values.keys.first())
+        added
+    }
+
+    override fun contains(element: Long): Boolean = synchronized(lock) {
+        // get() refreshes access order so repeatedly observed failures remain resident.
+        values[element] != null
+    }
+
+    override fun remove(element: Long): Boolean = synchronized(lock) {
+        values.remove(element) != null
+    }
+
+    override fun clear() = synchronized(lock) { values.clear() }
 }
 
 /**
@@ -162,7 +233,11 @@ internal class LegacyBitmapReclaimer(
                 true
             }
         }
-        if (accepted) handler.postDelayed(task, graceMs.coerceAtLeast(0L))
+        if (accepted && !handler.postDelayed(task, graceMs.coerceAtLeast(0L))) {
+            // A shutting-down looper can reject the delayed task. Do not leave its
+            // bitmap graph permanently retained in [pending] in that case.
+            task.run()
+        }
     }
 
     private companion object {

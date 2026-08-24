@@ -89,11 +89,12 @@ class UrlConnectionWebDavClient(
                 val status = conn.responseCode
                 val stream = if (WebDavApi.isSuccess(status)) conn.inputStream else conn.errorStream
                 val body = stream ?: ByteArrayInputStream(ByteArray(0))
-                WebDavStreamResponse(status, object : FilterInputStream(body) {
+                val ownedBody = object : FilterInputStream(body) {
                     override fun close() {
                         try { super.close() } finally { conn.disconnect() }
                     }
-                })
+                }
+                WebDavStreamResponse(status, DeadlineInputStream(ownedBody, timeoutMs))
             } catch (t: Throwable) {
                 conn.disconnect()
                 throw t
@@ -120,18 +121,19 @@ class UrlConnectionWebDavClient(
         } catch (t: Throwable) {
             conn.disconnect(); throw t
         }
-        object : FilterInputStream(body) {
+        val ownedBody = object : FilterInputStream(body) {
             override fun close() {
                 try { super.close() } finally { conn.disconnect() }
             }
         }
+        DeadlineInputStream(ownedBody, timeoutMs)
     }
 
     private fun open(url: String, timeoutMs: Long, method: String): HttpURLConnection =
         (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = method
-            connectTimeout = timeoutMs.toInt()
-            readTimeout = timeoutMs.toInt()
+            connectTimeout = timeoutMs.toSocketTimeoutMillis()
+            readTimeout = timeoutMs.toSocketTimeoutMillis()
             instanceFollowRedirects = true
             setRequestProperty("Authorization", authHeader)
             val sf = socketFactory

@@ -210,7 +210,9 @@ class ServiceLocator(private val appContext: Context) {
             enabledProvider = { settings.settings.first().localThumbnailCache.enabled },
             maxBytesProvider = {
                 LocalThumbnailCache.clampMaxBytes(
-                    settings.settings.first().localThumbnailCache.maxBytes, appContext,
+                    settings.settings.first().localThumbnailCache.maxBytes,
+                    appContext,
+                    database.localThumbnailCacheDao().totalSizeBytes(),
                 )
             },
         )

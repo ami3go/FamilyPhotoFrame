@@ -30,9 +30,10 @@ KT
 
 cat > "$WORK/stubs/Handler.kt" <<'KT'
 package android.os
-class Handler {
+class Handler(private val acceptsTasks: Boolean = true) {
     val tasks = mutableListOf<Runnable>()
     fun postDelayed(task: Runnable, delayMs: Long): Boolean {
+        if (!acceptsTasks) return false
         tasks += task
         return true
     }
@@ -84,6 +85,20 @@ fun main() {
     handler.tasks.forEach(Runnable::run)
     check(oldBitmap.isRecycled)
     check(!currentBitmap.isRecycled)
+    val bounded = PreparedSlideRegistry(reclaimer::retire, maxEntries = 2)
+    val protected = bounded.put(PreparedSlide.Single(Photo(10), Bitmap(10)))
+    bounded.put(PreparedSlide.Single(Photo(11), Bitmap(11)), setOf(protected))
+    bounded.put(PreparedSlide.Single(Photo(12), Bitmap(12)), setOf(protected))
+    check(bounded.size == 2)
+    check(bounded.get(protected) != null)
+    val failures = BoundedLongSet(2)
+    failures += 1L; failures += 2L; failures += 3L
+    check(failures.size == 2 && 1L !in failures)
+    val rejectedBitmap = Bitmap(20)
+    val rejectingReclaimer = LegacyBitmapReclaimer(22, Handler(false), graceMs = 10)
+    rejectingReclaimer.retireDisplayBitmap(rejectedBitmap)
+    check(rejectedBitmap.isRecycled)
+    check(rejectingReclaimer.pendingBitmapCount() == 0)
     val inventory = registry.inventory(setOf(current), reclaimer.pendingBitmapCount())
     check(inventory.preparedSlideCount == 1)
     check(inventory.renderedSlideCount == 1)

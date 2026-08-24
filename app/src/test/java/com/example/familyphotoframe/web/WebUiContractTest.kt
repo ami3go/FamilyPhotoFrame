@@ -164,4 +164,13 @@ class WebUiContractTest {
         assertFalse(js.contains("credentialRef"))
         assertFalse(js.contains("smbPassword"))
     }
+
+    @Test fun folderBrowserUsesBoundedServerPagesWithoutLosingOffPageSelection() {
+        val js = WebUiAssets.JS
+        assertTrue(js.contains("/api/v1/folders?offset="))
+        assertTrue(js.contains("&limit=100&q="))
+        assertTrue(js.contains("set_selected_batch"))
+        assertTrue(js.contains("Deselect page"))
+        assertFalse(js.contains("document.querySelectorAll('.folder-row').forEach"))
+    }
 }
