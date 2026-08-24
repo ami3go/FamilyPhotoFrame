@@ -54,10 +54,18 @@ class SmbPhotoSource(
 
     private val shareBase = "smb://${conn.host}/${conn.share}/"
 
+    // Guards contextDelegate and [closed] together so a context can never be created
+    // after close() has already decided there was nothing to release (the delegate's
+    // own SYNCHRONIZED mode only protects its single initialization, not this check).
+    // NONE is safe here because every access — including first initialization — now
+    // goes through requireOpenContext() under this same lock.
+    private val closeLock = Any()
+    @Volatile private var closed = false
+
     // Held as the delegate, not just the value, so [close] can tell an unused source
     // (nothing to release) from one that actually opened a connection. Touching the
     // value to find out would create the very context we are trying to avoid.
-    private val contextDelegate = lazy {
+    private val contextDelegate = lazy(LazyThreadSafetyMode.NONE) {
         val props = Properties().apply {
             put("jcifs.smb.client.minVersion", "SMB202")   // SMB2+ only (no SMB1)
             put("jcifs.smb.client.maxVersion", "SMB311")
@@ -72,18 +80,35 @@ class SmbPhotoSource(
         )
     }
 
-    private val context: CIFSContext by contextDelegate
+    /**
+     * Every call site that needs the context goes through here instead of touching
+     * [contextDelegate] directly, so "closed" and "materialize the context" can never
+     * interleave: without this, close() could see nothing initialized yet and return,
+     * while a concurrent caller (e.g. a backfill job racing a teardown) initializes a
+     * fresh context a moment later that nothing will ever close again.
+     */
+    private fun requireOpenContext(): CIFSContext = synchronized(closeLock) {
+        check(!closed) { "SmbPhotoSource(${id.value}) used after close()" }
+        contextDelegate.value
+    }
 
     /**
-     * Closes the jcifs context, releasing its transport pool and buffer cache.
+     * Closes the jcifs context, releasing its transport pool and buffer cache, and
+     * permanently marks this source closed so it cannot be silently reopened by a
+     * caller racing this call (see [requireOpenContext]).
      *
      * On API 22 those buffers live on the same ~174 MB Java heap as decoded bitmaps, so a
      * context that is dropped without being closed costs roughly 130 KB that no GC can
      * reclaim while the transport is still registered.
      */
     override fun close() {
-        if (!contextDelegate.isInitialized()) return
-        runCatching { contextDelegate.value.close() }
+        synchronized(closeLock) {
+            if (closed) return
+            closed = true
+            if (contextDelegate.isInitialized()) {
+                runCatching { contextDelegate.value.close() }
+            }
+        }
     }
 
     private fun rootUrl(): String {
@@ -94,7 +119,7 @@ class SmbPhotoSource(
     override suspend fun healthCheck(timeoutMs: Long): SourceHealth = withContext(io) {
         withTimeoutOrNull(timeoutMs) {
             try {
-                val root = SmbFile(rootUrl(), context)
+                val root = SmbFile(rootUrl(), requireOpenContext())
                 when {
                     !root.exists() -> SourceHealth.Missing
                     !root.isDirectory -> SourceHealth.ProviderError("not_a_directory")
@@ -110,7 +135,7 @@ class SmbPhotoSource(
 
     override fun scan(previousCursor: ScanCursor?, options: ScanOptions): Flow<ScanEvent> = flow {
         val stack = ArrayDeque<SmbFile>()
-        stack.addLast(SmbFile(rootUrl(), context))
+        stack.addLast(SmbFile(rootUrl(), requireOpenContext()))
         var scanned = 0L
 
         while (stack.isNotEmpty()) {
@@ -165,7 +190,7 @@ class SmbPhotoSource(
     }.flowOn(io)
 
     override suspend fun openStream(item: PhotoItem, options: OpenOptions): InputStream =
-        withContext(io) { SmbFile(item.openToken, context).inputStream }
+        withContext(io) { SmbFile(item.openToken, requireOpenContext()).inputStream }
 
     /** Path within the share, relative to the configured root. */
     private fun relPath(f: SmbFile): String = f.path.removePrefix(shareBase).trimEnd('/')
