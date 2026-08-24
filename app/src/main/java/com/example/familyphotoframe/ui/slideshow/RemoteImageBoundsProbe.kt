@@ -47,6 +47,18 @@ internal object RemoteImageBoundsProbe {
         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BufferedInputStream(CappedInputStream(input, maxBytes), 32 * 1024).use { bounded ->
             BitmapFactory.decodeStream(bounded, null, options)
+            // Bounds-only decoding reads just the header, well short of maxBytes,
+            // leaving most of the capped remote stream unread. Every other stream
+            // consumer in this codebase reads to true EOF before closing; this is the
+            // one that stops early. Draining the rest of the existing cap (never the
+            // whole remote file — CappedInputStream still stops at maxBytes) costs
+            // little and avoids handing the underlying SMB stream a mid-read close,
+            // suspected of leaving jcifs's pending-request bookkeeping
+            // (SmbTransportImpl.response_map) unreleased.
+            val discard = ByteArray(32 * 1024)
+            while (bounded.read(discard) >= 0) {
+                // Drain to the cap; loop body intentionally empty.
+            }
         }
         return if (options.outWidth > 0 && options.outHeight > 0) {
             options.outWidth to options.outHeight
