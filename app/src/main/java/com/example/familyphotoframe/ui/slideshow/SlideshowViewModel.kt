@@ -392,6 +392,8 @@ class SlideshowViewModel(
         // life of the process, with a fresh one added on each recreation.
         frameStats.stop()
         frameStatsJob?.cancel()
+        // onCleared cannot suspend, so this can only request cancellation, not await it.
+        cancelSourceConsumingJobs()
         // Remote sessions outlive the ViewModel unless released here: on a configuration
         // change the replacement instance builds its own, and the old transports would
         // stay registered with nothing left to close them.
@@ -600,6 +602,7 @@ class SlideshowViewModel(
             intervalSeconds = currentIntervalSeconds(),
             maxFailures = currentMaxFailures(),
         )
+        cancelAndJoinSourceConsumingJobs()
         releaseResolvedSources()
         primaryPoolIds.clear()
         unavailablePoolIds.clear()
@@ -1046,6 +1049,7 @@ class SlideshowViewModel(
         obsoleteRecoveryJobs.forEach { it.join() }
         recoveryRuntimes.values.forEach { it.wake.close() }
         recoveryRuntimes.clear()
+        cancelAndJoinSourceConsumingJobs()
         releaseResolvedSources()
         primaryPoolIds.clear()
         unavailablePoolIds.clear()
@@ -1251,6 +1255,12 @@ class SlideshowViewModel(
                 if (isChosen) fallBackToFirstRun()
                 null
             } else {
+                // A backfill build for this same source may already be open (see
+                // resolveSourceById). Promoting to active always builds fresh — current
+                // settings win over whatever the backfill source was built with — so the
+                // stale entry must be closed here, or it leaks as a second, orphaned,
+                // never-closed session that nothing but the next full teardown reaches.
+                backfillSources.remove(ServiceLocator.SOURCE_SMB)?.let { runCatching { it.close() } }
                 val password = services.secretStore.reveal(smb.credentialRef) ?: ""
                 val src = services.smbSource(
                     SmbConnection(smb.host, smb.share, smb.path),
@@ -1281,6 +1291,8 @@ class SlideshowViewModel(
                 if (isChosen) fallBackToFirstRun()
                 null
             } else {
+                // See the matching comment in the SMB branch above.
+                backfillSources.remove(ServiceLocator.SOURCE_SYNOLOGY)?.let { runCatching { it.close() } }
                 val password = services.secretStore.reveal(syn.credentialRef) ?: ""
                 val src = services.synologySource(
                     SynologyConnection(
@@ -1328,6 +1340,8 @@ class SlideshowViewModel(
                 if (isChosen) fallBackToFirstRun()
                 null
             } else {
+                // See the matching comment in the SMB branch above.
+                backfillSources.remove(ServiceLocator.SOURCE_WEBDAV)?.let { runCatching { it.close() } }
                 val password = services.secretStore.reveal(dav.credentialRef) ?: ""
                 val src = services.webDavSource(
                     WebDavConnection(
@@ -3989,6 +4003,32 @@ class SlideshowViewModel(
         throw e
     } catch (e: Exception) {
         null
+    }
+
+    /**
+     * Cancels the EXIF and content-hash backfill jobs — the only jobs that call
+     * [resolveSourceById] and then read from the returned source — and waits for them
+     * to finish unwinding. Must run before [releaseResolvedSources], or a job's
+     * in-flight read gets its source closed out from under it: the same mid-read-close
+     * pattern that left jcifs `response_map` entries unreleased in
+     * `RemoteImageBoundsProbe`, just reached through a different trigger.
+     */
+    private suspend fun cancelAndJoinSourceConsumingJobs() {
+        exifJob?.cancel()
+        contentHashJob?.cancel()
+        exifJob?.join()
+        contentHashJob?.join()
+        exifJob = null
+        contentHashJob = null
+    }
+
+    /**
+     * [onCleared] cannot suspend, so it can only request cancellation here, not wait
+     * for it — best-effort, same as the rest of that teardown path.
+     */
+    private fun cancelSourceConsumingJobs() {
+        exifJob?.cancel()
+        contentHashJob?.cancel()
     }
 
     /**
