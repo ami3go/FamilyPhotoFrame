@@ -7,14 +7,14 @@ import org.junit.Test
 
 class TrimMemoryPolicyTest {
 
-    @Test fun onlyRunningCriticalOpensTheCircuitBreaker() {
+    @Test fun onlyRunningCriticalRequestsSevereProtection() {
         assertEquals(
             TrimMemoryResponse.SEVERE_PRESSURE,
             TrimMemoryPolicy.classify(TrimMemoryPolicy.TRIM_MEMORY_RUNNING_CRITICAL),
         )
     }
 
-    @Test fun runningLowStepsPlaybackDownWithoutOpeningTheBreaker() {
+    @Test fun runningLowRequestsConstrainedProtection() {
         assertEquals(
             TrimMemoryResponse.RUNNING_PRESSURE,
             TrimMemoryPolicy.classify(TrimMemoryPolicy.TRIM_MEMORY_RUNNING_LOW),

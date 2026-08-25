@@ -14,9 +14,12 @@ enum class PlaybackMemoryPressureSource {
     NONE,
     JAVA_HEAP,
     PROCESS_PSS,
+    NATIVE_PSS_GROWTH,
     SYSTEM_HEADROOM,
     SYSTEM_LOW_MEMORY,
     PLATFORM_CALLBACK,
+    RENDER_ACK_TIMEOUTS,
+    OVERDUE_TRANSFER,
     DECODE_OOM,
     RECOVERY,
 }
@@ -42,6 +45,22 @@ data class PlaybackMemoryState(
     /** Available system memory as a percentage of Android's low-memory threshold. */
     val systemHeadroomPercent: Int = 0,
     val systemLowMemory: Boolean = false,
+    /** Latest native-PSS sample and the last completed trend-window assessment. */
+    val nativePssBytes: Long = 0L,
+    val nativeGrowthBytes: Long = 0L,
+    val nativeGrowthRateKbPerMin: Int = 0,
+    val nativeGrowthStreak: Int = 0,
+    val nativeGrowthWindowBaselineBytes: Long = 0L,
+    val nativeGrowthWindowStartedElapsedMs: Long = 0L,
+    /** Latest bounded transfer evidence; freshness is controlled by [sample]. */
+    val activeMediaTransfers: Int = 0,
+    val oldestMediaTransferAgeMs: Long = 0L,
+    /** Fixed-window render-stall evidence; no photo identity is retained. */
+    val renderTimeoutWindowStartedElapsedMs: Long = 0L,
+    val renderTimeoutWindowCount: Int = 0,
+    /** Last window count consumed by the Application-owned policy sample. */
+    val renderTimeoutEvaluatedCount: Int = 0,
+    val totalRenderTimeoutCount: Long = 0L,
     /** Static startup profile. LOW devices remain economical even while [level] is NORMAL. */
     val lowMemoryTier: Boolean = false,
     val pressureSource: PlaybackMemoryPressureSource = PlaybackMemoryPressureSource.NONE,
@@ -124,6 +143,29 @@ object PlaybackMemoryPolicy {
     const val SYSTEM_CRITICAL_HEADROOM_PERCENT = 100
     const val SYSTEM_GUARDED_HEADROOM_PERCENT = 200
 
+    /** Three lost render acknowledgements in five minutes indicate pipeline churn. */
+    const val RENDER_TIMEOUT_WINDOW_MS = 5L * 60_000L
+    const val RENDER_TIMEOUT_GUARDED_COUNT = 3
+    const val RENDER_TIMEOUT_CRITICAL_COUNT = 6
+
+    /** A media transfer is contractually overdue after two minutes. */
+    const val TRANSFER_GUARDED_AGE_MS = 2L * 60_000L
+    const val TRANSFER_CRITICAL_AGE_MS = 4L * 60_000L
+    const val MAX_EXPECTED_ACTIVE_TRANSFERS = 2
+
+    /**
+     * Native PSS is noisy, so trend protection requires both a minimum delta and a minimum
+     * observation interval. Repeated positive windows escalate even when no single window is
+     * dramatic; a plateau clears the streak instead of keeping the frame degraded forever.
+     */
+    const val NATIVE_GROWTH_MIN_WINDOW_MS = 15L * 60_000L
+    const val NATIVE_GROWTH_MAX_WINDOW_MS = 30L * 60_000L
+    const val NATIVE_GROWTH_MIN_BYTES = 512L * 1024L
+    const val NATIVE_GROWTH_MIN_RATE_KB_PER_MIN = 16
+    const val NATIVE_GROWTH_CRITICAL_BYTES = 4L * 1024L * 1024L
+    const val NATIVE_GROWTH_CRITICAL_RATE_KB_PER_MIN = 64
+    const val NATIVE_GROWTH_CRITICAL_STREAK = 3
+
     const val GUARDED_RECOVERY_HOLD_MS = 3L * 60_000L
     const val CRITICAL_RECOVERY_HOLD_MS = 5L * 60_000L
     const val EXTERNAL_CRITICAL_HOLD_MS = 10L * 60_000L
@@ -145,6 +187,16 @@ object PlaybackMemoryPolicy {
     private data class ExternalSignal(
         val level: ExternalLevel,
         val source: PlaybackMemoryPressureSource,
+    )
+
+    private data class NativeGrowthAssessment(
+        val nativePssBytes: Long,
+        val growthBytes: Long,
+        val growthRateKbPerMin: Int,
+        val streak: Int,
+        val windowBaselineBytes: Long,
+        val windowStartedElapsedMs: Long,
+        val signal: ExternalSignal,
     )
 
     private fun thresholds(heapMaxBytes: Long): Thresholds =
@@ -169,8 +221,9 @@ object PlaybackMemoryPolicy {
      *
      * Nullable external arguments are intentional: ten-second heap checks must retain the latest
      * readings without treating a one-minute-old PSS value as a fresh signal and extending its
-     * hold forever. [PlaybackMemoryGuard.recordMemory] supplies all four values only after a fresh
-     * process sample.
+     * hold forever. [PlaybackMemoryGuard.recordMemory] supplies the process, system, native, and
+     * transfer values only after a fresh process sample. Render timeout evidence is event-driven
+     * and may be evaluated by the ten-second heap check.
      */
     fun sample(
         previous: PlaybackMemoryState,
@@ -181,6 +234,9 @@ object PlaybackMemoryPolicy {
         systemAvailBytes: Long? = null,
         systemThresholdBytes: Long? = null,
         systemLowMemory: Boolean? = null,
+        nativePssBytes: Long? = null,
+        activeMediaTransfers: Int? = null,
+        oldestMediaTransferAgeMs: Long? = null,
     ): PlaybackMemoryState {
         val used = heapUsedBytes.coerceAtLeast(0L)
         val max = heapMaxBytes.coerceAtLeast(0L)
@@ -196,7 +252,7 @@ object PlaybackMemoryPolicy {
 
         val externalRefreshed = processPssBytes != null || systemAvailBytes != null ||
             systemThresholdBytes != null || systemLowMemory != null
-        val signal = if (externalRefreshed) {
+        val memorySignal = if (externalRefreshed) {
             externalSignal(
                 processPressurePercent = processPercent,
                 processBudgetKnown = previous.processMemoryBudgetBytes > 0L,
@@ -207,6 +263,78 @@ object PlaybackMemoryPolicy {
         } else {
             ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE)
         }
+
+        val renderWindowExpired = previous.renderTimeoutWindowStartedElapsedMs > 0L &&
+            (nowElapsedMs < previous.renderTimeoutWindowStartedElapsedMs ||
+                nowElapsedMs - previous.renderTimeoutWindowStartedElapsedMs >
+                RENDER_TIMEOUT_WINDOW_MS)
+        val renderWindowStarted = if (renderWindowExpired) {
+            0L
+        } else {
+            previous.renderTimeoutWindowStartedElapsedMs
+        }
+        val renderTimeoutCount = if (renderWindowExpired) 0 else previous.renderTimeoutWindowCount
+        val renderEvaluatedCount = if (renderWindowExpired) {
+            0
+        } else {
+            previous.renderTimeoutEvaluatedCount.coerceAtMost(renderTimeoutCount)
+        }
+        val freshRenderEvidence = renderTimeoutCount > renderEvaluatedCount
+        val renderSignal = when {
+            !freshRenderEvidence -> ExternalSignal(
+                ExternalLevel.NONE,
+                PlaybackMemoryPressureSource.NONE,
+            )
+            renderTimeoutCount >= RENDER_TIMEOUT_CRITICAL_COUNT -> ExternalSignal(
+                ExternalLevel.CRITICAL,
+                PlaybackMemoryPressureSource.RENDER_ACK_TIMEOUTS,
+            )
+            renderTimeoutCount >= RENDER_TIMEOUT_GUARDED_COUNT -> ExternalSignal(
+                ExternalLevel.GUARDED,
+                PlaybackMemoryPressureSource.RENDER_ACK_TIMEOUTS,
+            )
+            else -> ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE)
+        }
+
+        val transferCount = activeMediaTransfers?.coerceAtLeast(0) ?: previous.activeMediaTransfers
+        val transferAge = oldestMediaTransferAgeMs?.coerceAtLeast(0L)
+            ?: previous.oldestMediaTransferAgeMs
+        val transferEvidenceRefreshed = activeMediaTransfers != null ||
+            oldestMediaTransferAgeMs != null
+        val transferSignal = if (transferEvidenceRefreshed) {
+            when {
+                transferCount > MAX_EXPECTED_ACTIVE_TRANSFERS ||
+                    transferAge >= TRANSFER_CRITICAL_AGE_MS -> ExternalSignal(
+                        ExternalLevel.CRITICAL,
+                        PlaybackMemoryPressureSource.OVERDUE_TRANSFER,
+                    )
+                transferAge >= TRANSFER_GUARDED_AGE_MS -> ExternalSignal(
+                    ExternalLevel.GUARDED,
+                    PlaybackMemoryPressureSource.OVERDUE_TRANSFER,
+                )
+                else -> ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE)
+            }
+        } else {
+            ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE)
+        }
+
+        val nativeAssessment = nativePssBytes?.let {
+            assessNativeGrowth(previous, it, nowElapsedMs)
+        } ?: NativeGrowthAssessment(
+            nativePssBytes = previous.nativePssBytes,
+            growthBytes = previous.nativeGrowthBytes,
+            growthRateKbPerMin = previous.nativeGrowthRateKbPerMin,
+            streak = previous.nativeGrowthStreak,
+            windowBaselineBytes = previous.nativeGrowthWindowBaselineBytes,
+            windowStartedElapsedMs = previous.nativeGrowthWindowStartedElapsedMs,
+            signal = ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE),
+        )
+        val signal = strongestSignal(
+            memorySignal,
+            nativeAssessment.signal,
+            transferSignal,
+            renderSignal,
+        )
 
         var externalCriticalUntil = previous.externalCriticalUntilElapsedMs
         var externalGuardedUntil = previous.externalGuardedUntilElapsedMs
@@ -297,6 +425,17 @@ object PlaybackMemoryPolicy {
             systemThresholdBytes = systemThreshold,
             systemHeadroomPercent = systemPercent,
             systemLowMemory = lowMemory,
+            nativePssBytes = nativeAssessment.nativePssBytes,
+            nativeGrowthBytes = nativeAssessment.growthBytes,
+            nativeGrowthRateKbPerMin = nativeAssessment.growthRateKbPerMin,
+            nativeGrowthStreak = nativeAssessment.streak,
+            nativeGrowthWindowBaselineBytes = nativeAssessment.windowBaselineBytes,
+            nativeGrowthWindowStartedElapsedMs = nativeAssessment.windowStartedElapsedMs,
+            activeMediaTransfers = transferCount,
+            oldestMediaTransferAgeMs = transferAge,
+            renderTimeoutWindowStartedElapsedMs = renderWindowStarted,
+            renderTimeoutWindowCount = renderTimeoutCount,
+            renderTimeoutEvaluatedCount = renderTimeoutCount,
             pressureSource = source,
             externalPressureSource = externalSource,
             externalCriticalUntilElapsedMs = externalCriticalUntil,
@@ -330,6 +469,37 @@ object PlaybackMemoryPolicy {
         )
     }
 
+    /**
+     * Record one lost render acknowledgement without changing the preparation decision from the
+     * engine thread. The next regular heap sample evaluates the bounded five-minute window, which
+     * keeps all cache clearing and transition diagnostics on the Application-owned control loop.
+     */
+    fun renderAckTimeout(
+        previous: PlaybackMemoryState,
+        nowElapsedMs: Long,
+    ): PlaybackMemoryState {
+        val now = nowElapsedMs.coerceAtLeast(0L)
+        val insideWindow = previous.renderTimeoutWindowStartedElapsedMs > 0L &&
+            now >= previous.renderTimeoutWindowStartedElapsedMs &&
+            now - previous.renderTimeoutWindowStartedElapsedMs <= RENDER_TIMEOUT_WINDOW_MS
+        val started = if (insideWindow) previous.renderTimeoutWindowStartedElapsedMs else now
+        val count = if (insideWindow) {
+            (previous.renderTimeoutWindowCount + 1).coerceAtMost(MAX_WINDOW_EVENT_COUNT)
+        } else {
+            1
+        }
+        return previous.copy(
+            renderTimeoutWindowStartedElapsedMs = started,
+            renderTimeoutWindowCount = count,
+            renderTimeoutEvaluatedCount = if (insideWindow) {
+                previous.renderTimeoutEvaluatedCount.coerceAtMost(count)
+            } else {
+                0
+            },
+            totalRenderTimeoutCount = saturatingIncrement(previous.totalRenderTimeoutCount),
+        )
+    }
+
     fun systemPressure(
         previous: PlaybackMemoryState,
         nowElapsedMs: Long,
@@ -358,6 +528,95 @@ object PlaybackMemoryPolicy {
             heapMaxBytes = previous.heapMaxBytes,
             nowElapsedMs = nowElapsedMs,
         )
+    }
+
+    private fun assessNativeGrowth(
+        previous: PlaybackMemoryState,
+        nativePssBytes: Long,
+        nowElapsedMs: Long,
+    ): NativeGrowthAssessment {
+        val current = nativePssBytes.coerceAtLeast(0L)
+        val now = nowElapsedMs.coerceAtLeast(0L)
+        val needsBaseline = current == 0L ||
+            previous.nativeGrowthWindowBaselineBytes <= 0L ||
+            previous.nativeGrowthWindowStartedElapsedMs <= 0L ||
+            now < previous.nativeGrowthWindowStartedElapsedMs
+        if (needsBaseline) {
+            return NativeGrowthAssessment(
+                nativePssBytes = current,
+                growthBytes = 0L,
+                growthRateKbPerMin = 0,
+                streak = if (current == 0L) 0 else previous.nativeGrowthStreak,
+                windowBaselineBytes = current,
+                windowStartedElapsedMs = if (current == 0L) 0L else now,
+                signal = ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE),
+            )
+        }
+
+        val elapsedMs = now - previous.nativeGrowthWindowStartedElapsedMs
+        val growthBytes = current - previous.nativeGrowthWindowBaselineBytes
+        val rateKbPerMin = if (elapsedMs > 0L && growthBytes > 0L) {
+            ((growthBytes.toDouble() * 60_000.0) / elapsedMs.toDouble() / 1024.0)
+                .toInt()
+                .coerceIn(0, MAX_REPORTED_GROWTH_KB_PER_MIN)
+        } else {
+            0
+        }
+        val observedLongEnough = elapsedMs >= NATIVE_GROWTH_MIN_WINDOW_MS
+        val growing = observedLongEnough &&
+            growthBytes >= NATIVE_GROWTH_MIN_BYTES &&
+            rateKbPerMin >= NATIVE_GROWTH_MIN_RATE_KB_PER_MIN
+        val closesWindow = growing || elapsedMs >= NATIVE_GROWTH_MAX_WINDOW_MS
+        if (!closesWindow) {
+            return NativeGrowthAssessment(
+                nativePssBytes = current,
+                growthBytes = growthBytes,
+                growthRateKbPerMin = rateKbPerMin,
+                streak = previous.nativeGrowthStreak,
+                windowBaselineBytes = previous.nativeGrowthWindowBaselineBytes,
+                windowStartedElapsedMs = previous.nativeGrowthWindowStartedElapsedMs,
+                signal = ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE),
+            )
+        }
+
+        val streak = if (growing) {
+            (previous.nativeGrowthStreak + 1).coerceAtMost(NATIVE_GROWTH_CRITICAL_STREAK)
+        } else {
+            0
+        }
+        val critical = growing && (
+            (growthBytes >= NATIVE_GROWTH_CRITICAL_BYTES &&
+                rateKbPerMin >= NATIVE_GROWTH_CRITICAL_RATE_KB_PER_MIN) ||
+                streak >= NATIVE_GROWTH_CRITICAL_STREAK
+            )
+        val signal = when {
+            critical -> ExternalSignal(
+                ExternalLevel.CRITICAL,
+                PlaybackMemoryPressureSource.NATIVE_PSS_GROWTH,
+            )
+            growing -> ExternalSignal(
+                ExternalLevel.GUARDED,
+                PlaybackMemoryPressureSource.NATIVE_PSS_GROWTH,
+            )
+            else -> ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE)
+        }
+        return NativeGrowthAssessment(
+            nativePssBytes = current,
+            growthBytes = growthBytes,
+            growthRateKbPerMin = rateKbPerMin,
+            streak = streak,
+            windowBaselineBytes = current,
+            windowStartedElapsedMs = now,
+            signal = signal,
+        )
+    }
+
+    private fun strongestSignal(vararg signals: ExternalSignal): ExternalSignal {
+        var strongest = ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE)
+        for (candidate in signals) {
+            if (candidate.level.ordinal > strongest.level.ordinal) strongest = candidate
+        }
+        return strongest
     }
 
     private fun externalSignal(
@@ -401,5 +660,10 @@ object PlaybackMemoryPolicy {
             .coerceIn(0, MAX_REPORTED_PERCENT)
     }
 
+    private fun saturatingIncrement(value: Long): Long =
+        if (value == Long.MAX_VALUE) value else value + 1L
+
     private const val MAX_REPORTED_PERCENT = 999
+    private const val MAX_REPORTED_GROWTH_KB_PER_MIN = 1_000_000
+    private const val MAX_WINDOW_EVENT_COUNT = 1_000_000
 }

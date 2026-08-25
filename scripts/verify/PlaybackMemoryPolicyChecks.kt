@@ -140,6 +140,89 @@ fun runPlaybackMemoryPolicyChecks() {
     check("PSS can drive critical policy with low Java heap", PlaybackMemoryLevel.CRITICAL, pssCritical.level)
     check("PSS source is explicit", PlaybackMemoryPressureSource.PROCESS_PSS, pssCritical.pressureSource)
 
+    var renderStalls = baseline
+    repeat(PlaybackMemoryPolicy.RENDER_TIMEOUT_GUARDED_COUNT) { index ->
+        renderStalls = PlaybackMemoryPolicy.renderAckTimeout(
+            renderStalls,
+            2_100_000L + index.toLong() * 10_000L,
+        )
+    }
+    renderStalls = PlaybackMemoryPolicy.sample(renderStalls, heap / 2L, heap, 2_140_000L)
+    check("repeated render stalls enter guarded mode", PlaybackMemoryLevel.GUARDED, renderStalls.level)
+    check(
+        "render stall source is explicit",
+        PlaybackMemoryPressureSource.RENDER_ACK_TIMEOUTS,
+        renderStalls.pressureSource,
+    )
+    check("render stalls never block selected decode", true, renderStalls.allowSelectedDecode)
+    val renderHold = renderStalls.externalGuardedUntilElapsedMs
+    renderStalls = PlaybackMemoryPolicy.sample(renderStalls, heap / 2L, heap, 2_150_000L)
+    check("stale render window cannot refresh its hold", renderHold, renderStalls.externalGuardedUntilElapsedMs)
+
+    var endurance = PlaybackMemoryPolicy.sample(
+        PlaybackMemoryState(), heap / 2L, heap, 4_000_000L,
+    )
+    var enduranceAt = 4_000_000L
+    var enduranceTransitions = 0
+    var enduranceCircuitObserved = false
+    repeat(1_000) { index ->
+        enduranceAt += 10_000L
+        if (index < 600 && index % 5 == 0) {
+            endurance = PlaybackMemoryPolicy.renderAckTimeout(endurance, enduranceAt)
+        }
+        val beforeLevel = endurance.level
+        endurance = PlaybackMemoryPolicy.sample(endurance, heap / 2L, heap, enduranceAt)
+        if (endurance.level != beforeLevel) enduranceTransitions++
+        enduranceCircuitObserved = enduranceCircuitObserved ||
+            endurance.level == PlaybackMemoryLevel.CIRCUIT_OPEN
+    }
+    check("render endurance never opens decode circuit", false, enduranceCircuitObserved)
+    check("1,000-sample pressure run settles back to normal", PlaybackMemoryLevel.NORMAL, endurance.level)
+    check("1,000-sample pressure run has bounded level changes", true, enduranceTransitions <= 4)
+    check("render endurance counter remains exact", 120L, endurance.totalRenderTimeoutCount)
+
+    val overdueTransfer = PlaybackMemoryPolicy.sample(
+        previous = PlaybackMemoryState(),
+        heapUsedBytes = heap / 2L,
+        heapMaxBytes = heap,
+        nowElapsedMs = 2_200_000L,
+        activeMediaTransfers = 1,
+        oldestMediaTransferAgeMs = PlaybackMemoryPolicy.TRANSFER_GUARDED_AGE_MS,
+    )
+    check("overdue transfer enters guarded mode", PlaybackMemoryLevel.GUARDED, overdueTransfer.level)
+    check(
+        "overdue transfer source is explicit",
+        PlaybackMemoryPressureSource.OVERDUE_TRANSFER,
+        overdueTransfer.pressureSource,
+    )
+
+    val baseNative = 40L * 1024L * 1024L
+    var nativeAt = 3_000_000L
+    var nativeGrowth = PlaybackMemoryPolicy.sample(
+        PlaybackMemoryState(), heap / 2L, heap, nativeAt, nativePssBytes = baseNative,
+    )
+    repeat(PlaybackMemoryPolicy.NATIVE_GROWTH_CRITICAL_STREAK) { index ->
+        nativeAt += PlaybackMemoryPolicy.NATIVE_GROWTH_MIN_WINDOW_MS
+        nativeGrowth = PlaybackMemoryPolicy.sample(
+            previous = nativeGrowth,
+            heapUsedBytes = heap / 2L,
+            heapMaxBytes = heap,
+            nowElapsedMs = nativeAt,
+            nativePssBytes = baseNative + (index.toLong() + 1L) * 1024L * 1024L,
+        )
+    }
+    check("repeated native growth escalates to critical", PlaybackMemoryLevel.CRITICAL, nativeGrowth.level)
+    check(
+        "native growth source is explicit",
+        PlaybackMemoryPressureSource.NATIVE_PSS_GROWTH,
+        nativeGrowth.pressureSource,
+    )
+    check(
+        "native growth evidence is bounded",
+        PlaybackMemoryPolicy.NATIVE_GROWTH_CRITICAL_STREAK,
+        nativeGrowth.nativeGrowthStreak,
+    )
+
     val economy = PlaybackMemoryState(lowMemoryTier = true)
     check("low tier starts without speculative preload", false, economy.allowNextPreload)
     check("low tier starts with two-photo maximum", 2, economy.maxCollagePhotos)

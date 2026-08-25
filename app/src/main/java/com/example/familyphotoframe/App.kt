@@ -206,6 +206,11 @@ class App : Application() {
                         systemThresholdBytes = sampledMemory.systemThresholdKb * 1024L,
                         systemLowMemory = sampledMemory.systemLowMemory,
                         nowElapsedMs = elapsedMs,
+                        nativePssBytes = sampledMemory.nativePssKb
+                            .takeIf { it > 0L }
+                            ?.times(1024L),
+                        activeMediaTransfers = sampledMemory.activeMediaTransfers,
+                        oldestMediaTransferAgeMs = sampledMemory.oldestMediaTransferAgeMs,
                     )
                 } else {
                     services.playbackMemoryGuard.recordHeap(
@@ -553,6 +558,13 @@ class App : Application() {
             "systemLowMemory" to current.systemLowMemory.toString(),
             "memoryPressureSource" to current.pressureSource.name,
             "economyBaseline" to current.lowMemoryTier.toString(),
+            "nativeGrowthKb" to (current.nativeGrowthBytes / 1024L).toString(),
+            "nativeGrowthRateKbPerMin" to current.nativeGrowthRateKbPerMin.toString(),
+            "nativeGrowthStreak" to current.nativeGrowthStreak.toString(),
+            "renderTimeoutWindowCount" to current.renderTimeoutWindowCount.toString(),
+            "renderTimeoutTotal" to current.totalRenderTimeoutCount.toString(),
+            "mediaActiveTransfers" to current.activeMediaTransfers.toString(),
+            "mediaOldestTransferAgeMs" to current.oldestMediaTransferAgeMs.toString(),
             "externalCriticalRemainingMs" to
                 current.externalCriticalRemainingMs(SystemClock.elapsedRealtime()).toString(),
             "externalGuardedRemainingMs" to

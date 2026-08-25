@@ -10,6 +10,8 @@ enum class MemorySelfRecoveryAction { NONE, REQUEST_GC, RESTART_PROCESS }
 data class MemorySelfRecoveryState(
     val highPressureSinceElapsedMs: Long = -1L,
     val gcRequestedAtElapsedMs: Long = -1L,
+    /** Survives completion/reset of one recovery attempt so GC cannot loop across OOMs. */
+    val lastGcRequestedAtElapsedMs: Long = -1L,
     val restartIssued: Boolean = false,
 )
 
@@ -23,14 +25,15 @@ data class MemorySelfRecoveryDecision(
  *
  * A circuit-open state by itself is not enough: a normal cooldown must remain invisible.
  * Recovery is considered only after a *real decode OOM* and sustained >=92% Java-heap
- * pressure.  The first action requests one GC; a restart is allowed only if a later
- * sample proves that the process is still critically full.
+ * pressure. The first eligible action requests one globally rate-limited GC; a restart is
+ * allowed only if a later sample proves that the process is still critically full.
  */
 object MemorySelfRecoveryPolicy {
     const val RESTART_PRESSURE_PERCENT = 92
     const val SUSTAINED_PRESSURE_BEFORE_GC_MS = 60_000L
     const val POST_GC_VERIFY_MS = 10_000L
     const val OOM_ELIGIBILITY_WINDOW_MS = 10L * 60_000L
+    const val GC_MIN_INTERVAL_MS = 10L * 60_000L
 
     fun evaluate(
         previous: MemorySelfRecoveryState,
@@ -46,7 +49,12 @@ object MemorySelfRecoveryPolicy {
             oomCount > 0L && oomAgeMs in 0L..OOM_ELIGIBILITY_WINDOW_MS &&
             pressurePercent >= RESTART_PRESSURE_PERCENT
         if (!eligible) {
-            return MemorySelfRecoveryDecision(MemorySelfRecoveryState(), MemorySelfRecoveryAction.NONE)
+            return MemorySelfRecoveryDecision(
+                MemorySelfRecoveryState(
+                    lastGcRequestedAtElapsedMs = previous.lastGcRequestedAtElapsedMs,
+                ),
+                MemorySelfRecoveryAction.NONE,
+            )
         }
 
         if (previous.restartIssued) {
@@ -54,7 +62,10 @@ object MemorySelfRecoveryPolicy {
         }
         if (previous.highPressureSinceElapsedMs < 0L || now < previous.highPressureSinceElapsedMs) {
             return MemorySelfRecoveryDecision(
-                MemorySelfRecoveryState(highPressureSinceElapsedMs = now),
+                MemorySelfRecoveryState(
+                    highPressureSinceElapsedMs = now,
+                    lastGcRequestedAtElapsedMs = previous.lastGcRequestedAtElapsedMs,
+                ),
                 MemorySelfRecoveryAction.NONE,
             )
         }
@@ -62,8 +73,17 @@ object MemorySelfRecoveryPolicy {
             if (now - previous.highPressureSinceElapsedMs < SUSTAINED_PRESSURE_BEFORE_GC_MS) {
                 return MemorySelfRecoveryDecision(previous, MemorySelfRecoveryAction.NONE)
             }
+            val lastGc = previous.lastGcRequestedAtElapsedMs
+            val gcRateLimited = lastGc >= 0L &&
+                (now < lastGc || now - lastGc < GC_MIN_INTERVAL_MS)
+            if (gcRateLimited) {
+                return MemorySelfRecoveryDecision(previous, MemorySelfRecoveryAction.NONE)
+            }
             return MemorySelfRecoveryDecision(
-                previous.copy(gcRequestedAtElapsedMs = now),
+                previous.copy(
+                    gcRequestedAtElapsedMs = now,
+                    lastGcRequestedAtElapsedMs = now,
+                ),
                 MemorySelfRecoveryAction.REQUEST_GC,
             )
         }

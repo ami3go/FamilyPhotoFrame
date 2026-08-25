@@ -239,6 +239,13 @@ class ServiceLocator(private val appContext: Context) {
                     "systemHeadroomPercent" to sampledSystemHeadroomPercent.toString(),
                     "memoryPressureSource" to memoryProtection.pressureSource.name,
                     "economyBaseline" to memoryProtection.lowMemoryTier.toString(),
+                    "nativeGrowthKb" to (memoryProtection.nativeGrowthBytes / 1024L).toString(),
+                    "nativeGrowthRateKbPerMin" to
+                        memoryProtection.nativeGrowthRateKbPerMin.toString(),
+                    "nativeGrowthStreak" to memoryProtection.nativeGrowthStreak.toString(),
+                    "renderTimeoutWindowCount" to
+                        memoryProtection.renderTimeoutWindowCount.toString(),
+                    "renderTimeoutTotal" to memoryProtection.totalRenderTimeoutCount.toString(),
                     "externalCriticalRemainingMs" to
                         memoryProtection.externalCriticalRemainingMs(sampleElapsedMs).toString(),
                     "externalGuardedRemainingMs" to
@@ -343,7 +350,17 @@ class ServiceLocator(private val appContext: Context) {
     }
 
     val engine: SlideshowEngine by lazy {
-        SlideshowEngine(photoDao, diagnostics, folderBalancedShuffle, allowHeif = allowHeifPlayback)
+        SlideshowEngine(
+            photoDao,
+            diagnostics,
+            folderBalancedShuffle,
+            allowHeif = allowHeifPlayback,
+            onRenderAckTimeout = {
+                playbackMemoryGuard.recordRenderAckTimeout(
+                    android.os.SystemClock.elapsedRealtime(),
+                )
+            },
+        )
     }
 
     /** Weather overlay data (spec §11); inert unless enabled in settings. */

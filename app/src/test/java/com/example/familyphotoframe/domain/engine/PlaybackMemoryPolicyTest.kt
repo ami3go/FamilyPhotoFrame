@@ -250,6 +250,93 @@ class PlaybackMemoryPolicyTest {
         assertEquals(PlaybackMemoryLevel.GUARDED, systemGuarded.level)
     }
 
+    @Test fun repeatedRenderTimeoutsDegradeWithoutOpeningTheDecodeCircuit() {
+        var state = PlaybackMemoryPolicy.sample(
+            PlaybackMemoryState(), heap / 2L, heap, 1_000L,
+        )
+        repeat(PlaybackMemoryPolicy.RENDER_TIMEOUT_GUARDED_COUNT) { index ->
+            state = PlaybackMemoryPolicy.renderAckTimeout(state, 10_000L + index * 10_000L)
+        }
+        state = PlaybackMemoryPolicy.sample(state, heap / 2L, heap, 45_000L)
+        assertEquals(PlaybackMemoryLevel.GUARDED, state.level)
+        assertEquals(PlaybackMemoryPressureSource.RENDER_ACK_TIMEOUTS, state.pressureSource)
+        assertTrue(state.allowSelectedDecode)
+        val guardedUntil = state.externalGuardedUntilElapsedMs
+        state = PlaybackMemoryPolicy.sample(state, heap / 2L, heap, 46_000L)
+        assertEquals(guardedUntil, state.externalGuardedUntilElapsedMs)
+
+        repeat(
+            PlaybackMemoryPolicy.RENDER_TIMEOUT_CRITICAL_COUNT -
+                PlaybackMemoryPolicy.RENDER_TIMEOUT_GUARDED_COUNT
+        ) { index ->
+            state = PlaybackMemoryPolicy.renderAckTimeout(state, 50_000L + index * 10_000L)
+        }
+        state = PlaybackMemoryPolicy.sample(state, heap / 2L, heap, 85_000L)
+        assertEquals(PlaybackMemoryLevel.CRITICAL, state.level)
+        assertEquals(PlaybackMemoryPressureSource.RENDER_ACK_TIMEOUTS, state.pressureSource)
+        assertTrue(state.allowSelectedDecode)
+    }
+
+    @Test fun overdueOrExcessTransfersDriveStableProtection() {
+        val overdue = PlaybackMemoryPolicy.sample(
+            previous = PlaybackMemoryState(),
+            heapUsedBytes = heap / 2L,
+            heapMaxBytes = heap,
+            nowElapsedMs = 1_000L,
+            activeMediaTransfers = 1,
+            oldestMediaTransferAgeMs = PlaybackMemoryPolicy.TRANSFER_GUARDED_AGE_MS,
+        )
+        val excess = PlaybackMemoryPolicy.sample(
+            previous = PlaybackMemoryState(),
+            heapUsedBytes = heap / 2L,
+            heapMaxBytes = heap,
+            nowElapsedMs = 1_000L,
+            activeMediaTransfers = PlaybackMemoryPolicy.MAX_EXPECTED_ACTIVE_TRANSFERS + 1,
+            oldestMediaTransferAgeMs = 0L,
+        )
+
+        assertEquals(PlaybackMemoryLevel.GUARDED, overdue.level)
+        assertEquals(PlaybackMemoryPressureSource.OVERDUE_TRANSFER, overdue.pressureSource)
+        assertEquals(PlaybackMemoryLevel.CRITICAL, excess.level)
+        assertTrue(excess.allowSelectedDecode)
+    }
+
+    @Test fun repeatedNativePssGrowthWindowsEscalateAndPlateauResetsTheStreak() {
+        val baseNative = 40L * 1024L * 1024L
+        var now = 1_000L
+        var state = PlaybackMemoryPolicy.sample(
+            previous = PlaybackMemoryState(),
+            heapUsedBytes = heap / 2L,
+            heapMaxBytes = heap,
+            nowElapsedMs = now,
+            nativePssBytes = baseNative,
+        )
+        repeat(PlaybackMemoryPolicy.NATIVE_GROWTH_CRITICAL_STREAK) { index ->
+            now += PlaybackMemoryPolicy.NATIVE_GROWTH_MIN_WINDOW_MS
+            state = PlaybackMemoryPolicy.sample(
+                previous = state,
+                heapUsedBytes = heap / 2L,
+                heapMaxBytes = heap,
+                nowElapsedMs = now,
+                nativePssBytes = baseNative + (index.toLong() + 1L) * 1024L * 1024L,
+            )
+        }
+
+        assertEquals(PlaybackMemoryLevel.CRITICAL, state.level)
+        assertEquals(PlaybackMemoryPressureSource.NATIVE_PSS_GROWTH, state.pressureSource)
+        assertEquals(PlaybackMemoryPolicy.NATIVE_GROWTH_CRITICAL_STREAK, state.nativeGrowthStreak)
+        assertTrue(state.nativeGrowthRateKbPerMin > 0)
+
+        state = PlaybackMemoryPolicy.sample(
+            previous = state,
+            heapUsedBytes = heap / 2L,
+            heapMaxBytes = heap,
+            nowElapsedMs = now + PlaybackMemoryPolicy.NATIVE_GROWTH_MAX_WINDOW_MS,
+            nativePssBytes = state.nativePssBytes,
+        )
+        assertEquals(0, state.nativeGrowthStreak)
+    }
+
     @Test fun lowMemoryTierStartsWithABoundedEconomyProfile() {
         val state = PlaybackMemoryState(lowMemoryTier = true)
 

@@ -2,6 +2,7 @@
 """Source-level contracts for the crash-free runtime Phase 3 policy cut."""
 
 from pathlib import Path
+import re
 import sys
 
 
@@ -23,6 +24,8 @@ catalog = read("app/src/main/java/com/example/familyphotoframe/data/diagnostics/
 manifest = read("app/src/main/AndroidManifest.xml")
 build = read("app/build.gradle.kts")
 notes = read("docs/CRASH_FREE_RUNTIME_PHASE3_MEMORY_POLICY.md")
+build_number_match = re.search(r"val buildNumber = (\d+)", build)
+build_number = int(build_number_match.group(1)) if build_number_match else 0
 
 system_pressure = policy[
     policy.index("fun systemPressure(") : policy.index("private fun externalSignal(")
@@ -60,7 +63,7 @@ checks = {
             "externalGuardedRemainingMs",
         )),
     "Phase 3 has an install-distinct version and qualification notes":
-        "val buildNumber = 41" in build and "val testingVariant: Int? = 1" in build and
+        build_number >= 41 and "val testingVariant: Int? = 1" in build and
         all(term in notes for term in (
             "26.41.1", "physical-device soak pending", "CIRCUIT_OPEN", "Total process PSS",
         )),

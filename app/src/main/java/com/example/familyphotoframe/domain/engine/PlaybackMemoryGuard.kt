@@ -44,6 +44,9 @@ class PlaybackMemoryGuard(
         systemThresholdBytes: Long,
         systemLowMemory: Boolean,
         nowElapsedMs: Long,
+        nativePssBytes: Long? = null,
+        activeMediaTransfers: Int? = null,
+        oldestMediaTransferAgeMs: Long? = null,
     ): PlaybackMemoryState = synchronized(lock) {
         PlaybackMemoryPolicy.sample(
             previous = mutableState.value,
@@ -54,7 +57,16 @@ class PlaybackMemoryGuard(
             systemAvailBytes = systemAvailBytes,
             systemThresholdBytes = systemThresholdBytes,
             systemLowMemory = systemLowMemory,
+            nativePssBytes = nativePssBytes,
+            activeMediaTransfers = activeMediaTransfers,
+            oldestMediaTransferAgeMs = oldestMediaTransferAgeMs,
         ).also { mutableState.value = it }
+    }
+
+    /** Event-only update; the Application-owned sample loop evaluates the bounded window. */
+    fun recordRenderAckTimeout(nowElapsedMs: Long): PlaybackMemoryState = synchronized(lock) {
+        PlaybackMemoryPolicy.renderAckTimeout(mutableState.value, nowElapsedMs)
+            .also { mutableState.value = it }
     }
 
     fun recordDecodeOom(nowElapsedMs: Long): PlaybackMemoryState = synchronized(lock) {

@@ -45,6 +45,9 @@ python3 scripts/check-consistency.py || exit 1
 echo "==> Crash-free runtime Phase 3 source contracts"
 python3 scripts/verify-crash-free-runtime-phase3.py || exit 1
 
+echo "==> Crash-free runtime Phase 4 source contracts"
+python3 scripts/verify-crash-free-runtime-phase4.py || exit 1
+
 # Runs before the parse step below on purpose: it catches statements accidentally joined
 # onto the previous line, which parse cleanly and are only rejected by the type checker —
 # invisible here, where the Android/Compose compiler cannot run.

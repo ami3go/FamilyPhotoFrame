@@ -46,6 +46,7 @@ class SlideshowEngine(
     private val folderBalancedShuffle: FolderBalancedShuffleCoordinator,
     private val random: Random = Random.Default,
     private val allowHeif: Boolean = true,
+    private val onRenderAckTimeout: () -> Unit = {},
 ) {
     private sealed interface Command {
         data object Next : Command
@@ -705,6 +706,7 @@ class SlideshowEngine(
                                 "photoToken" to diagnosticToken(it.stableId.ifBlank { it.id.toString() }, "photo"),
                             )
                         }
+                        onRenderAckTimeout()
                         advance(forward = true)
                     } else {
                         handle(cmd)
