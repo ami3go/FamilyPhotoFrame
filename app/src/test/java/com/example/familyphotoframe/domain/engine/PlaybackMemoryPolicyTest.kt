@@ -137,4 +137,130 @@ class PlaybackMemoryPolicyTest {
         assertFalse(signalled.allowSelectedDecode)
         assertEquals(opened.circuitOpenUntilElapsedMs, signalled.circuitOpenUntilElapsedMs)
     }
+
+    @Test fun severeSystemPressureDegradesPlaybackWithoutBlockingSelectedDecode() {
+        val baseline = PlaybackMemoryPolicy.sample(
+            PlaybackMemoryState(), heap / 2L, heap, 1_000L,
+        )
+        val critical = PlaybackMemoryPolicy.systemPressure(
+            baseline,
+            nowElapsedMs = 2_000L,
+            severe = true,
+        )
+        val repeated = PlaybackMemoryPolicy.systemPressure(
+            critical,
+            nowElapsedMs = 3_000L,
+            severe = true,
+        )
+
+        assertEquals(PlaybackMemoryLevel.CRITICAL, critical.level)
+        assertTrue(critical.allowSelectedDecode)
+        assertFalse(critical.allowNextPreload)
+        assertEquals(PlaybackMemoryPressureSource.PLATFORM_CALLBACK, critical.pressureSource)
+        assertEquals(critical.decisionVersion, repeated.decisionVersion)
+        assertTrue(repeated.externalCriticalUntilElapsedMs > critical.externalCriticalUntilElapsedMs)
+    }
+
+    @Test fun externalCriticalPressureDecaysToGuardedThenNormalWithoutChurn() {
+        val baseline = PlaybackMemoryPolicy.sample(
+            PlaybackMemoryState(), heap / 2L, heap, 1_000L,
+        )
+        val signalled = PlaybackMemoryPolicy.systemPressure(baseline, 2_000L, severe = true)
+        val low = PlaybackMemoryPolicy.sample(signalled, heap / 2L, heap, 3_000L)
+        val criticalHeld = PlaybackMemoryPolicy.sample(
+            low,
+            heap / 2L,
+            heap,
+            2_000L + PlaybackMemoryPolicy.EXTERNAL_CRITICAL_HOLD_MS - 1L,
+        )
+        val guarded = PlaybackMemoryPolicy.sample(
+            criticalHeld,
+            heap / 2L,
+            heap,
+            2_000L + PlaybackMemoryPolicy.EXTERNAL_CRITICAL_HOLD_MS,
+        )
+        val normal = PlaybackMemoryPolicy.sample(
+            guarded,
+            heap / 2L,
+            heap,
+            2_000L + PlaybackMemoryPolicy.EXTERNAL_GUARDED_HOLD_MS,
+        )
+
+        assertEquals(PlaybackMemoryLevel.CRITICAL, criticalHeld.level)
+        assertEquals(PlaybackMemoryLevel.GUARDED, guarded.level)
+        assertEquals(PlaybackMemoryLevel.NORMAL, normal.level)
+    }
+
+    @Test fun lowMemoryCallbackStormChangesThePreparationDecisionOnlyOnce() {
+        val baseline = PlaybackMemoryPolicy.sample(
+            PlaybackMemoryState(), heap / 5L, heap, 1_000L,
+        )
+        var state = baseline
+        var now = 1_000L
+        repeat(45) {
+            now += 30_000L
+            state = PlaybackMemoryPolicy.systemPressure(state, now, severe = true)
+            state = PlaybackMemoryPolicy.sample(state, heap / 5L, heap, now + 10_000L)
+        }
+
+        assertEquals(PlaybackMemoryLevel.CRITICAL, state.level)
+        assertEquals(baseline.decisionVersion + 1L, state.decisionVersion)
+        assertTrue(state.allowSelectedDecode)
+    }
+
+    @Test fun freshPssAndSystemHeadroomCanDriveProtectionWhileJavaHeapIsLow() {
+        val budget = 100L * 1024L * 1024L
+        val baseline = PlaybackMemoryState(processMemoryBudgetBytes = budget)
+        val pssCritical = PlaybackMemoryPolicy.sample(
+            previous = baseline,
+            heapUsedBytes = heap / 2L,
+            heapMaxBytes = heap,
+            nowElapsedMs = 1_000L,
+            processPssBytes = budget * 125L / 100L,
+            systemAvailBytes = 500L * 1024L * 1024L,
+            systemThresholdBytes = 100L * 1024L * 1024L,
+            systemLowMemory = false,
+        )
+        val systemCritical = PlaybackMemoryPolicy.sample(
+            previous = baseline,
+            heapUsedBytes = heap / 2L,
+            heapMaxBytes = heap,
+            nowElapsedMs = 1_000L,
+            processPssBytes = budget / 2L,
+            systemAvailBytes = 100L * 1024L * 1024L,
+            systemThresholdBytes = 100L * 1024L * 1024L,
+            systemLowMemory = false,
+        )
+        val systemGuarded = PlaybackMemoryPolicy.sample(
+            previous = baseline,
+            heapUsedBytes = heap / 2L,
+            heapMaxBytes = heap,
+            nowElapsedMs = 1_000L,
+            processPssBytes = budget / 2L,
+            systemAvailBytes = 200L * 1024L * 1024L,
+            systemThresholdBytes = 100L * 1024L * 1024L,
+            systemLowMemory = false,
+        )
+
+        assertEquals(PlaybackMemoryLevel.CRITICAL, pssCritical.level)
+        assertEquals(PlaybackMemoryPressureSource.PROCESS_PSS, pssCritical.pressureSource)
+        assertEquals(125, pssCritical.processPressurePercent)
+        assertEquals(PlaybackMemoryLevel.CRITICAL, systemCritical.level)
+        assertEquals(PlaybackMemoryPressureSource.SYSTEM_HEADROOM, systemCritical.pressureSource)
+        assertEquals(PlaybackMemoryLevel.GUARDED, systemGuarded.level)
+    }
+
+    @Test fun lowMemoryTierStartsWithABoundedEconomyProfile() {
+        val state = PlaybackMemoryState(lowMemoryTier = true)
+
+        assertEquals(PlaybackMemoryLevel.NORMAL, state.level)
+        assertFalse(state.allowNextPreload)
+        assertFalse(state.allowSoftFocus)
+        assertFalse(state.allowBlurredBackdrop)
+        assertFalse(state.allowWebPreview)
+        assertTrue(state.forceSimpleTransition)
+        assertEquals(2, state.maxCollagePhotos)
+        assertTrue(state.decodeScale < 1f)
+        assertTrue(state.allowSelectedDecode)
+    }
 }

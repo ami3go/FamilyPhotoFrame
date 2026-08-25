@@ -45,7 +45,16 @@ Each one-minute `HEAP_SAMPLE` retains both managed and process/system evidence:
 - active, peak, cumulative-start/finish, and oldest-age values for media-cache transfers;
 - explicit saturation flags if the bounded active-resource timestamp registry reaches its limit.
 
-The same latest process-resource values are copied into the streamed `runtimeSnapshot` bundle record. Counts are diagnostic evidence only and do not change playback or memory-protection policy.
+Phase 3 also records the policy interpretation: `processMemoryBudgetKb`,
+`processPressurePercent`, `systemHeadroomPercent`, `memoryPressureSource`,
+`economyBaseline`, and the remaining external critical/guarded holds. `pressurePercent` remains
+the Java-heap percentage for backward compatibility. The policy compares total PSS with the
+ordinary Android memory class and system availability with Android's low-memory threshold.
+
+The same latest process-resource values are copied into the streamed `runtimeSnapshot` bundle
+record. SMB/media-transfer/FD/thread counts remain diagnostic evidence only. Fresh PSS and system
+memory readings now drive the bounded playback policy; stale readings are retained for evidence
+but do not refresh a pressure hold.
 
 One app-private `PersistentRuntimeBreadcrumbs` record retains the latest presentation stage. Normal updates use an asynchronous preferences write; the one-minute process marker, severe memory callbacks, and Java crash capture synchronously flush the current value. The next process emits `PREVIOUS_RUNTIME_BREADCRUMB`, including whether the previous stage was still active. Presentation and session identities are privacy-filtered tokens.
 

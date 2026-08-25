@@ -178,10 +178,10 @@ class App : Application() {
             var lastSampleAtMs = Long.MIN_VALUE
             while (isActive) {
                 val elapsedMs = android.os.SystemClock.elapsedRealtime()
-                val reading = if (
+                val fullSampleDue =
                     lastSampleAtMs == Long.MIN_VALUE ||
                     elapsedMs - lastSampleAtMs >= RuntimeSampler.DEFAULT_INTERVAL_MS
-                ) {
+                val reading = if (fullSampleDue) {
                     lastSampleAtMs = elapsedMs
                     persistProcessRuntimeMarker(System.currentTimeMillis(), elapsedMs)
                     services.runtimeSampler.sample()
@@ -192,13 +192,34 @@ class App : Application() {
                     reading.usedBytes.toDouble() / reading.maxBytes.toDouble()
                 } else 0.0
                 val previousProtection = services.playbackMemoryGuard.snapshot()
-                val protection = services.playbackMemoryGuard.recordHeap(
-                    heapUsedBytes = reading.usedBytes,
-                    heapMaxBytes = reading.maxBytes,
-                    nowElapsedMs = elapsedMs,
-                )
-                if (protection.level != previousProtection.level) {
-                    onMemoryProtectionChanged(previousProtection, protection, "heap_sample")
+                val sampledMemory = services.diagnosticRuntimeState.snapshot().memory
+                val sampleAgeMs = System.currentTimeMillis() - sampledMemory.sampledAtEpochMs
+                val protection = if (
+                    fullSampleDue && sampledMemory.sampledAtEpochMs > 0L &&
+                    sampleAgeMs in 0L..FULL_MEMORY_SAMPLE_FRESHNESS_MS
+                ) {
+                    services.playbackMemoryGuard.recordMemory(
+                        heapUsedBytes = reading.usedBytes,
+                        heapMaxBytes = reading.maxBytes,
+                        processPssBytes = sampledMemory.pssKb * 1024L,
+                        systemAvailBytes = sampledMemory.systemAvailMemKb * 1024L,
+                        systemThresholdBytes = sampledMemory.systemThresholdKb * 1024L,
+                        systemLowMemory = sampledMemory.systemLowMemory,
+                        nowElapsedMs = elapsedMs,
+                    )
+                } else {
+                    services.playbackMemoryGuard.recordHeap(
+                        heapUsedBytes = reading.usedBytes,
+                        heapMaxBytes = reading.maxBytes,
+                        nowElapsedMs = elapsedMs,
+                    )
+                }
+                if (protection.decisionVersion != previousProtection.decisionVersion) {
+                    onMemoryProtectionChanged(
+                        previousProtection,
+                        protection,
+                        if (fullSampleDue) "runtime_sample" else "heap_sample",
+                    )
                 }
                 evaluateMemorySelfRecovery(protection, elapsedMs)
                 val now = System.currentTimeMillis()
@@ -480,7 +501,7 @@ class App : Application() {
             nowElapsedMs = SystemClock.elapsedRealtime(),
             severe = severe,
         )
-        if (current.level != previous.level) {
+        if (current.decisionVersion != previous.decisionVersion) {
             onMemoryProtectionChanged(previous, current, "trim_$level", clearCaches = false)
         }
     }
@@ -495,7 +516,7 @@ class App : Application() {
             nowElapsedMs = SystemClock.elapsedRealtime(),
             severe = true,
         )
-        if (current.level != previous.level) {
+        if (current.decisionVersion != previous.decisionVersion) {
             onMemoryProtectionChanged(previous, current, "low_memory", clearCaches = false)
         }
     }
@@ -526,6 +547,16 @@ class App : Application() {
             "previousLevel" to previous.level.name,
             "memoryProtectionLevel" to current.level.name,
             "pressurePercent" to current.pressurePercent.toString(),
+            "processPressurePercent" to current.processPressurePercent.toString(),
+            "processMemoryBudgetKb" to (current.processMemoryBudgetBytes / 1024L).toString(),
+            "systemHeadroomPercent" to current.systemHeadroomPercent.toString(),
+            "systemLowMemory" to current.systemLowMemory.toString(),
+            "memoryPressureSource" to current.pressureSource.name,
+            "economyBaseline" to current.lowMemoryTier.toString(),
+            "externalCriticalRemainingMs" to
+                current.externalCriticalRemainingMs(SystemClock.elapsedRealtime()).toString(),
+            "externalGuardedRemainingMs" to
+                current.externalGuardedRemainingMs(SystemClock.elapsedRealtime()).toString(),
             "preloadAllowed" to current.allowNextPreload.toString(),
             "maxCollagePhotos" to current.maxCollagePhotos.toString(),
             "targetScalePercent" to (current.decodeScale * 100f).toInt().toString(),
@@ -732,6 +763,7 @@ class App : Application() {
 
     private companion object {
         const val HEAP_PRESSURE_RATIO = 0.75
+        const val FULL_MEMORY_SAMPLE_FRESHNESS_MS = 15_000L
         const val PROCESS_START_PREFS = "process_start_evidence"
         const val KEY_LAST_OBSERVED_ELAPSED_REALTIME_MS = "last_observed_elapsed_realtime_ms"
         const val KEY_LAST_ESTIMATED_BOOT_EPOCH_MS = "last_estimated_boot_epoch_ms"

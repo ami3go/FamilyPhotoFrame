@@ -128,8 +128,9 @@ internal class PreparedSlideRegistry(
         else latestByAnchor[anchorId] = replacement
     }
 
-    private companion object {
+    internal companion object {
         const val DEFAULT_MAX_ENTRIES = 4
+        const val LOW_MEMORY_MAX_ENTRIES = 3
     }
 }
 

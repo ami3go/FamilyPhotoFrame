@@ -415,8 +415,15 @@ private fun PlayingContent(
     // preload effect below both read targetW/targetH directly and live, so a resize
     // still decodes new work at the correct size — it just no longer nukes what was
     // already prepared to do it.
-    val registry = remember {
-        PreparedSlideRegistry(onRetired = reclaimer::retire)
+    val registry = remember(memoryProtection.lowMemoryTier) {
+        PreparedSlideRegistry(
+            onRetired = reclaimer::retire,
+            maxEntries = if (memoryProtection.lowMemoryTier) {
+                PreparedSlideRegistry.LOW_MEMORY_MAX_ENTRIES
+            } else {
+                PreparedSlideRegistry.DEFAULT_MAX_ENTRIES
+            },
+        )
     }
     DisposableEffect(registry) {
         onDispose { registry.clear() }
@@ -525,6 +532,7 @@ private fun PlayingContent(
                 preference = state.decodeColorDepth,
                 heapMaxBytes = Runtime.getRuntime().maxMemory(),
                 level = memoryProtection.level,
+                lowMemoryTier = memoryProtection.lowMemoryTier,
             ),
             excludedIds = buildSet {
                 addAll(registry.photoIds())

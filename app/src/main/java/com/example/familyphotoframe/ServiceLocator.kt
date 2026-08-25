@@ -108,8 +108,22 @@ class ServiceLocator(private val appContext: Context) {
     /** Lock-free crash/ANR context populated by normal runtime owners. */
     val diagnosticRuntimeState: DiagnosticRuntimeState = DiagnosticRuntimeState()
 
-    /** Process-wide low-memory circuit breaker shared by Application and slideshow UI. */
-    val playbackMemoryGuard: PlaybackMemoryGuard = PlaybackMemoryGuard()
+    /**
+     * Process-wide memory guard shared by Application and slideshow UI. The PSS budget uses the
+     * ordinary memory class rather than `Runtime.maxMemory()`, so an optional large heap cannot
+     * make a 100 MiB-class API-22 device look roomy.
+     */
+    val playbackMemoryGuard: PlaybackMemoryGuard by lazy {
+        val ordinaryBudgetBytes = activityManager?.memoryClass
+            ?.takeIf { it > 0 }
+            ?.toLong()
+            ?.times(BYTES_PER_MIB)
+            ?: Runtime.getRuntime().maxMemory().coerceAtLeast(0L)
+        PlaybackMemoryGuard(
+            lowMemoryTier = memoryTier.isLow,
+            processMemoryBudgetBytes = ordinaryBudgetBytes,
+        )
+    }
 
     /** Native/provider ownership counters shared by SMB, cache and runtime sampling. */
     val runtimeResourceTracker: RuntimeResourceTracker = RuntimeResourceTracker()
@@ -164,6 +178,16 @@ class ServiceLocator(private val appContext: Context) {
                 val systemMemory = activityManager?.let { manager ->
                     runCatching { ActivityManager.MemoryInfo().also(manager::getMemoryInfo) }.getOrNull()
                 }
+                val processBudgetBytes = memoryProtection.processMemoryBudgetBytes
+                val sampledProcessPressurePercent = diagnosticPercent(
+                    numerator = pssKb * 1024L,
+                    denominator = processBudgetBytes,
+                )
+                val sampledSystemHeadroomPercent = diagnosticPercent(
+                    numerator = systemMemory?.availMem ?: 0L,
+                    denominator = systemMemory?.threshold ?: 0L,
+                )
+                val sampleElapsedMs = android.os.SystemClock.elapsedRealtime()
                 diagnosticRuntimeState.updateMemory(
                     DiagnosticRuntimeState.Memory(
                         heapUsedKb = (runtime.totalMemory() - runtime.freeMemory()) / 1024L,
@@ -210,6 +234,15 @@ class ServiceLocator(private val appContext: Context) {
                     "pendingDisposals" to bitmapInventory.pendingDisposals.toString(),
                     "memoryProtectionLevel" to memoryProtection.level.name,
                     "pressurePercent" to memoryProtection.pressurePercent.toString(),
+                    "processMemoryBudgetKb" to (processBudgetBytes / 1024L).toString(),
+                    "processPressurePercent" to sampledProcessPressurePercent.toString(),
+                    "systemHeadroomPercent" to sampledSystemHeadroomPercent.toString(),
+                    "memoryPressureSource" to memoryProtection.pressureSource.name,
+                    "economyBaseline" to memoryProtection.lowMemoryTier.toString(),
+                    "externalCriticalRemainingMs" to
+                        memoryProtection.externalCriticalRemainingMs(sampleElapsedMs).toString(),
+                    "externalGuardedRemainingMs" to
+                        memoryProtection.externalGuardedRemainingMs(sampleElapsedMs).toString(),
                     "oomCount" to memoryProtection.totalOomCount.toString(),
                     "smbActiveStreams" to resources.activeSmbStreams.toString(),
                     "smbPeakStreams" to resources.peakSmbStreams.toString(),
@@ -397,6 +430,7 @@ class ServiceLocator(private val appContext: Context) {
     }
 
     companion object {
+        private const val BYTES_PER_MIB = 1024L * 1024L
         const val SOURCE_LOCAL_SAF = BuiltInSourceIds.LOCAL_SAF
         const val SOURCE_FALLBACK = BuiltInSourceIds.FALLBACK
         const val SOURCE_SMB = BuiltInSourceIds.SMB
@@ -404,4 +438,11 @@ class ServiceLocator(private val appContext: Context) {
         const val SOURCE_WEBDAV = BuiltInSourceIds.WEBDAV
         const val SOURCE_LOCAL_UPLOADS = BuiltInSourceIds.LOCAL_UPLOADS
     }
+}
+
+private fun diagnosticPercent(numerator: Long, denominator: Long): Int {
+    if (denominator <= 0L) return 0
+    return ((numerator.coerceAtLeast(0L).toDouble() / denominator.toDouble()) * 100.0)
+        .toInt()
+        .coerceIn(0, 999)
 }

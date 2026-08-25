@@ -42,6 +42,9 @@ KOTLIN_HOME="$(cd "$(dirname "$KOTLINC")/.." && pwd)"
 echo "==> Static consistency checks (resources, callbacks, Room schema)"
 python3 scripts/check-consistency.py || exit 1
 
+echo "==> Crash-free runtime Phase 3 source contracts"
+python3 scripts/verify-crash-free-runtime-phase3.py || exit 1
+
 # Runs before the parse step below on purpose: it catches statements accidentally joined
 # onto the previous line, which parse cleanly and are only rejected by the type checker —
 # invisible here, where the Android/Compose compiler cannot run.
@@ -169,6 +172,13 @@ sed 's/^package .*//' \
 sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/engine/PlaybackMemoryGuard.kt \
   > "$PURE/PlaybackMemoryGuard.kt"
+sed -n '/^enum class DecodeColorDepth /p' \
+  app/src/main/java/com/example/familyphotoframe/data/settings/AppSettings.kt \
+  > "$PURE/DecodeColorDepth.kt"
+sed -e 's/^package .*//' \
+  -e '/^import com.example.familyphotoframe.data.settings.DecodeColorDepth$/d' \
+  app/src/main/java/com/example/familyphotoframe/domain/engine/DecodeColorPolicy.kt \
+  > "$PURE/DecodeColorPolicy.kt"
 sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/engine/MemorySelfRecoveryPolicy.kt \
   > "$PURE/MemorySelfRecoveryPolicy.kt"

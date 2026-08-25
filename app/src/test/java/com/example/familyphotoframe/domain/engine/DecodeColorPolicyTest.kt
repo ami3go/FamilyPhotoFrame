@@ -12,7 +12,8 @@ class DecodeColorPolicyTest {
         preference: DecodeColorDepth,
         heap: Long,
         level: PlaybackMemoryLevel = PlaybackMemoryLevel.NORMAL,
-    ) = DecodeColorPolicy.choose(preference, heap, level)
+        lowMemoryTier: Boolean = false,
+    ) = DecodeColorPolicy.choose(preference, heap, level, lowMemoryTier)
 
     @Test fun autoEconomisesOnTheSmallHeapsOldTabletsProvide() {
         assertEquals(DecodeColorChoice.RGB_565, choose(DecodeColorDepth.AUTO, smallHeap))
@@ -20,6 +21,13 @@ class DecodeColorPolicyTest {
 
     @Test fun autoKeepsFullColourWhereTheHeapCanCarryIt() {
         assertEquals(DecodeColorChoice.ARGB_8888, choose(DecodeColorDepth.AUTO, roomyHeap))
+    }
+
+    @Test fun autoEconomisesOnALowMemoryTierEvenWhenLargeHeapLooksRoomy() {
+        assertEquals(
+            DecodeColorChoice.RGB_565,
+            choose(DecodeColorDepth.AUTO, roomyHeap, lowMemoryTier = true),
+        )
     }
 
     @Test fun autoFollowsTheGuardDownOnALargeHeap() {
@@ -52,6 +60,10 @@ class DecodeColorPolicyTest {
             choose(DecodeColorDepth.FULL, smallHeap, PlaybackMemoryLevel.CRITICAL),
         )
         assertEquals(DecodeColorChoice.RGB_565, choose(DecodeColorDepth.LOW_MEMORY, roomyHeap))
+        assertEquals(
+            DecodeColorChoice.ARGB_8888,
+            choose(DecodeColorDepth.FULL, roomyHeap, lowMemoryTier = true),
+        )
     }
 
     @Test fun savingModeHalvesEveryDecodedPixel() {

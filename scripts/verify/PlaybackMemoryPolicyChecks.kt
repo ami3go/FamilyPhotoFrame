@@ -85,9 +85,65 @@ fun runPlaybackMemoryPolicyChecks() {
     check("recovery re-enables one selected decode", true, recovering.allowSelectedDecode)
     val reopened = PlaybackMemoryPolicy.decodeOom(recovering, 160_001L)
     check("OOM during recovery immediately re-opens circuit", PlaybackMemoryLevel.CIRCUIT_OPEN, reopened.level)
-    val normal = PlaybackMemoryPolicy.sample(recovering, heap / 2L, heap, 700_001L)
-    check("stable low heap restores normal mode", PlaybackMemoryLevel.NORMAL, normal.level)
+    val normal = PlaybackMemoryPolicy.sample(recovering, heap / 2L, heap, 930_001L)
+    check("stable low heap and expired external hold restore normal mode", PlaybackMemoryLevel.NORMAL, normal.level)
     check("recovery resets OOM streak", 0, normal.oomStreak)
+
+    val baseline = PlaybackMemoryPolicy.sample(
+        PlaybackMemoryState(), heap / 2L, heap, 1_000_000L,
+    )
+    val platformCritical = PlaybackMemoryPolicy.systemPressure(
+        baseline, 1_001_000L, severe = true,
+    )
+    check(
+        "system pressure degrades without opening the decode circuit",
+        PlaybackMemoryLevel.CRITICAL,
+        platformCritical.level,
+    )
+    check("system pressure keeps selected decode enabled", true, platformCritical.allowSelectedDecode)
+    val repeatedPlatformCritical = PlaybackMemoryPolicy.systemPressure(
+        platformCritical, 1_002_000L, severe = true,
+    )
+    check(
+        "repeated callback does not change preparation decision",
+        platformCritical.decisionVersion,
+        repeatedPlatformCritical.decisionVersion,
+    )
+    var callbackStorm = baseline
+    var callbackAtMs = 1_000_000L
+    repeat(45) {
+        callbackAtMs += 30_000L
+        callbackStorm = PlaybackMemoryPolicy.systemPressure(
+            callbackStorm, callbackAtMs, severe = true,
+        )
+        callbackStorm = PlaybackMemoryPolicy.sample(
+            callbackStorm, heap / 5L, heap, callbackAtMs + 10_000L,
+        )
+    }
+    check(
+        "45-callback storm changes preparation only once",
+        baseline.decisionVersion + 1L,
+        callbackStorm.decisionVersion,
+    )
+
+    val budget = 100L * 1024L * 1024L
+    val pssCritical = PlaybackMemoryPolicy.sample(
+        previous = PlaybackMemoryState(processMemoryBudgetBytes = budget),
+        heapUsedBytes = heap / 2L,
+        heapMaxBytes = heap,
+        nowElapsedMs = 2_000_000L,
+        processPssBytes = budget * 125L / 100L,
+        systemAvailBytes = 500L * 1024L * 1024L,
+        systemThresholdBytes = 100L * 1024L * 1024L,
+        systemLowMemory = false,
+    )
+    check("PSS can drive critical policy with low Java heap", PlaybackMemoryLevel.CRITICAL, pssCritical.level)
+    check("PSS source is explicit", PlaybackMemoryPressureSource.PROCESS_PSS, pssCritical.pressureSource)
+
+    val economy = PlaybackMemoryState(lowMemoryTier = true)
+    check("low tier starts without speculative preload", false, economy.allowNextPreload)
+    check("low tier starts with two-photo maximum", 2, economy.maxCollagePhotos)
+    check("low tier forces bounded transition", true, economy.forceSimpleTransition)
 
     val guard = PlaybackMemoryGuard()
     val workers = (0 until 8).map { worker ->

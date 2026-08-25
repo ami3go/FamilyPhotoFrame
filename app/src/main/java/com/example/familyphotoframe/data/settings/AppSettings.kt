@@ -254,9 +254,8 @@ enum class MotionMode { NONE, KEN_BURNS }
 /**
  * Colour depth used when decoding a photo for display.
  *
- * [AUTO] follows the heap: full colour where there is room, half-size RGB_565 pixels on
- * the small heaps old tablets provide and whenever the memory guard has already stepped
- * playback down.
+ * [AUTO] follows the device and guard: full colour where there is room, half-size RGB_565
+ * pixels on LOW-tier/small-heap frames and whenever runtime protection has stepped down.
  */
 enum class DecodeColorDepth { AUTO, FULL, LOW_MEMORY }
 
