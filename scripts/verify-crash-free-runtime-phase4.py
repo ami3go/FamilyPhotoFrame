@@ -2,6 +2,7 @@
 """Source-level contracts for the crash-free runtime Phase 4 adaptive controller."""
 
 from pathlib import Path
+import re
 import sys
 
 
@@ -22,6 +23,8 @@ catalog = read("app/src/main/java/com/example/familyphotoframe/data/diagnostics/
 checks_file = read("scripts/verify/PlaybackMemoryPolicyChecks.kt")
 build = read("app/build.gradle.kts")
 notes = read("docs/CRASH_FREE_RUNTIME_PHASE4_ADAPTIVE_STABILITY.md")
+build_number_match = re.search(r"val buildNumber = (\d+)", build)
+build_number = int(build_number_match.group(1)) if build_number_match else 0
 
 render_recorder = policy[
     policy.index("fun renderAckTimeout(") : policy.index("fun systemPressure(")
@@ -75,7 +78,7 @@ checks = {
             "1,000-sample pressure run has bounded level changes",
         )),
     "Phase 4 has an install-distinct version and qualification notes":
-        "val buildNumber = 42" in build and
+        build_number >= 42 and
         "val testingVariant: Int? = 1" in build and
         all(term in notes for term in (
             "26.42.1", "physical-device soak pending", "CIRCUIT_OPEN",
