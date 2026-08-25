@@ -16,7 +16,11 @@ import com.example.familyphotoframe.data.diagnostics.DiagnosticIdentityHasher
 import com.example.familyphotoframe.data.diagnostics.DiagnosticIdentityKeyStore
 import com.example.familyphotoframe.data.diagnostics.DiagnosticRuntimeState
 import com.example.familyphotoframe.data.diagnostics.FileDiagnosticsSink
+import com.example.familyphotoframe.data.diagnostics.PersistentRuntimeBreadcrumbs
+import com.example.familyphotoframe.data.diagnostics.ProcfsResourceSampler
+import com.example.familyphotoframe.data.diagnostics.RuntimeResourceTracker
 import com.example.familyphotoframe.data.diagnostics.RuntimeSampler
+import com.example.familyphotoframe.data.diagnostics.SharedPreferencesRuntimeBreadcrumbStorage
 import com.example.familyphotoframe.data.diagnostics.BatteryTelemetry
 import com.example.familyphotoframe.data.index.ContentHashBackfiller
 import com.example.familyphotoframe.data.index.ExifBackfiller
@@ -72,6 +76,10 @@ class ServiceLocator(private val appContext: Context) {
 
     val dispatchers: AppDispatchers = DefaultAppDispatchers
 
+    private val activityManager: ActivityManager? by lazy {
+        appContext.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+    }
+
     /** Runtime playback capability; indexing remains device-independent. */
     val allowHeifPlayback: Boolean = ImageFormatSupport.supportsPlatformHeif(Build.VERSION.SDK_INT)
 
@@ -81,7 +89,6 @@ class ServiceLocator(private val appContext: Context) {
      * the image cache budget, the diagnostics ring and the slideshow's decode sizing.
      */
     val memoryTier: DeviceMemoryTier by lazy {
-        val activityManager = appContext.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
         val totalRamBytes = activityManager?.let { manager ->
             runCatching {
                 ActivityManager.MemoryInfo().also(manager::getMemoryInfo).totalMem
@@ -103,6 +110,16 @@ class ServiceLocator(private val appContext: Context) {
 
     /** Process-wide low-memory circuit breaker shared by Application and slideshow UI. */
     val playbackMemoryGuard: PlaybackMemoryGuard = PlaybackMemoryGuard()
+
+    /** Native/provider ownership counters shared by SMB, cache and runtime sampling. */
+    val runtimeResourceTracker: RuntimeResourceTracker = RuntimeResourceTracker()
+
+    private val procfsResourceSampler: ProcfsResourceSampler = ProcfsResourceSampler()
+
+    /** Last presentation stage retained across an abrupt same-boot process restart. */
+    val runtimeBreadcrumbs: PersistentRuntimeBreadcrumbs = PersistentRuntimeBreadcrumbs(
+        SharedPreferencesRuntimeBreadcrumbStorage(appContext),
+    )
 
     /**
      * Durable diagnostics file, in app-private storage so no permission is needed and
@@ -133,11 +150,20 @@ class ServiceLocator(private val appContext: Context) {
             extraFields = {
                 val cache = imageLoader.memoryCache
                 val runtime = Runtime.getRuntime()
-                val pssKb = Debug.getPss().toLong()
+                val processMemory = Debug.MemoryInfo().also { Debug.getMemoryInfo(it) }
+                val pssKb = processMemory.totalPss.toLong().coerceAtLeast(0L)
+                val dalvikPssKb = processMemory.dalvikPss.toLong().coerceAtLeast(0L)
+                val nativePssKb = processMemory.nativePss.toLong().coerceAtLeast(0L)
+                val otherPssKb = processMemory.otherPss.toLong().coerceAtLeast(0L)
                 val nativeHeapKb = Debug.getNativeHeapAllocatedSize() / 1024L
                 val imageCacheKb = (cache?.size ?: 0).toLong() / 1024L
                 val bitmapInventory = diagnosticRuntimeState.snapshot().bitmaps
                 val memoryProtection = playbackMemoryGuard.snapshot()
+                val procfs = procfsResourceSampler.sample()
+                val resources = runtimeResourceTracker.snapshot()
+                val systemMemory = activityManager?.let { manager ->
+                    runCatching { ActivityManager.MemoryInfo().also(manager::getMemoryInfo) }.getOrNull()
+                }
                 diagnosticRuntimeState.updateMemory(
                     DiagnosticRuntimeState.Memory(
                         heapUsedKb = (runtime.totalMemory() - runtime.freeMemory()) / 1024L,
@@ -146,10 +172,33 @@ class ServiceLocator(private val appContext: Context) {
                         pssKb = pssKb,
                         imageCacheKb = imageCacheKb,
                         sampledAtEpochMs = System.currentTimeMillis(),
+                        dalvikPssKb = dalvikPssKb,
+                        nativePssKb = nativePssKb,
+                        otherPssKb = otherPssKb,
+                        systemAvailMemKb = systemMemory?.availMem?.div(1024L) ?: 0L,
+                        systemThresholdKb = systemMemory?.threshold?.div(1024L) ?: 0L,
+                        systemLowMemory = systemMemory?.lowMemory == true,
+                        openFdCount = procfs.openFileDescriptorCount ?: -1,
+                        threadCount = procfs.threadCount ?: -1,
+                        activeSmbStreams = resources.activeSmbStreams,
+                        activeMediaTransfers = resources.activeMediaTransfers,
+                        oldestSmbStreamAgeMs = resources.oldestSmbStreamAgeMs,
+                        oldestMediaTransferAgeMs = resources.oldestMediaTransferAgeMs,
+                        peakSmbStreams = resources.peakSmbStreams,
+                        smbStreamsOpened = resources.smbStreamsOpened,
+                        smbStreamsClosed = resources.smbStreamsClosed,
+                        smbTrackingSaturated = resources.smbTrackingSaturated,
+                        peakMediaTransfers = resources.peakMediaTransfers,
+                        mediaTransfersStarted = resources.mediaTransfersStarted,
+                        mediaTransfersFinished = resources.mediaTransfersFinished,
+                        mediaTrackingSaturated = resources.mediaTrackingSaturated,
                     )
                 )
                 linkedMapOf(
                     "pssKb" to pssKb.toString(),
+                    "dalvikPssKb" to dalvikPssKb.toString(),
+                    "nativePssKb" to nativePssKb.toString(),
+                    "otherPssKb" to otherPssKb.toString(),
                     "nativeHeapKb" to nativeHeapKb.toString(),
                     "imageCacheKb" to imageCacheKb.toString(),
                     "imageCacheMaxKb" to ((cache?.maxSize ?: 0).toLong() / 1024L).toString(),
@@ -162,7 +211,26 @@ class ServiceLocator(private val appContext: Context) {
                     "memoryProtectionLevel" to memoryProtection.level.name,
                     "pressurePercent" to memoryProtection.pressurePercent.toString(),
                     "oomCount" to memoryProtection.totalOomCount.toString(),
+                    "smbActiveStreams" to resources.activeSmbStreams.toString(),
+                    "smbPeakStreams" to resources.peakSmbStreams.toString(),
+                    "smbStreamsOpened" to resources.smbStreamsOpened.toString(),
+                    "smbStreamsClosed" to resources.smbStreamsClosed.toString(),
+                    "smbOldestStreamAgeMs" to resources.oldestSmbStreamAgeMs.toString(),
+                    "smbTrackingSaturated" to resources.smbTrackingSaturated.toString(),
+                    "mediaActiveTransfers" to resources.activeMediaTransfers.toString(),
+                    "mediaPeakTransfers" to resources.peakMediaTransfers.toString(),
+                    "mediaTransfersStarted" to resources.mediaTransfersStarted.toString(),
+                    "mediaTransfersFinished" to resources.mediaTransfersFinished.toString(),
+                    "mediaOldestTransferAgeMs" to resources.oldestMediaTransferAgeMs.toString(),
+                    "mediaTrackingSaturated" to resources.mediaTrackingSaturated.toString(),
                 ).apply {
+                    procfs.openFileDescriptorCount?.let { put("openFdCount", it.toString()) }
+                    procfs.threadCount?.let { put("threadCount", it.toString()) }
+                    systemMemory?.let {
+                        put("systemAvailMemKb", (it.availMem / 1024L).toString())
+                        put("systemThresholdKb", (it.threshold / 1024L).toString())
+                        put("systemLowMemory", it.lowMemory.toString())
+                    }
                     putAll(batteryTelemetry.fields())
                 }
             },
@@ -198,6 +266,7 @@ class ServiceLocator(private val appContext: Context) {
 
                 override suspend fun clearAllCacheKeys() = photoDao.clearAllCacheKeys()
             },
+            resourceTracker = runtimeResourceTracker,
         )
     }
 
@@ -297,7 +366,9 @@ class ServiceLocator(private val appContext: Context) {
 
     /** Build an SMB source from connection settings and resolved credentials. */
     fun smbSource(conn: SmbConnection, credentials: SmbCredentials): SmbPhotoSource =
-        SmbPhotoSource(SourceId(SOURCE_SMB), conn, credentials, dispatchers.io)
+        SmbPhotoSource(
+            SourceId(SOURCE_SMB), conn, credentials, dispatchers.io, runtimeResourceTracker,
+        )
 
     /** Build a Synology File Station source from connection settings and credentials. */
     fun synologySource(conn: SynologyConnection, credentials: SynologyCredentials): SynologyFileStationSource =

@@ -17,6 +17,7 @@ fun main() {
     runPrivacyChecks()
     runDiagnosticsRateAndHealthChecks()
     runDiagnosticsPagingAndBundleChecks()
+    runRuntimeObservabilityChecks()
     runCrashAndStallChecks()
     runRescanScheduleChecks()
     runWebDavChecks()

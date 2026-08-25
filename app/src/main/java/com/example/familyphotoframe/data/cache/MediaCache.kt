@@ -2,6 +2,7 @@ package com.example.familyphotoframe.data.cache
 
 import android.content.Context
 import android.graphics.BitmapFactory
+import com.example.familyphotoframe.data.diagnostics.RuntimeResourceTracker
 import com.example.familyphotoframe.data.db.CacheIndexDao
 import com.example.familyphotoframe.data.db.CacheIndexEntity
 import com.example.familyphotoframe.data.source.OpenOptions
@@ -51,6 +52,8 @@ class MediaCache(
      * a trailing lambda, and a trailing lambda binds to the *last* parameter.
      */
     private val photoIndex: PhotoCacheIndexWriter? = null,
+    /** Shared process counters used by the one-minute runtime evidence sampler. */
+    private val resourceTracker: RuntimeResourceTracker = RuntimeResourceTracker(),
     /** Max cache size in bytes; defaults to spec §16.1 formula. */
     private val maxBytesProvider: (suspend () -> Long)? = null,
 ) {
@@ -129,7 +132,9 @@ class MediaCache(
                 if (cached != null) return@withKeyLock cached
                 val generation = cacheGeneration.get()
                 when (val downloaded = transferSlots.withPermit {
-                    download(item, source, key, generation)
+                    resourceTracker.startMediaTransfer().use {
+                        download(item, source, key, generation)
+                    }
                 }) {
                     is ResolveResult.Ready -> {
                         evictIfNeeded(protectedKeys + key)

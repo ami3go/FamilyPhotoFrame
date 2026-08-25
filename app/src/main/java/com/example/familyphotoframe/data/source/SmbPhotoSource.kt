@@ -1,5 +1,6 @@
 package com.example.familyphotoframe.data.source
 
+import com.example.familyphotoframe.data.diagnostics.RuntimeResourceTracker
 import com.example.familyphotoframe.util.Glob
 import com.example.familyphotoframe.util.StableId
 import com.example.familyphotoframe.util.SupportedFormats
@@ -50,6 +51,7 @@ class SmbPhotoSource(
     private val conn: SmbConnection,
     credentials: SmbCredentials,
     private val io: CoroutineDispatcher,
+    private val resourceTracker: RuntimeResourceTracker = RuntimeResourceTracker(),
 ) : PhotoSource {
 
     override val type: SourceType = SourceType.SMB_SOURCE
@@ -185,12 +187,20 @@ class SmbPhotoSource(
 
     override suspend fun openStream(item: PhotoItem, options: OpenOptions): InputStream = withContext(io) {
         val lease = contextOwner.acquire()
+        var input: InputStream? = null
+        var resourceLease: RuntimeResourceTracker.Lease? = null
         try {
+            val openedInput = SmbFile(item.openToken, lease.value).inputStream
+            input = openedInput
+            val openedResourceLease = resourceTracker.openSmbStream()
+            resourceLease = openedResourceLease
             DeadlineInputStream(
-                LeaseReleasingInputStream(SmbFile(item.openToken, lease.value).inputStream, lease),
+                LeaseReleasingInputStream(openedInput, lease, openedResourceLease),
                 options.timeoutMs,
             )
         } catch (error: Throwable) {
+            runCatching { input?.close() }
+            resourceLease?.close()
             lease.close()
             throw error
         }
@@ -199,6 +209,7 @@ class SmbPhotoSource(
     private class LeaseReleasingInputStream(
         input: InputStream,
         private val lease: DeferredCloseResource.Lease<CIFSContext>,
+        private val resourceLease: RuntimeResourceTracker.Lease,
     ) : FilterInputStream(input) {
         private val closed = AtomicBoolean(false)
 
@@ -207,7 +218,11 @@ class SmbPhotoSource(
             try {
                 super.close()
             } finally {
-                lease.close()
+                try {
+                    lease.close()
+                } finally {
+                    resourceLease.close()
+                }
             }
         }
     }

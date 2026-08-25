@@ -96,7 +96,10 @@ object DiagnosticEventCatalog {
         "oomCount", "workerLimit", "queueLimit", "uploadedPhotosPreserved",
         "processStartKind", "currentElapsedRealtimeMs", "previousElapsedRealtimeMs",
         "estimatedBootEpochMs", "previousEstimatedBootEpochMs", "bootEpochDeltaMs",
-        "previousMarkerAgeMs",
+        "previousMarkerAgeMs", "breadcrumbSequence", "breadcrumbSessionToken",
+        "breadcrumbOperation", "breadcrumbStage", "breadcrumbActive",
+        "breadcrumbPresentationToken", "breadcrumbSourceKind",
+        "breadcrumbUpdatedEpochMs", "breadcrumbElapsedRealtimeMs", "breadcrumbAgeMs",
     )
 
     private val engineFields = setOf(
@@ -124,7 +127,11 @@ object DiagnosticEventCatalog {
         "metadataCandidateCount", "localProbeCount", "localProbeBudgetSkippedCount",
         "remoteProbeCount", "remoteProbeSuccessCount", "remoteProbeFailureCount",
         "remoteProbeBudgetSkippedCount", "remoteProbeByteLimit", "remoteUnknownSkippedCount",
-        "probeBudgetSkippedCount",
+        "probeBudgetSkippedCount", "configuredMode", "configuredEffect", "resolvedEffect",
+        "direction", "fallbackUsed", "slowFrameCount", "maximumFrameMs", "startLatencyMs",
+        "preparedSlideCount", "activeDecodedBytes", "outgoingPresentationToken",
+        "incomingPresentationToken", "transitionGeneration", "hostGeneration",
+        "cancellationInitiator",
     )
 
     private val sourceFields = setOf(
@@ -148,7 +155,7 @@ object DiagnosticEventCatalog {
     private val memoryFields = setOf(
         "trigger", "reason", "level", "response", "previousLevel", "memoryProtectionLevel",
         "heapUsedKb", "heapMaxKb", "heapBeforeKb", "heapAfterKb", "freedKb",
-        "nativeHeapKb", "pssKb",
+        "nativeHeapKb", "pssKb", "dalvikPssKb", "nativePssKb", "otherPssKb",
         "rssKb", "imageCacheKb", "imageCacheMaxKb", "imageCacheBeforeKb", "beforeKb",
         "webPreviewCleared", "uptimeSec", "pressurePercent", "surface", "engineState",
         "presentationToken", "sourceKind", "layout", "transitionCode", "circuitOpenMs",
@@ -159,6 +166,11 @@ object DiagnosticEventCatalog {
         "batteryTelemetryStatus", "batteryLevelPct", "batteryStatus", "powerSource",
         "batteryPresent", "batteryHealth", "batteryVoltageMv", "batteryTempDeciC",
         "batteryCurrentUa", "batteryChargeCounterUah",
+        "systemAvailMemKb", "systemThresholdKb", "systemLowMemory", "openFdCount",
+        "threadCount", "smbActiveStreams", "smbPeakStreams", "smbStreamsOpened",
+        "smbStreamsClosed", "smbOldestStreamAgeMs", "smbTrackingSaturated", "mediaActiveTransfers",
+        "mediaPeakTransfers", "mediaTransfersStarted", "mediaTransfersFinished",
+        "mediaOldestTransferAgeMs", "mediaTrackingSaturated",
     )
 
     private val lifecycleFields = setOf(
@@ -213,6 +225,7 @@ object DiagnosticEventCatalog {
         "DIAGNOSTICS_UNKNOWN_EVENT", "UNCAUGHT_EXCEPTION", "PREVIOUS_UNCAUGHT_EXCEPTION",
         "PREVIOUS_CRASH_EVIDENCE", "MAIN_THREAD_STALL_STARTED", "MAIN_THREAD_STALL_ESCALATED",
         "MAIN_THREAD_STALL_RECOVERED", "PREVIOUS_ANR_EVIDENCE", "PROCESS_EXIT_RECORDED",
+        "PREVIOUS_RUNTIME_BREADCRUMB",
         "REMEMBERED_BROWSERS_KEPT_AFTER_PIN_RESET", "REMEMBERED_BROWSER_CLOCK_ROLLBACK",
         "REMEMBERED_BROWSER_CREATED", "REMEMBERED_BROWSER_EXPIRED", "REMEMBERED_BROWSER_KEY_LOST",
         "REMEMBERED_BROWSER_POLICY_CHANGED", "REMEMBERED_BROWSER_REVOKED",

@@ -86,18 +86,31 @@ def analyse(events: list[dict]):
     else:
         results.append((NODATA, "Endurance transition count", "no completed transition events"))
 
-    effects = Counter(e.get("resolvedEffect", "?") for e in completed)
+    resolved_effects = [str(e.get("resolvedEffect")) for e in completed if e.get("resolvedEffect")]
+    effects = Counter(resolved_effects)
+    missing_effects = len(completed) - len(resolved_effects)
     unknown = set(effects) - EXPECTED_EFFECTS
-    if completed and not unknown:
+    if missing_effects:
+        results.append((NODATA, "Resolved effect identifiers",
+                        f"{missing_effects}/{len(completed)} completed events lack resolvedEffect"))
+    elif completed and not unknown:
         results.append((PASS, "Resolved effect identifiers", str(dict(effects))))
     elif unknown:
         results.append((FAIL, "Resolved effect identifiers", f"unknown effects: {sorted(unknown)}"))
     else:
         results.append((NODATA, "Resolved effect identifiers", "no completed transitions"))
 
-    intervals = sum(max(0, int(number(e, "frameCount", 0) or 0) - 1) for e in completed)
-    slow = sum(int(number(e, "slowFrameCount", 0) or 0) for e in completed)
-    if intervals:
+    frame_samples = [
+        (number(e, "frameCount"), number(e, "slowFrameCount")) for e in completed
+        if number(e, "frameCount") is not None and number(e, "slowFrameCount") is not None
+    ]
+    frame_coverage = len(frame_samples) / len(completed) if completed else 0.0
+    intervals = sum(max(0, int(frame_count) - 1) for frame_count, _ in frame_samples)
+    slow = sum(int(slow_count) for _, slow_count in frame_samples)
+    if completed and frame_coverage < 0.95:
+        results.append((NODATA, "Frame budget",
+                        f"timing fields present on {len(frame_samples)}/{len(completed)} completed events"))
+    elif intervals:
         good_ratio = 1.0 - slow / intervals
         status = PASS if good_ratio >= 0.95 else FAIL
         results.append((status, "Frame budget", f"{good_ratio * 100:.2f}% within 33.3 ms"))
@@ -106,7 +119,10 @@ def analyse(events: list[dict]):
 
     maxima = [number(e, "maximumFrameMs") for e in completed]
     maxima = [v for v in maxima if v is not None]
-    if maxima:
+    if completed and len(maxima) / len(completed) < 0.95:
+        results.append((NODATA, "Maximum UI stall",
+                        f"maximumFrameMs present on {len(maxima)}/{len(completed)} completed events"))
+    elif maxima:
         maximum = max(maxima)
         results.append((PASS if maximum <= 250 else FAIL, "Maximum UI stall", f"{maximum:.0f} ms"))
     else:
@@ -114,7 +130,10 @@ def analyse(events: list[dict]):
 
     latencies = [number(e, "startLatencyMs") for e in completed]
     latencies = [v for v in latencies if v is not None]
-    if latencies:
+    if completed and len(latencies) / len(completed) < 0.95:
+        results.append((NODATA, "Ready-to-first-frame latency",
+                        f"startLatencyMs present on {len(latencies)}/{len(completed)} completed events"))
+    elif latencies:
         maximum = max(latencies)
         p95 = sorted(latencies)[min(len(latencies) - 1, int(len(latencies) * 0.95))]
         status = PASS if maximum <= 100 else FAIL
@@ -124,7 +143,10 @@ def analyse(events: list[dict]):
 
     retained = [number(e, "preparedSlideCount") for e in completed]
     retained = [int(v) for v in retained if v is not None]
-    if retained:
+    if completed and len(retained) / len(completed) < 0.95:
+        results.append((NODATA, "Prepared-slide retention",
+                        f"preparedSlideCount present on {len(retained)}/{len(completed)} completed events"))
+    elif retained:
         maximum = max(retained)
         results.append((PASS if maximum <= 3 else FAIL, "Prepared-slide retention", f"maximum {maximum}"))
     else:
@@ -144,6 +166,43 @@ def analyse(events: list[dict]):
     # Cancellation can be legitimate manual navigation; report rather than reject unless excessive.
     results.append((PASS if cancel_rate <= 0.05 else FAIL, "Transition cancellation rate",
                     f"{len(cancelled)} cancelled ({cancel_rate * 100:.2f}%)"))
+
+    terminal = completed + cancelled
+    started = by_code["TRANSITION_STARTED"]
+    def has_generation_key(event):
+        return (event.get("sessionId") not in (None, "") and
+                event.get("hostGeneration") not in (None, "") and
+                event.get("transitionGeneration") not in (None, ""))
+    generation_events = terminal + started
+    keyed_generation_events = [e for e in generation_events if has_generation_key(e)]
+    generation_coverage = (len(keyed_generation_events) / len(generation_events)
+                           if generation_events else 0.0)
+    if terminal and generation_coverage < 0.95:
+        results.append((NODATA, "Transition generation correlation",
+                        f"complete session/host/transition key on "
+                        f"{len(keyed_generation_events)}/{len(generation_events)} lifecycle events"))
+    elif terminal:
+        def generation_key(event):
+            return (str(event.get("sessionId", "")), str(event.get("hostGeneration", "")),
+                    str(event.get("transitionGeneration", "")))
+        started_counts = Counter(generation_key(e) for e in started if has_generation_key(e))
+        terminal_counts = Counter(generation_key(e) for e in terminal)
+        malformed = [key for key, count in terminal_counts.items()
+                     if count != 1 or started_counts.get(key, 0) != 1]
+        results.append((FAIL if malformed else PASS, "Transition generation correlation",
+                        f"{len(terminal_counts)} terminal generations; {len(malformed)} unmatched/duplicated"))
+    else:
+        results.append((NODATA, "Transition generation correlation", "no terminal transitions"))
+
+    cancellation_owners = [str(e.get("cancellationInitiator")) for e in cancelled
+                           if e.get("cancellationInitiator")]
+    if cancelled and len(cancellation_owners) / len(cancelled) < 0.95:
+        results.append((NODATA, "Cancellation initiator coverage",
+                        f"owner present on {len(cancellation_owners)}/{len(cancelled)} cancellations"))
+    elif cancelled:
+        results.append((PASS, "Cancellation initiator coverage", str(dict(Counter(cancellation_owners)))))
+    else:
+        results.append((PASS, "Cancellation initiator coverage", "no cancellations"))
 
     growth = heap_growth_mb(by_code["HEAP_SAMPLE"])
     if growth is None:

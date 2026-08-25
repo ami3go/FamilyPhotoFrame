@@ -240,6 +240,7 @@ copy data/diagnostics/DiagnosticsBundle.kt
 copy data/diagnostics/CrashEnvelopeStore.kt
 copy data/diagnostics/MainThreadStallDetector.kt
 copy data/diagnostics/ProcessExitReasonMapper.kt
+copy data/diagnostics/RuntimeResourceTracker.kt
 copy data/source/BuiltInSourceIds.kt
 copy domain/randomize/PlaybackQueue.kt
 copy domain/engine/EngineState.kt

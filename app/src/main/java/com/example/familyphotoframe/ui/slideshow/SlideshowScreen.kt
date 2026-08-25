@@ -193,6 +193,7 @@ fun SlideshowScreen(
                 onCollageEvent = vm::onCollageEvent,
                 onRecoverableOom = vm::onRecoverablePresentationOom,
                 onTransitionEvent = vm::onTransitionEvent,
+                onPresentationStage = vm::onPresentationStage,
                 onPrepared = vm::onPrepared,
                 onRendered = vm::onRendered,
                 shouldGeneratePreview = vm::shouldGenerateWebPreview,
@@ -370,6 +371,7 @@ private fun PlayingContent(
     ) -> Unit,
     onRecoverableOom: (DisplayPhoto, String) -> Unit,
     onTransitionEvent: (TransitionEvent) -> Unit,
+    onPresentationStage: (Long, String, Boolean) -> Unit,
     onPrepared: suspend (Long, List<Long>, String?) -> Boolean,
     onRendered: (Long, List<Long>, List<String?>, String?) -> Unit,
     shouldGeneratePreview: () -> Boolean,
@@ -425,6 +427,7 @@ private fun PlayingContent(
         TransitionSelector(Random(SystemClock.elapsedRealtimeNanos()))
     }
     val performanceController = remember { TransitionPerformanceController() }
+    val transitionGenerationCounter = remember { java.util.concurrent.atomic.AtomicLong(0L) }
 
     /**
      * Photo ids that failed permanently (e.g. HEIC on Android 5.1 with no HEIF decoder).
@@ -563,12 +566,13 @@ private fun PlayingContent(
         hostGeneration,
     ) {
         var uncommittedHandle: PreparedSlideHandle? = null
+        val photo = selected ?: return@LaunchedEffect
         try {
-            val photo = selected ?: return@LaunchedEffect
             val fastManual = manualNavigationActive && committedHandle != null
             val lifecycleToken = hostPlaybackToken() ?: return@LaunchedEffect
             if (!hostActive || !isHostPlaybackTokenCurrent(lifecycleToken)) return@LaunchedEffect
             if (!memoryProtection.allowSelectedDecode) return@LaunchedEffect
+            onPresentationStage(photo.id, "PREPARE_STARTED", true)
             if (incomingHandle == null) {
                 transitionState = TransitionState.Preparing(
                     currentPresentationId = slide(committedHandle)?.anchor?.id,
@@ -590,6 +594,7 @@ private fun PlayingContent(
                         !isHostPlaybackTokenCurrent(lifecycleToken)
                     ) {
                         registry.retireUnowned(result.slide)
+                        onPresentationStage(photo.id, "PREPARE_STALE", false)
                         publishBitmapInventory()
                         return@LaunchedEffect
                     }
@@ -600,15 +605,25 @@ private fun PlayingContent(
                 is PrepareSlideResult.Failed -> {
                     if (!currentCoroutineContext().isActive ||
                         !isHostPlaybackTokenCurrent(lifecycleToken)
-                    ) return@LaunchedEffect
+                    ) {
+                        onPresentationStage(photo.id, "PREPARE_STALE", false)
+                        return@LaunchedEffect
+                    }
+                    onPresentationStage(photo.id, "PREPARE_FAILED", false)
                     onDecodeFailure(result.failure)
                     return@LaunchedEffect
                 }
             }
-            val preparedSlide = slide(handle) ?: return@LaunchedEffect
+            val preparedSlide = slide(handle) ?: run {
+                onPresentationStage(photo.id, "PREPARED_SLIDE_MISSING", false)
+                return@LaunchedEffect
+            }
             if (!currentCoroutineContext().isActive ||
                 !isHostPlaybackTokenCurrent(lifecycleToken)
-            ) return@LaunchedEffect
+            ) {
+                onPresentationStage(photo.id, "PREPARE_STALE", false)
+                return@LaunchedEffect
+            }
             val preparedCommitted = onPrepared(
                 preparedSlide.anchor.id,
                 preparedSlide.photos.map { it.id },
@@ -616,10 +631,14 @@ private fun PlayingContent(
             )
             if (!currentCoroutineContext().isActive ||
                 !isHostPlaybackTokenCurrent(lifecycleToken)
-            ) return@LaunchedEffect
+            ) {
+                onPresentationStage(photo.id, "PREPARE_STALE", false)
+                return@LaunchedEffect
+            }
             if (!preparedCommitted) {
                 if (handle != committedHandle) registry.remove(handle)
                 uncommittedHandle = null
+                onPresentationStage(photo.id, "PREPARED_COMMIT_REJECTED", false)
                 publishBitmapInventory()
                 return@LaunchedEffect
             }
@@ -627,7 +646,11 @@ private fun PlayingContent(
             manualCandidateHandle = if (fastManual) handle else null
             // The Compose-visible handle now owns this registry entry.
             uncommittedHandle = null
+            onPresentationStage(photo.id, "PREPARED", true)
             publishBitmapInventory()
+        } catch (cancelled: CancellationException) {
+            onPresentationStage(photo.id, "PREPARE_CANCELLED", false)
+            throw cancelled
         } finally {
             // Cancellation can occur while onPrepared suspends. No snapshot handle owns a
             // freshly inserted slide at that point, so retire it rather than leak its
@@ -776,6 +799,7 @@ private fun PlayingContent(
 
         val previousHandle = committedHandle
         val previous = slide(previousHandle)
+        val transitionGeneration = transitionGenerationCounter.incrementAndGet()
         val manualNavigation = targetHandle == manualCandidateHandle
         val supportedEffects = TransitionMode.selectableValues.toMutableSet().apply {
             if (previous?.transitionBlurredBitmap == null || target.transitionBlurredBitmap == null) {
@@ -827,6 +851,17 @@ private fun PlayingContent(
             startLatencyMs = startLatencyMs,
             preparedSlideCount = registry.size,
             activeDecodedBytes = (previous?.decodedBytes ?: 0L) + target.decodedBytes,
+            transitionGeneration = transitionGeneration,
+            hostGeneration = hostGeneration,
+            cancellationInitiator = if (code == "TRANSITION_CANCELLED") {
+                when (reason) {
+                    "host_stopped" -> "HOST_LIFECYCLE"
+                    "superseded" -> "NEW_PRESENTATION"
+                    "paused" -> "ENGINE_PAUSE"
+                    "reconfigured" -> "CONFIGURATION_CHANGE"
+                    else -> "UNKNOWN"
+                }
+            } else null,
         )
 
         val readyAtNs = SystemClock.elapsedRealtimeNanos()

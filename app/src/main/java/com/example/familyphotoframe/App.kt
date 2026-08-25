@@ -61,6 +61,7 @@ class App : Application() {
         DiagnosticIdentityHasher.install(DiagnosticIdentityKeyStore(this).loadOrCreate())
         if (BuildConfig.DEBUG) installStrictMode()
         services = ServiceLocator(this)
+        val previousRuntimeBreadcrumb = services.runtimeBreadcrumbs.persisted()
         seedRuntimeSnapshot()
 
         // Attach durable logging before anything else is recorded. A new session id per
@@ -70,6 +71,7 @@ class App : Application() {
         // Durable event identity uses (sessionId, sequence); retain the full 128-bit UUID
         // so fleet-scale or long-running restart history cannot collide on a 32-bit prefix.
         processSessionId = java.util.UUID.randomUUID().toString()
+        services.runtimeBreadcrumbs.attachSession(processSessionId)
         crashEnvelopeStore = createCrashEnvelopeStore()
         val previousEnvelope = crashEnvelopeStore.read()
         services.diagnostics.attachSink(
@@ -130,6 +132,30 @@ class App : Application() {
                     ?: services.diagnosticsBulkSink.lastError ?: "OK"),
             ),
             DiagnosticContext(origin = DiagnosticOrigin.APP),
+        )
+        previousRuntimeBreadcrumb?.let { breadcrumb ->
+            services.diagnostics.logEvent(
+                "PREVIOUS_RUNTIME_BREADCRUMB",
+                mapOf(
+                    "breadcrumbSequence" to breadcrumb.sequence.toString(),
+                    "breadcrumbSessionToken" to breadcrumb.sessionId,
+                    "breadcrumbOperation" to breadcrumb.operation,
+                    "breadcrumbStage" to breadcrumb.stage,
+                    "breadcrumbActive" to breadcrumb.active.toString(),
+                    "breadcrumbPresentationToken" to breadcrumb.presentationToken,
+                    "breadcrumbSourceKind" to breadcrumb.sourceKind,
+                    "breadcrumbUpdatedEpochMs" to breadcrumb.updatedAtEpochMs.toString(),
+                    "breadcrumbElapsedRealtimeMs" to breadcrumb.updatedElapsedRealtimeMs.toString(),
+                    "breadcrumbAgeMs" to
+                        (currentWallClockMs - breadcrumb.updatedAtEpochMs).coerceAtLeast(0L).toString(),
+                ),
+                DiagnosticContext(origin = DiagnosticOrigin.SYSTEM),
+            )
+        }
+        services.runtimeBreadcrumbs.record(
+            operation = "APP_PROCESS",
+            stage = "SESSION_STARTED",
+            active = false,
         )
         persistProcessRuntimeMarker(currentWallClockMs, currentElapsedRealtimeMs)
         services.diagnostics.logEvent(
@@ -195,6 +221,7 @@ class App : Application() {
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
                 runCatching {
+                    services.runtimeBreadcrumbs.flush()
                     val context = crashCaptureContext()
                     val envelope = CrashEnvelopeFactory.crash(
                         throwable = throwable,
@@ -413,6 +440,7 @@ class App : Application() {
             .putLong(KEY_LAST_ESTIMATED_BOOT_EPOCH_MS, wallClockMs - elapsedRealtimeMs.coerceAtLeast(0L))
             .putLong(KEY_LAST_MARKER_WALL_CLOCK_MS, wallClockMs)
             .apply()
+        services.runtimeBreadcrumbs.flush()
     }
 
     private fun flushSucceeded(): Boolean =
@@ -434,6 +462,11 @@ class App : Application() {
             "level" to level.toString(),
             "response" to response.name,
         )
+        if (response == TrimMemoryResponse.SEVERE_PRESSURE ||
+            response == TrimMemoryResponse.RUNNING_PRESSURE
+        ) {
+            services.runtimeBreadcrumbs.flush()
+        }
         if (TrimMemoryPolicy.shouldClearImageCache(level)) {
             clearImageMemoryCache("trim_$level")
         }
@@ -454,6 +487,7 @@ class App : Application() {
 
     override fun onLowMemory() {
         super.onLowMemory()
+        services.runtimeBreadcrumbs.flush()
         services.diagnostics.log(DiagnosticsLog.Category.MEMORY, "LOW_MEMORY")
         clearImageMemoryCache("low_memory")
         val previous = services.playbackMemoryGuard.snapshot()

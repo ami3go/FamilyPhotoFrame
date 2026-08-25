@@ -5112,7 +5112,26 @@ class SlideshowViewModel(
         anchorId: Long,
         memberIds: List<Long>,
         layout: String?,
-    ): Boolean = engine.commitPrepared(anchorId, memberIds, layout)
+    ): Boolean {
+        val committed = engine.commitPrepared(anchorId, memberIds, layout)
+        onPresentationStage(
+            anchorId,
+            if (committed) "ENGINE_COMMITTED" else "ENGINE_COMMIT_REJECTED",
+            committed,
+        )
+        return committed
+    }
+
+    fun onPresentationStage(anchorId: Long, stage: String, active: Boolean) {
+        val photo = _state.value.engine.current?.takeIf { it.id == anchorId }
+        services.runtimeBreadcrumbs.record(
+            operation = "PRESENTATION",
+            stage = stage,
+            active = active,
+            presentationToken = diagnosticToken(anchorId.toString(), "presentation"),
+            sourceKind = photo?.sourceId?.let(::diagnosticSourceKind) ?: "NONE",
+        )
+    }
 
     fun onRendered(
         anchorId: Long,
@@ -5127,6 +5146,7 @@ class SlideshowViewModel(
                 layout = layout ?: if (memberIds.size <= 1) "SINGLE" else "COLLAGE_${memberIds.size}",
             )
         }
+        onPresentationStage(anchorId, "RENDERED", false)
     }
 
     fun shouldGenerateWebPreview(): Boolean = services.webServer.shouldGeneratePreview()
@@ -5144,8 +5164,11 @@ class SlideshowViewModel(
             "configuredMode" to event.configuredMode,
             "configuredEffect" to event.configuredEffect,
             "resolvedEffect" to event.resolvedEffect,
-            "outgoingId" to (event.outgoingId?.toString() ?: ""),
-            "incomingId" to event.incomingId.toString(),
+            "outgoingPresentationToken" to event.outgoingId?.let {
+                diagnosticToken(it.toString(), "presentation")
+            }.orEmpty(),
+            "incomingPresentationToken" to
+                diagnosticToken(event.incomingId.toString(), "presentation"),
             "durationMs" to event.durationMs.toString(),
             "actualDurationMs" to event.actualDurationMs?.toString().orEmpty(),
             "direction" to event.direction,
@@ -5157,7 +5180,16 @@ class SlideshowViewModel(
             "startLatencyMs" to event.startLatencyMs?.toString().orEmpty(),
             "preparedSlideCount" to event.preparedSlideCount?.toString().orEmpty(),
             "activeDecodedBytes" to event.activeDecodedBytes?.toString().orEmpty(),
+            "transitionGeneration" to event.transitionGeneration.toString(),
+            "hostGeneration" to event.hostGeneration.toString(),
+            "cancellationInitiator" to event.cancellationInitiator.orEmpty(),
         )
+        when (event.code) {
+            "TRANSITION_SELECTED", "TRANSITION_STARTED" ->
+                onPresentationStage(event.incomingId, event.code, true)
+            "TRANSITION_COMPLETED", "TRANSITION_CANCELLED" ->
+                onPresentationStage(event.incomingId, event.code, false)
+        }
     }
 
     private fun publishDiagnosticPlayback(

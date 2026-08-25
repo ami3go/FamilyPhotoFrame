@@ -16,6 +16,28 @@ class DiagnosticRuntimeState {
         val pssKb: Long = 0L,
         val imageCacheKb: Long = 0L,
         val sampledAtEpochMs: Long = 0L,
+        val dalvikPssKb: Long = 0L,
+        val nativePssKb: Long = 0L,
+        val otherPssKb: Long = 0L,
+        val systemAvailMemKb: Long = 0L,
+        val systemThresholdKb: Long = 0L,
+        val systemLowMemory: Boolean = false,
+        /** `-1` means procfs was unavailable to this process. */
+        val openFdCount: Int = -1,
+        /** `-1` means procfs was unavailable to this process. */
+        val threadCount: Int = -1,
+        val activeSmbStreams: Int = 0,
+        val activeMediaTransfers: Int = 0,
+        val oldestSmbStreamAgeMs: Long = 0L,
+        val oldestMediaTransferAgeMs: Long = 0L,
+        val peakSmbStreams: Int = 0,
+        val smbStreamsOpened: Long = 0L,
+        val smbStreamsClosed: Long = 0L,
+        val smbTrackingSaturated: Boolean = false,
+        val peakMediaTransfers: Int = 0,
+        val mediaTransfersStarted: Long = 0L,
+        val mediaTransfersFinished: Long = 0L,
+        val mediaTrackingSaturated: Boolean = false,
     )
 
     data class Playback(
