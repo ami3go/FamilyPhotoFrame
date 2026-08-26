@@ -79,7 +79,7 @@ object DiagnosticEventCatalog {
         "sinkStatus", "errorClass", "errorCode", "outcome", "reason", "trigger",
         "durationMs", "count", "hits", "misses", "stream", "sessionToken", "browserToken", "photoToken",
         "playlistToken", "policy", "expiry",
-        "port", "bindCategory", "revision", "format", "sizeBytes", "status",
+        "port", "bindCategory", "revision", "format", "sizeBytes", "status", "type",
         "exceptionClass", "rootCauseClass", "threadName", "mainThread", "crashOrigin",
         "previousSessionId", "lastSequence", "checksumValid", "crashAtEpochMs",
         "crashElapsedRealtimeMs", "exitReasonCode", "exitTimestampMs", "descriptionCode",
@@ -256,7 +256,7 @@ object DiagnosticEventCatalog {
         "WEB_CONTROL", "WEB_ERROR", "WEB_MAINTENANCE_ACTION", "WEB_PAIRED",
         "WEB_PAIR_LOCKED", "WEB_PAIR_REJECTED", "REMEMBERED_BROWSER_SESSION_CREATED",
         "CONFIG_EXPORTED", "CONFIG_EXPORT_FAILED", "CONFIG_IMPORT_READ_FAILED",
-        "CONFIG_IMPORT_TOO_LARGE",
+        "CONFIG_IMPORT_TOO_LARGE", "WEB_PREVIEW_REQUEST_RESULT",
         "PREVIEW_HIT_SUMMARY",
     )
 

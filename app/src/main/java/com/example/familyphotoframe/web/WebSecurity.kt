@@ -84,13 +84,6 @@ class WebSecurity(
     fun visiblePin(): String? = synchronized(lock) { currentPin }
     fun isPaired(): Boolean = synchronized(lock) { sessions.isNotEmpty() }
 
-    /** True only while at least one authenticated browser has been active recently. */
-    fun hasRecentlyActiveSession(withinMs: Long): Boolean = synchronized(lock) {
-        val now = clock()
-        purgeExpired(now)
-        sessions.values.any { now - it.lastSeenAtMs <= withinMs.coerceAtLeast(0L) }
-    }
-
     fun reset() = synchronized(lock) {
         sessions.clear()
         pinHash = null

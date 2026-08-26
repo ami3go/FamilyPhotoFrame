@@ -246,6 +246,8 @@ KT
 
 # WebSecurity is dependency-free and the remembered-session checks import its real package.
 cp app/src/main/java/com/example/familyphotoframe/web/WebSecurity.kt "$PURE/WebSecurity.kt"
+# The on-demand preview coordinator is pure JVM code; compile and execute its real state machine.
+cp app/src/main/java/com/example/familyphotoframe/web/WebPreview.kt "$PURE/WebPreview.kt"
 
 # Diagnostics is pure JVM code. Compile the real schema, catalog, operation registry,
 # identity primitive, bounded writer and privacy boundary together.

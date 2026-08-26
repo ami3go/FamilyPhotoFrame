@@ -87,6 +87,7 @@ import com.example.familyphotoframe.ui.slideshow.transition.TransitionPerformanc
 import com.example.familyphotoframe.ui.slideshow.transition.TransitionSelector
 import com.example.familyphotoframe.ui.slideshow.transition.TransitionState
 import com.example.familyphotoframe.ui.slideshow.transition.TransitionTiming
+import com.example.familyphotoframe.web.WebPreviewCaptureRequest
 import com.example.familyphotoframe.web.WebPreviewFrame
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -123,6 +124,7 @@ fun SlideshowScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val memoryProtection by vm.memoryProtection.collectAsStateWithLifecycle()
+    val webPreviewCaptureRequest by vm.webPreviewCaptureRequest.collectAsStateWithLifecycle()
     val hostActive by vm.hostActive.collectAsStateWithLifecycle()
     val hostGeneration by vm.hostGeneration.collectAsStateWithLifecycle()
     val bg = Color(state.backgroundColorArgb.toInt())
@@ -142,6 +144,12 @@ fun SlideshowScreen(
 
     LaunchedEffect(controlsVisible, curationMode) {
         vm.setInteractionHold(controlsVisible || curationMode != null)
+    }
+    LaunchedEffect(webPreviewCaptureRequest?.id, state.surface) {
+        val request = webPreviewCaptureRequest ?: return@LaunchedEffect
+        if (state.surface != Surface.Playing) {
+            vm.onWebPreviewFailed(request.id, "NO_COMMITTED_FRAME")
+        }
     }
     DisposableEffect(Unit) {
         onDispose {
@@ -197,8 +205,9 @@ fun SlideshowScreen(
                 onPresentationStage = vm::onPresentationStage,
                 onPrepared = vm::onPrepared,
                 onRendered = vm::onRendered,
-                shouldGeneratePreview = vm::shouldGenerateWebPreview,
+                previewCaptureRequest = webPreviewCaptureRequest,
                 onPreviewReady = vm::onWebPreviewReady,
+                onPreviewFailed = vm::onWebPreviewFailed,
                 onVisiblePresentationChanged = vm::onVisiblePresentationChanged,
                 onBitmapInventory = vm::onBitmapInventory,
                 bitmapLifecycleTracker = vm.bitmapLifecycleTracker,
@@ -376,8 +385,9 @@ private fun PlayingContent(
     onPresentationStage: (Long, String, Boolean) -> Unit,
     onPrepared: suspend (Long, List<Long>, String?) -> Boolean,
     onRendered: (Long, List<Long>, List<String?>, String?) -> Unit,
-    shouldGeneratePreview: () -> Boolean,
-    onPreviewReady: (WebPreviewFrame) -> Unit,
+    previewCaptureRequest: WebPreviewCaptureRequest?,
+    onPreviewReady: (Long, WebPreviewFrame) -> Unit,
+    onPreviewFailed: (Long, String) -> Unit,
     onVisiblePresentationChanged: (List<DisplayPhoto>) -> Unit,
     onBitmapInventory: (PreparedBitmapInventory, PlaybackMemoryState) -> Unit,
     bitmapLifecycleTracker: BitmapLifecycleTracker,
@@ -1061,10 +1071,10 @@ private fun PlayingContent(
         }
     }
 
-    // Phase 3 web preview: compose one bounded JPEG from the already-decoded committed
-    // presentation. This is deliberately separate from the transition critical path and
-    // never reopens SMB or source files.
+    // Compose one bounded JPEG only for an explicit browser request. This remains separate
+    // from the transition critical path and never reopens SMB or source files.
     LaunchedEffect(
+        previewCaptureRequest?.id,
         committedHandle,
         state.aspectMode,
         state.backgroundColorArgb,
@@ -1073,8 +1083,16 @@ private fun PlayingContent(
         targetH,
         memoryProtection.level,
     ) {
-        val committedSlide = slide(committedHandle) ?: return@LaunchedEffect
-        if (!memoryProtection.allowWebPreview || !shouldGeneratePreview()) return@LaunchedEffect
+        val request = previewCaptureRequest ?: return@LaunchedEffect
+        val committedSlide = slide(committedHandle)
+        if (committedSlide == null) {
+            onPreviewFailed(request.id, "NO_COMMITTED_FRAME")
+            return@LaunchedEffect
+        }
+        if (!memoryProtection.allowWebPreview) {
+            onPreviewFailed(request.id, "MEMORY_PROTECTED")
+            return@LaunchedEffect
+        }
         val frame = createWebPreviewFrame(
             slide = committedSlide,
             aspectMode = state.aspectMode,
@@ -1091,7 +1109,8 @@ private fun PlayingContent(
                 onRecoverableOom(committedSlide.anchor, "web_preview_allocation")
             },
         )
-        if (frame != null) onPreviewReady(frame)
+        if (frame != null) onPreviewReady(request.id, frame)
+        else onPreviewFailed(request.id, "CAPTURE_FAILED")
     }
 
     LaunchedEffect(committedHandle) {

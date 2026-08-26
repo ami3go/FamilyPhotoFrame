@@ -107,6 +107,7 @@ import com.example.familyphotoframe.domain.engine.SourcePoolPolicy
 import com.example.familyphotoframe.domain.engine.SourceStatusPolicy
 import com.example.familyphotoframe.util.ImageFormatSupport
 import com.example.familyphotoframe.web.WebServerController
+import com.example.familyphotoframe.web.WebPreviewCaptureRequest
 import com.example.familyphotoframe.web.WebPreviewFrame
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -163,6 +164,8 @@ class SlideshowViewModel(
     private val _state = MutableStateFlow(SlideshowUiState())
     val state: StateFlow<SlideshowUiState> = _state.asStateFlow()
     val memoryProtection = services.playbackMemoryGuard.state
+    val webPreviewCaptureRequest: StateFlow<WebPreviewCaptureRequest?> =
+        services.webServer.previewCaptureRequest
     internal val bitmapLifecycleTracker = services.bitmapLifecycleTracker
     private val _hostActive = MutableStateFlow(false)
     val hostActive: StateFlow<Boolean> = _hostActive.asStateFlow()
@@ -5152,10 +5155,12 @@ class SlideshowViewModel(
         onPresentationStage(anchorId, "RENDERED", false)
     }
 
-    fun shouldGenerateWebPreview(): Boolean = services.webServer.shouldGeneratePreview()
+    fun onWebPreviewReady(requestId: Long, frame: WebPreviewFrame) {
+        services.webServer.publishPreview(requestId, frame)
+    }
 
-    fun onWebPreviewReady(frame: WebPreviewFrame) {
-        services.webServer.publishPreview(frame)
+    fun onWebPreviewFailed(requestId: Long, reason: String) {
+        services.webServer.failPreview(requestId, reason)
     }
 
     fun onTransitionEvent(event: TransitionEvent) {

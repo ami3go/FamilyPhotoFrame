@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -152,25 +153,25 @@ class WebServerController(
     @Volatile private var terminalMaintenanceHold: Boolean = false
     private val settingsPatchApplier = WebSettingsPatchApplier(settings, photoDao)
 
-    /** Publish one low-resolution preview after a presentation is committed. */
-    fun publishPreview(frame: WebPreviewFrame) {
-        if (!previewStore.update(frame)) return
+    /** One-shot demand observed by the active slideshow; null means no capture work. */
+    val previewCaptureRequest: StateFlow<WebPreviewCaptureRequest?> = previewStore.captureRequest
+
+    /** Publish only for the still-current request; late renders are discarded. */
+    fun publishPreview(requestId: Long, frame: WebPreviewFrame) {
+        if (!previewStore.completeCapture(requestId, frame)) return
         diagnostics.log(
             DiagnosticsLog.Category.APP,
             "WEB_PREVIEW_GENERATED",
             "revision" to frame.revision,
-            "bytes" to frame.jpeg.size.toString(),
+            "sizeBytes" to frame.jpeg.size.toString(),
             "type" to frame.type,
         )
     }
 
-    /**
-     * Preview rendering is expensive on a 100 MB heap. Generate only while an
-     * authenticated browser has made a request recently; an enabled but unused web
-     * server must not create a second image pipeline for every slide.
-     */
-    fun shouldGeneratePreview(): Boolean =
-        server != null && security?.hasRecentlyActiveSession(PREVIEW_ACTIVE_WINDOW_MS) == true
+    /** Reject a request without disturbing the previously successful preview. */
+    fun failPreview(requestId: Long, reason: String) {
+        previewStore.failCapture(requestId, reason)
+    }
 
     fun clearPreview() = previewStore.clear()
 
@@ -250,6 +251,9 @@ class WebServerController(
 
     /** Caller must hold [lifecycleLock]. */
     private fun stopLocked() {
+        // Release a worker waiting in capturePreview() before asking NanoHTTPD to stop.
+        // The retained JPEG is server-owned, so it must not survive a restart either.
+        previewStore.clear()
         server?.let {
             runCatching { it.stop() }
             diagnostics.log(DiagnosticsLog.Category.APP, "WEB_STOPPED", "")
@@ -258,7 +262,6 @@ class WebServerController(
         security?.reset()
         security = null
         boundUrl = null
-        previewStore.clear()
     }
 
     /** Caller must hold [lifecycleLock]; stop/start is one indivisible generation. */
@@ -655,6 +658,29 @@ class WebServerController(
                 put("committedAtEpochMs", 0L)
                 put("previewRevision", "")
             }
+        }
+
+        override suspend fun capturePreview(): WebPreviewCaptureResult {
+            val startedAt = SystemClock.elapsedRealtime()
+            val result = if (engine.ui.value.current == null) {
+                WebPreviewCaptureResult.Failed("FRAME_NOT_RUNNING")
+            } else {
+                previewStore.requestCapture()
+            }
+            val (status, reason) = when (result) {
+                is WebPreviewCaptureResult.Ready -> "READY" to ""
+                WebPreviewCaptureResult.Busy -> "BUSY" to "CAPTURE_IN_PROGRESS"
+                WebPreviewCaptureResult.TimedOut -> "TIMEOUT" to "CAPTURE_TIMEOUT"
+                is WebPreviewCaptureResult.Failed -> "FAILED" to result.reason
+            }
+            diagnostics.log(
+                DiagnosticsLog.Category.APP,
+                "WEB_PREVIEW_REQUEST_RESULT",
+                "status" to status,
+                "reason" to reason,
+                "durationMs" to (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L).toString(),
+            )
+            return result
         }
 
         override fun previewSnapshot(): WebPreviewFrame? = previewStore.snapshot()
@@ -1346,7 +1372,6 @@ class WebServerController(
     private companion object {
         const val SOCKET_TIMEOUT_MS = 30_000
         const val REMEMBERED_CLEANUP_INTERVAL_MS = 6L * 60L * 60_000L
-        const val PREVIEW_ACTIVE_WINDOW_MS = 90_000L
         const val MB = 1024L * 1024L
         const val SOURCE_COUNT_CACHE_MS = 15_000L
         const val FOLDER_SELECTION_PAGE_SIZE = 200

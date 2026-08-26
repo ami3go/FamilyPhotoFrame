@@ -45,6 +45,7 @@ interface WebBackend {
     suspend fun foldersJson(query: FolderPageQuery): JsonObject
     suspend fun folderAction(body: JsonObject): JsonObject
     suspend fun presentationJson(): JsonObject
+    suspend fun capturePreview(): WebPreviewCaptureResult
     fun previewSnapshot(): WebPreviewFrame?
     suspend fun diagnosticsEvents(query: DiagnosticsQuery): JsonObject
     suspend fun diagnosticsSummary(): JsonObject
@@ -87,6 +88,8 @@ abstract class WebBackendAdapter : WebBackend {
     }
     override suspend fun folderAction(body: JsonObject): JsonObject = buildJsonObject { put("ok", false) }
     override suspend fun presentationJson(): JsonObject = buildJsonObject { }
+    override suspend fun capturePreview(): WebPreviewCaptureResult =
+        WebPreviewCaptureResult.Failed("FRAME_NOT_RUNNING")
     override fun previewSnapshot(): WebPreviewFrame? = null
     override suspend fun diagnosticsEvents(query: DiagnosticsQuery): JsonObject = diagnosticsJson()
     override suspend fun diagnosticsSummary(): JsonObject = buildJsonObject { }
@@ -460,6 +463,9 @@ class WebConfigServer(
                 val revision = runBlocking { backend.settingsRevision() }
                 v1Ok(runBlocking { backend.redactedConfigJson() }, revision)
             }
+            uri == "/api/v1/preview" && method == Method.POST -> guarded(token, csrf) {
+                previewCaptureResponse(runBlocking { backend.capturePreview() })
+            }
             uri.startsWith("/api/v1/playback/") && method == Method.POST -> guarded(token, csrf) {
                 val action = uri.substringAfterLast('/')
                 controlResponse(action)
@@ -612,6 +618,34 @@ class WebConfigServer(
         if (session.headers["if-none-match"] == etag || requested == frame.revision && query(session, "metadataOnly") == "true") {
             return newFixedLengthResponse(Response.Status.NOT_MODIFIED, "image/jpeg", "")
         }
+        return previewResponse(frame)
+    }
+
+    private fun previewCaptureResponse(result: WebPreviewCaptureResult): Response = when (result) {
+        is WebPreviewCaptureResult.Ready -> previewResponse(result.frame)
+        WebPreviewCaptureResult.Busy -> v1Error(
+            Response.Status.SERVICE_UNAVAILABLE,
+            "PREVIEW_BUSY",
+            "A preview capture is already in progress.",
+        ).apply { addHeader("Retry-After", "1") }
+        WebPreviewCaptureResult.TimedOut -> v1Error(
+            Response.Status.SERVICE_UNAVAILABLE,
+            "PREVIEW_TIMEOUT",
+            "The frame did not complete the preview capture in time.",
+        )
+        is WebPreviewCaptureResult.Failed -> v1Error(
+            Response.Status.SERVICE_UNAVAILABLE,
+            "PREVIEW_UNAVAILABLE",
+            when (result.reason) {
+                "MEMORY_PROTECTED" -> "Preview is temporarily disabled to protect playback memory."
+                "NO_COMMITTED_FRAME", "FRAME_NOT_RUNNING" -> "No committed presentation is available yet."
+                else -> "The current presentation could not be captured."
+            },
+        )
+    }
+
+    private fun previewResponse(frame: WebPreviewFrame): Response {
+        val etag = "\"${frame.revision}\""
         val response = newFixedLengthResponse(
             Response.Status.OK,
             "image/jpeg",

@@ -32,6 +32,7 @@ class WebConfigServerSecurityTest {
     private lateinit var security: WebSecurity
     private var port = 0
     private var controlCalls = 0
+    private var previewCaptureCalls = 0
 
     /** Minimal backend; records whether control actions actually reached the app. */
     private inner class FakeBackend : WebBackendAdapter() {
@@ -51,6 +52,24 @@ class WebConfigServerSecurityTest {
         override suspend fun diagnosticsBundle(): InputStream =
             ByteArrayInputStream("{\"recordType\":\"bundleMetadata\"}\n{\"code\":\"TEST\"}\n".toByteArray())
         override suspend fun settingsRevision(): Long = 42L
+        override suspend fun capturePreview(): WebPreviewCaptureResult {
+            previewCaptureCalls++
+            val frame = WebPreviewFrame(
+                revision = "captured",
+                jpeg = "JPEG".toByteArray(),
+                presentationId = 1L,
+                type = "single",
+                photoIds = listOf(1L),
+                fileName = "one.jpg",
+                sourceId = "test",
+                folder = "folder",
+                transition = "crossfade",
+                committedAtEpochMs = 1L,
+                width = 320,
+                height = 180,
+            )
+            return WebPreviewCaptureResult.Ready(frame, publishedNewRevision = true)
+        }
     }
 
     @Before fun setUp() {
@@ -341,6 +360,24 @@ class WebConfigServerSecurityTest {
         assertEquals(200, request("/assets/app.css").code)
         assertEquals(200, request("/assets/app.js").code)
         assertEquals(401, request("/api/v1/preview").code)
+    }
+
+    @Test fun onDemandPreviewRequiresCsrfAndReturnsOneJpeg() {
+        security.regeneratePin()
+        assertEquals(401, request("/api/v1/preview", "POST").code)
+        val (session, csrf) = pairSuccessfully()
+        assertEquals(401, request("/api/v1/preview", "POST", session = session).code)
+
+        val captured = request(
+            "/api/v1/preview",
+            method = "POST",
+            session = session,
+            csrf = csrf,
+        )
+        assertEquals(200, captured.code)
+        assertTrue(captured.contentType.startsWith("image/jpeg"))
+        assertEquals("JPEG", captured.body)
+        assertEquals(1, previewCaptureCalls)
     }
 
 }

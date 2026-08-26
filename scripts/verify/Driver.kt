@@ -11,6 +11,7 @@ fun main() {
     runPlaylistSettingsChecks()
     runFolderBalancedPersistentChecks()
     runRememberedWebSecurityChecks()
+    runWebPreviewChecks()
     runSourcePoolPolicyChecks()
     runDiagnosticsJsonlChecks()
     runDiagnosticsV2Checks()
