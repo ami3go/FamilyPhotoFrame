@@ -45,13 +45,15 @@ class CancellableStreamCopyTest {
     }
 
     @Test(expected = TransferLimitExceededException::class)
-    fun transferLimitStopsOversizedInput() = runBlocking {
-        ByteArray(64).inputStream().copyToCancellable(
-            ByteArrayOutputStream(),
-            maxBytes = 32,
-            minimumUsableBytes = 0,
-            usableBytes = { Long.MAX_VALUE },
-            bufferSize = 16,
-        )
+    fun transferLimitStopsOversizedInput() {
+        runBlocking {
+            ByteArray(64).inputStream().copyToCancellable(
+                ByteArrayOutputStream(),
+                maxBytes = 32,
+                minimumUsableBytes = 0,
+                usableBytes = { Long.MAX_VALUE },
+                bufferSize = 16,
+            )
+        }
     }
 }
