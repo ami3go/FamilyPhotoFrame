@@ -22,6 +22,7 @@ import com.example.familyphotoframe.data.diagnostics.RuntimeResourceTracker
 import com.example.familyphotoframe.data.diagnostics.RuntimeSampler
 import com.example.familyphotoframe.data.diagnostics.SharedPreferencesRuntimeBreadcrumbStorage
 import com.example.familyphotoframe.data.diagnostics.BatteryTelemetry
+import com.example.familyphotoframe.data.diagnostics.BitmapLifecycleTracker
 import com.example.familyphotoframe.data.index.ContentHashBackfiller
 import com.example.familyphotoframe.data.index.ExifBackfiller
 import com.example.familyphotoframe.data.index.Indexer
@@ -128,6 +129,9 @@ class ServiceLocator(private val appContext: Context) {
     /** Native/provider ownership counters shared by SMB, cache and runtime sampling. */
     val runtimeResourceTracker: RuntimeResourceTracker = RuntimeResourceTracker()
 
+    /** Bitmap lifetime counters. This tracker retains no Bitmap references. */
+    val bitmapLifecycleTracker: BitmapLifecycleTracker = BitmapLifecycleTracker()
+
     private val procfsResourceSampler: ProcfsResourceSampler = ProcfsResourceSampler()
 
     /** Last presentation stage retained across an abrupt same-boot process restart. */
@@ -175,6 +179,13 @@ class ServiceLocator(private val appContext: Context) {
                 val memoryProtection = playbackMemoryGuard.snapshot()
                 val procfs = procfsResourceSampler.sample()
                 val resources = runtimeResourceTracker.snapshot()
+                val bitmapLifecycle = bitmapLifecycleTracker.snapshot()
+                val sampleElapsedMs = android.os.SystemClock.elapsedRealtime()
+                val oldestPendingDisposalAgeMs = bitmapInventory
+                    .oldestPendingDisposalStartedElapsedMs
+                    .takeIf { bitmapInventory.pendingDisposals > 0 && it > 0L }
+                    ?.let { (sampleElapsedMs - it).coerceAtLeast(0L) }
+                    ?: 0L
                 val systemMemory = activityManager?.let { manager ->
                     runCatching { ActivityManager.MemoryInfo().also(manager::getMemoryInfo) }.getOrNull()
                 }
@@ -187,7 +198,6 @@ class ServiceLocator(private val appContext: Context) {
                     numerator = systemMemory?.availMem ?: 0L,
                     denominator = systemMemory?.threshold ?: 0L,
                 )
-                val sampleElapsedMs = android.os.SystemClock.elapsedRealtime()
                 diagnosticRuntimeState.updateMemory(
                     DiagnosticRuntimeState.Memory(
                         heapUsedKb = (runtime.totalMemory() - runtime.freeMemory()) / 1024L,
@@ -204,6 +214,12 @@ class ServiceLocator(private val appContext: Context) {
                         systemLowMemory = systemMemory?.lowMemory == true,
                         openFdCount = procfs.openFileDescriptorCount ?: -1,
                         threadCount = procfs.threadCount ?: -1,
+                        activeSmbContexts = resources.activeSmbContexts,
+                        oldestSmbContextAgeMs = resources.oldestSmbContextAgeMs,
+                        peakSmbContexts = resources.peakSmbContexts,
+                        smbContextsCreated = resources.smbContextsCreated,
+                        smbContextsClosed = resources.smbContextsClosed,
+                        smbContextTrackingSaturated = resources.smbContextTrackingSaturated,
                         activeSmbStreams = resources.activeSmbStreams,
                         activeMediaTransfers = resources.activeMediaTransfers,
                         oldestSmbStreamAgeMs = resources.oldestSmbStreamAgeMs,
@@ -216,6 +232,24 @@ class ServiceLocator(private val appContext: Context) {
                         mediaTransfersStarted = resources.mediaTransfersStarted,
                         mediaTransfersFinished = resources.mediaTransfersFinished,
                         mediaTrackingSaturated = resources.mediaTrackingSaturated,
+                        bitmapTrackedAllocations = bitmapLifecycle.allocations,
+                        bitmapTrackedReleases = bitmapLifecycle.releases,
+                        bitmapTrackedAllocatedBytes = bitmapLifecycle.allocatedBytes,
+                        bitmapTrackedReleasedBytes = bitmapLifecycle.releasedBytes,
+                        bitmapTrackedActiveCount = bitmapLifecycle.activeCount,
+                        bitmapTrackedActiveBytes = bitmapLifecycle.activeBytes,
+                        bitmapTrackedPeakCount = bitmapLifecycle.peakActiveCount,
+                        bitmapTrackedPeakBytes = bitmapLifecycle.peakActiveBytes,
+                        bitmapDecodedAllocations = bitmapLifecycle.decodedAllocations,
+                        bitmapDecodedActiveCount = bitmapLifecycle.decodedActiveCount,
+                        bitmapDecodedActiveBytes = bitmapLifecycle.decodedActiveBytes,
+                        bitmapGeneratedAllocations = bitmapLifecycle.generatedAllocations,
+                        bitmapGeneratedActiveCount = bitmapLifecycle.generatedActiveCount,
+                        bitmapGeneratedActiveBytes = bitmapLifecycle.generatedActiveBytes,
+                        bitmapTemporaryAllocations = bitmapLifecycle.temporaryAllocations,
+                        bitmapTemporaryActiveCount = bitmapLifecycle.temporaryActiveCount,
+                        bitmapTemporaryActiveBytes = bitmapLifecycle.temporaryActiveBytes,
+                        bitmapReleaseUnderflowCount = bitmapLifecycle.releaseUnderflowCount,
                     )
                 )
                 linkedMapOf(
@@ -232,6 +266,8 @@ class ServiceLocator(private val appContext: Context) {
                     "appBitmapCount" to bitmapInventory.appBitmapCount.toString(),
                     "activeDecodedBytes" to bitmapInventory.activeDecodedBytes.toString(),
                     "pendingDisposals" to bitmapInventory.pendingDisposals.toString(),
+                    "oldestPendingDisposalAgeMs" to
+                        oldestPendingDisposalAgeMs.toString(),
                     "memoryProtectionLevel" to memoryProtection.level.name,
                     "pressurePercent" to memoryProtection.pressurePercent.toString(),
                     "processMemoryBudgetKb" to (processBudgetBytes / 1024L).toString(),
@@ -251,6 +287,13 @@ class ServiceLocator(private val appContext: Context) {
                     "externalGuardedRemainingMs" to
                         memoryProtection.externalGuardedRemainingMs(sampleElapsedMs).toString(),
                     "oomCount" to memoryProtection.totalOomCount.toString(),
+                    "smbActiveContexts" to resources.activeSmbContexts.toString(),
+                    "smbPeakContexts" to resources.peakSmbContexts.toString(),
+                    "smbContextsCreated" to resources.smbContextsCreated.toString(),
+                    "smbContextsClosed" to resources.smbContextsClosed.toString(),
+                    "smbOldestContextAgeMs" to resources.oldestSmbContextAgeMs.toString(),
+                    "smbContextTrackingSaturated" to
+                        resources.smbContextTrackingSaturated.toString(),
                     "smbActiveStreams" to resources.activeSmbStreams.toString(),
                     "smbPeakStreams" to resources.peakSmbStreams.toString(),
                     "smbStreamsOpened" to resources.smbStreamsOpened.toString(),
@@ -263,6 +306,25 @@ class ServiceLocator(private val appContext: Context) {
                     "mediaTransfersFinished" to resources.mediaTransfersFinished.toString(),
                     "mediaOldestTransferAgeMs" to resources.oldestMediaTransferAgeMs.toString(),
                     "mediaTrackingSaturated" to resources.mediaTrackingSaturated.toString(),
+                    "bitmapTrackedAllocations" to bitmapLifecycle.allocations.toString(),
+                    "bitmapTrackedReleases" to bitmapLifecycle.releases.toString(),
+                    "bitmapTrackedAllocatedBytes" to bitmapLifecycle.allocatedBytes.toString(),
+                    "bitmapTrackedReleasedBytes" to bitmapLifecycle.releasedBytes.toString(),
+                    "bitmapTrackedActiveCount" to bitmapLifecycle.activeCount.toString(),
+                    "bitmapTrackedActiveBytes" to bitmapLifecycle.activeBytes.toString(),
+                    "bitmapTrackedPeakCount" to bitmapLifecycle.peakActiveCount.toString(),
+                    "bitmapTrackedPeakBytes" to bitmapLifecycle.peakActiveBytes.toString(),
+                    "bitmapDecodedAllocations" to bitmapLifecycle.decodedAllocations.toString(),
+                    "bitmapDecodedActiveCount" to bitmapLifecycle.decodedActiveCount.toString(),
+                    "bitmapDecodedActiveBytes" to bitmapLifecycle.decodedActiveBytes.toString(),
+                    "bitmapGeneratedAllocations" to bitmapLifecycle.generatedAllocations.toString(),
+                    "bitmapGeneratedActiveCount" to bitmapLifecycle.generatedActiveCount.toString(),
+                    "bitmapGeneratedActiveBytes" to bitmapLifecycle.generatedActiveBytes.toString(),
+                    "bitmapTemporaryAllocations" to bitmapLifecycle.temporaryAllocations.toString(),
+                    "bitmapTemporaryActiveCount" to bitmapLifecycle.temporaryActiveCount.toString(),
+                    "bitmapTemporaryActiveBytes" to bitmapLifecycle.temporaryActiveBytes.toString(),
+                    "bitmapReleaseUnderflowCount" to
+                        bitmapLifecycle.releaseUnderflowCount.toString(),
                 ).apply {
                     procfs.openFileDescriptorCount?.let { put("openFdCount", it.toString()) }
                     procfs.threadCount?.let { put("threadCount", it.toString()) }

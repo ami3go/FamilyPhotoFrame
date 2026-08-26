@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import coil.ImageLoader
+import com.example.familyphotoframe.data.diagnostics.BitmapLifecycleTracker
 import com.example.familyphotoframe.data.settings.AspectMode
 import com.example.familyphotoframe.data.settings.MotionMode
 import com.example.familyphotoframe.domain.engine.CollageLayout
@@ -45,6 +46,7 @@ internal fun PreparedPhotoFrame(
     motionStore: PanelMotionStore,
     memoryProtection: PlaybackMemoryState,
     reclaimer: LegacyBitmapReclaimer,
+    bitmapLifecycleTracker: BitmapLifecycleTracker,
     onRecoverableOom: (DisplayPhoto, String) -> Unit,
     onMotionDiagnostic: (List<Long>, String) -> Unit,
 ) {
@@ -56,6 +58,7 @@ internal fun PreparedPhotoFrame(
             allowDisplayMotion,
             memoryProtection,
             reclaimer,
+            bitmapLifecycleTracker,
             onRecoverableOom,
         )
         is PreparedSlide.Collage -> if (
@@ -84,6 +87,7 @@ private fun PreparedSinglePhoto(
     allowDisplayMotion: Boolean,
     memoryProtection: PlaybackMemoryState,
     reclaimer: LegacyBitmapReclaimer,
+    bitmapLifecycleTracker: BitmapLifecycleTracker,
     onRecoverableOom: (DisplayPhoto, String) -> Unit,
 ) {
     val photo = prepared.anchor
@@ -112,6 +116,7 @@ private fun PreparedSinglePhoto(
                 imageLoader = imageLoader,
                 photoId = photo.id,
                 reclaimer = reclaimer,
+                bitmapLifecycleTracker = bitmapLifecycleTracker,
                 onOutOfMemory = { onRecoverableOom(photo, "blurred_backdrop_allocation") },
             )
         }

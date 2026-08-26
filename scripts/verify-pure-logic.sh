@@ -253,7 +253,8 @@ for file in DiagnosticEventSpec.kt DiagnosticOperationTracker.kt DiagnosticIdent
   DiagnosticPrivacyPolicy.kt DiagnosticRateController.kt DiagnosticsHealthSnapshot.kt \
   DiagnosticRuntimeState.kt DiagnosticsBundle.kt CrashEnvelopeStore.kt MainThreadStallDetector.kt \
   ProcessExitReasonMapper.kt DiagnosticsLog.kt DiagnosticsJsonl.kt FileDiagnosticsSink.kt \
-  RuntimeResourceTracker.kt ProcfsResourceSampler.kt PersistentRuntimeBreadcrumbs.kt; do
+  RuntimeResourceTracker.kt BitmapLifecycleTracker.kt ProcfsResourceSampler.kt \
+  PersistentRuntimeBreadcrumbs.kt; do
   sed 's/^package .*//' \
     "app/src/main/java/com/example/familyphotoframe/data/diagnostics/$file" > "$PURE/$file"
 done

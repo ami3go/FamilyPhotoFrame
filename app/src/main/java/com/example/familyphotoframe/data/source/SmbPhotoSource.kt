@@ -58,6 +58,11 @@ class SmbPhotoSource(
 
     private val shareBase = "smb://${conn.host}/${conn.share}/"
 
+    private data class TrackedContext(
+        val context: CIFSContext,
+        val resourceLease: RuntimeResourceTracker.Lease,
+    )
+
     /**
      * One CIFS context is shared by every operation on this source. A lease spans the
      * whole blocking operation (or the returned stream's lifetime), so close() can mark
@@ -76,12 +81,36 @@ class SmbPhotoSource(
                 put("jcifs.smb.client.responseTimeout", conn.listTimeoutMs.toString())
                 put("jcifs.smb.client.dfs.disabled", "true")   // simple NAS: skip DFS lookups
             }
-            val base: CIFSContext = BaseContext(PropertyConfiguration(props))
-            base.withCredentials(
-                NtlmPasswordAuthenticator(credentials.domain, credentials.user, credentials.password)
-            )
+            val resourceLease = resourceTracker.openSmbContext()
+            var base: CIFSContext? = null
+            try {
+                val createdBase: CIFSContext = BaseContext(PropertyConfiguration(props))
+                base = createdBase
+                TrackedContext(
+                    context = createdBase.withCredentials(
+                        NtlmPasswordAuthenticator(
+                            credentials.domain,
+                            credentials.user,
+                            credentials.password,
+                        )
+                    ),
+                    resourceLease = resourceLease,
+                )
+            } catch (error: Throwable) {
+                // BaseContext owns shared transport/buffer services even when the
+                // credential wrapper cannot be created. Do not strand that partial root.
+                runCatching { base?.close() }
+                resourceLease.close()
+                throw error
+            }
         },
-        closer = { context -> runCatching { context.close() } },
+        closer = { tracked ->
+            try {
+                runCatching { tracked.context.close() }
+            } finally {
+                tracked.resourceLease.close()
+            }
+        },
     )
 
     /**
@@ -107,7 +136,7 @@ class SmbPhotoSource(
         try {
             withTimeoutOrNull(timeoutMs) {
                 try {
-                    val root = SmbFile(rootUrl(), lease.value)
+                    val root = SmbFile(rootUrl(), lease.value.context)
                     when {
                         !root.exists() -> SourceHealth.Missing
                         !root.isDirectory -> SourceHealth.ProviderError("not_a_directory")
@@ -128,7 +157,7 @@ class SmbPhotoSource(
         val lease = contextOwner.acquire()
         try {
             val stack = ArrayDeque<SmbFile>()
-            stack.addLast(SmbFile(rootUrl(), lease.value))
+            stack.addLast(SmbFile(rootUrl(), lease.value.context))
             var scanned = 0L
 
             while (stack.isNotEmpty()) {
@@ -190,7 +219,7 @@ class SmbPhotoSource(
         var input: InputStream? = null
         var resourceLease: RuntimeResourceTracker.Lease? = null
         try {
-            val openedInput = SmbFile(item.openToken, lease.value).inputStream
+            val openedInput = SmbFile(item.openToken, lease.value.context).inputStream
             input = openedInput
             val openedResourceLease = resourceTracker.openSmbStream()
             resourceLease = openedResourceLease
@@ -208,7 +237,7 @@ class SmbPhotoSource(
 
     private class LeaseReleasingInputStream(
         input: InputStream,
-        private val lease: DeferredCloseResource.Lease<CIFSContext>,
+        private val lease: DeferredCloseResource.Lease<TrackedContext>,
         private val resourceLease: RuntimeResourceTracker.Lease,
     ) : FilterInputStream(input) {
         private val closed = AtomicBoolean(false)

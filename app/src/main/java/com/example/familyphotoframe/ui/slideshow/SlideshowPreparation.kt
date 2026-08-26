@@ -8,6 +8,7 @@ import coil.request.ErrorResult
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import coil.request.SuccessResult
+import com.example.familyphotoframe.data.diagnostics.BitmapLifecycleTracker
 import com.example.familyphotoframe.data.settings.AspectMode
 import com.example.familyphotoframe.data.settings.CollageGap
 import com.example.familyphotoframe.data.settings.CollageLayoutPreference
@@ -27,8 +28,8 @@ import com.example.familyphotoframe.ui.render.ImageBlur
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.util.Collections
 import java.util.IdentityHashMap
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.roundToInt
 
 /** Prepared-presentation models and decode pipeline; performs no Compose rendering. */
@@ -118,74 +119,115 @@ private suspend fun createTransitionBlur(
     targetH: Int,
     collageGap: CollageGap,
     colorChoice: DecodeColorChoice,
+    bitmapLifecycleTracker: BitmapLifecycleTracker,
     onOutOfMemory: () -> Unit,
-): Bitmap? = withContext(Dispatchers.Default) {
+): Bitmap? {
+    // withContext has prompt cancellation: a result created on Default can be discarded
+    // while dispatching back to the caller. Keep a non-owning handoff guard so that exact
+    // cancellation window cannot orphan the generated native pixel allocation.
+    val undelivered = AtomicReference<Bitmap?>(null)
     try {
-        // Quarter-size dimensions retain one sixteenth of full-screen pixels while
-        // remaining smooth after the prepared blur is enlarged by the GPU.
-        val scale = SOFT_FOCUS_DIMENSION_SCALE
-        val width = (targetW.coerceAtLeast(1) * scale).roundToInt().coerceAtLeast(1)
-        val height = (targetH.coerceAtLeast(1) * scale).roundToInt().coerceAtLeast(1)
-        val source = Bitmap.createBitmap(width, height, colorChoice.toBitmapConfig())
-        try {
-            val canvas = android.graphics.Canvas(source)
-            canvas.drawColor(android.graphics.Color.BLACK)
-            val paint = android.graphics.Paint(
-                android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG,
-            )
-
-            fun drawCrop(bitmap: Bitmap, destination: android.graphics.RectF) {
-                val sourceAspect = bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1)
-                val destinationAspect = destination.width() / destination.height().coerceAtLeast(1f)
-                val sourceRect = if (sourceAspect > destinationAspect) {
-                    val cropWidth = (bitmap.height * destinationAspect)
-                        .roundToInt().coerceIn(1, bitmap.width)
-                    val left = (bitmap.width - cropWidth) / 2
-                    android.graphics.Rect(left, 0, left + cropWidth, bitmap.height)
-                } else {
-                    val cropHeight = (bitmap.width / destinationAspect)
-                        .roundToInt().coerceIn(1, bitmap.height)
-                    val top = (bitmap.height - cropHeight) / 2
-                    android.graphics.Rect(0, top, bitmap.width, top + cropHeight)
-                }
-                canvas.drawBitmap(bitmap, sourceRect, destination, paint)
-            }
-
-            when (slide) {
-                is PreparedSlide.Single -> drawCrop(
-                    slide.bitmap,
-                    android.graphics.RectF(0f, 0f, width.toFloat(), height.toFloat()),
+        val result = withContext(Dispatchers.Default) {
+            try {
+                // Quarter-size dimensions retain one sixteenth of full-screen pixels while
+                // remaining smooth after the prepared blur is enlarged by the GPU.
+                val scale = SOFT_FOCUS_DIMENSION_SCALE
+                val width = (targetW.coerceAtLeast(1) * scale).roundToInt().coerceAtLeast(1)
+                val height = (targetH.coerceAtLeast(1) * scale).roundToInt().coerceAtLeast(1)
+                val source = Bitmap.createBitmap(width, height, colorChoice.toBitmapConfig())
+                val sourceBytes = source.safeAllocationBytes()
+                bitmapLifecycleTracker.recordAllocation(
+                    BitmapLifecycleTracker.Kind.TEMPORARY,
+                    sourceBytes,
                 )
-                is PreparedSlide.Collage -> {
-                    val gapPx = when (collageGap) {
-                        CollageGap.NONE -> 0f
-                        CollageGap.SMALL -> 4f * scale
-                        CollageGap.MEDIUM -> 8f * scale
-        CollageGap.LARGE -> 16f * scale
-                    }
-                    val destinations = collageDestinationRects(
-                        slide.layout, width.toFloat(), height.toFloat(), gapPx,
+                try {
+                    val canvas = android.graphics.Canvas(source)
+                    canvas.drawColor(android.graphics.Color.BLACK)
+                    val paint = android.graphics.Paint(
+                        android.graphics.Paint.ANTI_ALIAS_FLAG or
+                            android.graphics.Paint.FILTER_BITMAP_FLAG,
                     )
-                    slide.tiles.zip(destinations).forEach { (tile, destination) ->
-                        drawCrop(tile.bitmap, destination)
-                    }
-                }
-            }
 
-            val pixels = IntArray(width * height)
-            source.getPixels(pixels, 0, width, 0, 0, width, height)
-            val blurredPixels = ImageBlur.boxBlur(pixels, width, height)
-            Bitmap.createBitmap(blurredPixels, width, height, colorChoice.toBitmapConfig())
-        } finally {
-            if (!source.isRecycled) source.recycle()
+                    fun drawCrop(bitmap: Bitmap, destination: android.graphics.RectF) {
+                        val sourceAspect = bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1)
+                        val destinationAspect =
+                            destination.width() / destination.height().coerceAtLeast(1f)
+                        val sourceRect = if (sourceAspect > destinationAspect) {
+                            val cropWidth = (bitmap.height * destinationAspect)
+                                .roundToInt().coerceIn(1, bitmap.width)
+                            val left = (bitmap.width - cropWidth) / 2
+                            android.graphics.Rect(left, 0, left + cropWidth, bitmap.height)
+                        } else {
+                            val cropHeight = (bitmap.width / destinationAspect)
+                                .roundToInt().coerceIn(1, bitmap.height)
+                            val top = (bitmap.height - cropHeight) / 2
+                            android.graphics.Rect(0, top, bitmap.width, top + cropHeight)
+                        }
+                        canvas.drawBitmap(bitmap, sourceRect, destination, paint)
+                    }
+
+                    when (slide) {
+                        is PreparedSlide.Single -> drawCrop(
+                            slide.bitmap,
+                            android.graphics.RectF(0f, 0f, width.toFloat(), height.toFloat()),
+                        )
+                        is PreparedSlide.Collage -> {
+                            val gapPx = when (collageGap) {
+                                CollageGap.NONE -> 0f
+                                CollageGap.SMALL -> 4f * scale
+                                CollageGap.MEDIUM -> 8f * scale
+                                CollageGap.LARGE -> 16f * scale
+                            }
+                            val destinations = collageDestinationRects(
+                                slide.layout, width.toFloat(), height.toFloat(), gapPx,
+                            )
+                            slide.tiles.zip(destinations).forEach { (tile, destination) ->
+                                drawCrop(tile.bitmap, destination)
+                            }
+                        }
+                    }
+
+                    val pixels = IntArray(width * height)
+                    source.getPixels(pixels, 0, width, 0, 0, width, height)
+                    val blurredPixels = ImageBlur.boxBlur(pixels, width, height)
+                    Bitmap.createBitmap(
+                        blurredPixels,
+                        width,
+                        height,
+                        colorChoice.toBitmapConfig(),
+                    ).also { output ->
+                        bitmapLifecycleTracker.recordAllocation(
+                            BitmapLifecycleTracker.Kind.GENERATED,
+                            output.safeAllocationBytes(),
+                        )
+                        undelivered.set(output)
+                    }
+                } finally {
+                    bitmapLifecycleTracker.recordRelease(
+                        BitmapLifecycleTracker.Kind.TEMPORARY,
+                        sourceBytes,
+                    )
+                    if (!source.isRecycled) source.recycle()
+                }
+            } catch (c: CancellationException) {
+                throw c
+            } catch (_: OutOfMemoryError) {
+                onOutOfMemory()
+                null
+            } catch (_: Exception) {
+                null
+            }
         }
-    } catch (c: CancellationException) {
-        throw c
-    } catch (_: OutOfMemoryError) {
-        onOutOfMemory()
-        null
-    } catch (_: Exception) {
-        null
+        undelivered.compareAndSet(result, null)
+        return result
+    } finally {
+        undelivered.getAndSet(null)?.let { escaped ->
+            bitmapLifecycleTracker.recordRelease(
+                BitmapLifecycleTracker.Kind.GENERATED,
+                escaped.safeAllocationBytes(),
+            )
+            if (!escaped.isRecycled) escaped.recycle()
+        }
     }
 }
 
@@ -398,6 +440,7 @@ internal suspend fun prepareSlide(
     targetH: Int,
     localThumbnailCache: com.example.familyphotoframe.data.cache.LocalThumbnailCache? = null,
     localThumbnailCacheProtectedStableIds: Set<String> = emptySet(),
+    bitmapLifecycleTracker: BitmapLifecycleTracker,
     onRecoverableOom: (DecodeFailure) -> Unit,
     onCollageCandidateFailure: (DecodeFailure) -> Unit,
     onCollageEvent: (
@@ -411,14 +454,27 @@ internal suspend fun prepareSlide(
         details: Map<String, String>,
     ) -> Unit,
 ): PrepareSlideResult {
-    val uncommitted = Collections.newSetFromMap(IdentityHashMap<Bitmap, Boolean>())
+    val uncommitted = IdentityHashMap<Bitmap, BitmapLifecycleTracker.Kind>()
 
     suspend fun decodeOwned(
         resolved: ResolvedPhoto,
         width: Int,
         height: Int,
-    ): DecodePhotoResult = decodePhoto(context, resolved, imageLoader, width, height, colorChoice).also { result ->
-        if (result is DecodePhotoResult.Ready) uncommitted += result.tile.bitmap
+    ): DecodePhotoResult = decodePhoto(
+        context,
+        resolved,
+        imageLoader,
+        width,
+        height,
+        colorChoice,
+    ).also { result ->
+        if (result is DecodePhotoResult.Ready && !uncommitted.containsKey(result.tile.bitmap)) {
+            bitmapLifecycleTracker.recordAllocation(
+                BitmapLifecycleTracker.Kind.DECODED,
+                result.tile.bitmap.safeAllocationBytes(),
+            )
+            uncommitted[result.tile.bitmap] = BitmapLifecycleTracker.Kind.DECODED
+        }
     }
 
     suspend fun decodeAnchorCacheable(resolved: ResolvedPhoto, width: Int, height: Int): DecodePhotoResult {
@@ -444,14 +500,17 @@ internal suspend fun prepareSlide(
     }
 
     fun releaseUncommitted() {
-        uncommitted.toList().forEach { bitmap ->
+        uncommitted.keys.toList().forEach { bitmap ->
+            val kind = uncommitted.remove(bitmap) ?: return@forEach
+            bitmapLifecycleTracker.recordRelease(kind, bitmap.safeAllocationBytes())
             if (!bitmap.isRecycled) bitmap.recycle()
-            uncommitted.remove(bitmap)
         }
     }
 
     fun discard(tile: PreparedTile) {
-        if (uncommitted.remove(tile.bitmap) && !tile.bitmap.isRecycled) tile.bitmap.recycle()
+        val kind = uncommitted.remove(tile.bitmap) ?: return
+        bitmapLifecycleTracker.recordRelease(kind, tile.bitmap.safeAllocationBytes())
+        if (!tile.bitmap.isRecycled) tile.bitmap.recycle()
     }
 
     fun emit(
@@ -472,7 +531,14 @@ internal suspend fun prepareSlide(
             allowTransitionBlur: Boolean = true,
         ): PrepareSlideResult.Ready {
             val blur = if (prepareSoftFocusBlur && allowTransitionBlur) {
-                createTransitionBlur(slide, targetW, targetH, collageGap, colorChoice) {
+                createTransitionBlur(
+                    slide,
+                    targetW,
+                    targetH,
+                    collageGap,
+                    colorChoice,
+                    bitmapLifecycleTracker,
+                ) {
                     onRecoverableOom(
                         decodeFailure(
                             photo,
@@ -483,7 +549,9 @@ internal suspend fun prepareSlide(
                     )
                 }
             } else null
-            if (blur != null) uncommitted += blur
+            if (blur != null) {
+                uncommitted[blur] = BitmapLifecycleTracker.Kind.GENERATED
+            }
             val prepared = slide.withTransitionBlur(blur)
             prepared.allBitmaps().forEach(uncommitted::remove)
             return PrepareSlideResult.Ready(prepared)

@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.ImageLoader
 import com.example.familyphotoframe.R
+import com.example.familyphotoframe.data.diagnostics.BitmapLifecycleTracker
 import com.example.familyphotoframe.data.settings.AspectMode
 import com.example.familyphotoframe.data.settings.CollageGap
 import com.example.familyphotoframe.data.settings.CollageScaleMode
@@ -200,6 +201,7 @@ fun SlideshowScreen(
                 onPreviewReady = vm::onWebPreviewReady,
                 onVisiblePresentationChanged = vm::onVisiblePresentationChanged,
                 onBitmapInventory = vm::onBitmapInventory,
+                bitmapLifecycleTracker = vm.bitmapLifecycleTracker,
                 onMemoryCleanup = vm::onMemoryCleanup,
                 onMotionDiagnostic = vm::logThreePhotoMotion,
                 manualNavigationActive = controlsVisible,
@@ -378,6 +380,7 @@ private fun PlayingContent(
     onPreviewReady: (WebPreviewFrame) -> Unit,
     onVisiblePresentationChanged: (List<DisplayPhoto>) -> Unit,
     onBitmapInventory: (PreparedBitmapInventory, PlaybackMemoryState) -> Unit,
+    bitmapLifecycleTracker: BitmapLifecycleTracker,
     onMemoryCleanup: (Int, Long, Long) -> Unit,
     /** Task §16: panel-motion detail for one three-photo frame. */
     onMotionDiagnostic: (List<Long>, String) -> Unit,
@@ -399,10 +402,15 @@ private fun PlayingContent(
             state.transition == TransitionMode.SOFT_FOCUS_FADE &&
             !state.transitionReduceMotion
 
-    val reclaimer = remember {
+    val pendingDisposalsState = remember {
+        mutableStateOf(PendingBitmapDisposals(count = 0, oldestStartedAtElapsedMs = 0L))
+    }
+    val reclaimer = remember(bitmapLifecycleTracker, pendingDisposalsState) {
         LegacyBitmapReclaimer(
             sdkInt = Build.VERSION.SDK_INT,
             handler = Handler(Looper.getMainLooper()),
+            lifecycleTracker = bitmapLifecycleTracker,
+            onPendingChanged = { pendingDisposalsState.value = it },
         )
     }
     // None of this state is keyed on targetW/targetH: a screen rotation changes those
@@ -415,7 +423,7 @@ private fun PlayingContent(
     // preload effect below both read targetW/targetH directly and live, so a resize
     // still decodes new work at the correct size — it just no longer nukes what was
     // already prepared to do it.
-    val registry = remember(memoryProtection.lowMemoryTier) {
+    val registry = remember(memoryProtection.lowMemoryTier, reclaimer) {
         PreparedSlideRegistry(
             onRetired = reclaimer::retire,
             maxEntries = if (memoryProtection.lowMemoryTier) {
@@ -481,10 +489,16 @@ private fun PlayingContent(
                     outgoingHandle,
                     incomingHandle,
                 ),
-                pendingDisposals = reclaimer.pendingBitmapCount(),
+                pendingDisposals = pendingDisposalsState.value,
             ),
             memoryProtection,
         )
+    }
+
+    // Delayed recycle completion is independent of the slide registry. Republish when
+    // that queue changes so diagnostics do not retain a stale non-zero disposal count.
+    LaunchedEffect(pendingDisposalsState.value) {
+        publishBitmapInventory()
     }
 
     // Serialize current/next preparation. This prevents startup races from selecting the
@@ -544,6 +558,7 @@ private fun PlayingContent(
             targetH = decodeH,
             localThumbnailCache = localThumbnailCache,
             localThumbnailCacheProtectedStableIds = setOfNotNull(selected?.stableId, next?.stableId),
+            bitmapLifecycleTracker = bitmapLifecycleTracker,
             onRecoverableOom = { failure ->
                 onRecoverableOom(photo, failure.reason ?: "slide_preparation_allocation")
             },
@@ -1113,6 +1128,7 @@ private fun PlayingContent(
                         motionStore = motionStore,
                         memoryProtection = memoryProtection,
                         reclaimer = reclaimer,
+                        bitmapLifecycleTracker = bitmapLifecycleTracker,
                         onRecoverableOom = onRecoverableOom,
                         onMotionDiagnostic = onMotionDiagnostic,
                     )
@@ -1129,6 +1145,7 @@ private fun PlayingContent(
                     motionStore = motionStore,
                     memoryProtection = memoryProtection,
                     reclaimer = reclaimer,
+                    bitmapLifecycleTracker = bitmapLifecycleTracker,
                     onRecoverableOom = onRecoverableOom,
                     onMotionDiagnostic = onMotionDiagnostic,
                 )

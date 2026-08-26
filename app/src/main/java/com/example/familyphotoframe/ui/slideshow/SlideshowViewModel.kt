@@ -163,6 +163,7 @@ class SlideshowViewModel(
     private val _state = MutableStateFlow(SlideshowUiState())
     val state: StateFlow<SlideshowUiState> = _state.asStateFlow()
     val memoryProtection = services.playbackMemoryGuard.state
+    internal val bitmapLifecycleTracker = services.bitmapLifecycleTracker
     private val _hostActive = MutableStateFlow(false)
     val hostActive: StateFlow<Boolean> = _hostActive.asStateFlow()
     private val _hostGeneration = MutableStateFlow(0L)
@@ -5088,6 +5089,8 @@ class SlideshowViewModel(
                 appBitmapCount = inventory.appBitmapCount,
                 activeDecodedBytes = inventory.activeDecodedBytes,
                 pendingDisposals = inventory.pendingDisposals,
+                oldestPendingDisposalStartedElapsedMs =
+                    inventory.oldestPendingDisposalStartedElapsedMs,
                 memoryProtectionLevel = protection.level.name,
                 oomCount = protection.totalOomCount,
                 updatedAtEpochMs = System.currentTimeMillis(),
