@@ -39,6 +39,10 @@ class DiagnosticRuntimeState {
         val peakSmbStreams: Int = 0,
         val smbStreamsOpened: Long = 0L,
         val smbStreamsClosed: Long = 0L,
+        val oldestSmbStreamPurpose: String = "OTHER",
+        val oldestSmbStreamDeadlineMs: Long = 0L,
+        val overdueSmbStreams: Int = 0,
+        val smbStreamDeadlineExpirations: Long = 0L,
         val smbTrackingSaturated: Boolean = false,
         val peakMediaTransfers: Int = 0,
         val mediaTransfersStarted: Long = 0L,
@@ -62,6 +66,9 @@ class DiagnosticRuntimeState {
         val bitmapTemporaryActiveCount: Int = 0,
         val bitmapTemporaryActiveBytes: Long = 0L,
         val bitmapReleaseUnderflowCount: Long = 0L,
+        val nativeHilMode: String = "NORMAL",
+        val nativeStages: NativeAllocationStageTracker.Snapshot =
+            NativeAllocationStageTracker.Snapshot(),
     )
 
     data class Playback(

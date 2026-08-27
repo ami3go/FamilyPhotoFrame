@@ -92,10 +92,21 @@ data class ScanOptions(
     fun allowsFile(name: String): Boolean = Glob.isAllowed(name, includeGlobs, excludeGlobs)
 }
 
+enum class OpenPurpose {
+    DISPLAY_CACHE,
+    COLLAGE_BOUNDS,
+    EXIF_METADATA,
+    CONTENT_HASH,
+    INDEX_METADATA,
+    OTHER,
+}
+
 data class OpenOptions(
     val timeoutMs: Long = 8_000,
     /** Force the source to return original file bytes rather than a display thumbnail. */
     val preferOriginal: Boolean = false,
+    /** Privacy-safe operation class used only for ownership/deadline diagnostics. */
+    val purpose: OpenPurpose = OpenPurpose.OTHER,
 )
 
 /**

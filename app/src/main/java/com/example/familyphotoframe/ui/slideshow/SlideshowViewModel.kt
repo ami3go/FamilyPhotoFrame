@@ -124,6 +124,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
@@ -135,6 +136,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.yield
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -167,6 +169,7 @@ class SlideshowViewModel(
     val webPreviewCaptureRequest: StateFlow<WebPreviewCaptureRequest?> =
         services.webServer.previewCaptureRequest
     internal val bitmapLifecycleTracker = services.bitmapLifecycleTracker
+    internal val nativeAllocationStageTracker = services.nativeAllocationStageTracker
     private val _hostActive = MutableStateFlow(false)
     val hostActive: StateFlow<Boolean> = _hostActive.asStateFlow()
     private val _hostGeneration = MutableStateFlow(0L)
@@ -623,6 +626,7 @@ class SlideshowViewModel(
     }
 
     private suspend fun onSettings(s: AppSettings) {
+        val previousSettings = lastSettings
         if (playlistScheduleConfig(lastSettings?.playlists) != playlistScheduleConfig(s.playlists)) {
             restartPlaylistScheduleWatcher()
         }
@@ -669,6 +673,7 @@ class SlideshowViewModel(
                 decodeColorDepth = s.decodeColorDepth,
                 cachePlaybackPool = s.cachePlaybackPool,
                 decodeResolution = s.decodeResolution,
+                nativeMemoryHilMode = s.nativeMemoryHilMode,
                 memoryTier = services.memoryTier,
                 autoStartOnBoot = s.autoStartOnBoot,
                 web = s.web,
@@ -699,6 +704,16 @@ class SlideshowViewModel(
             )
         }
         publishDiagnosticPlayback(_state.value, transitionOverride = effectiveTransition.name)
+        services.setNativeMemoryHilMode(s.nativeMemoryHilMode)
+        engine.setDiagnosticHold(s.nativeMemoryHilMode.holdPlayback)
+        if (previousSettings?.nativeMemoryHilMode != s.nativeMemoryHilMode) {
+            diagnostics.log(
+                DiagnosticsLog.Category.MEMORY,
+                "NATIVE_HIL_MODE_CHANGED",
+                "mode" to s.nativeMemoryHilMode.name,
+                "previousMode" to (previousSettings?.nativeMemoryHilMode?.name ?: "UNKNOWN"),
+            )
+        }
         engine.setCachePlaybackPool(s.cachePlaybackPool)
         engine.setTiming(effectiveInterval, s.temporarilySuppressAfterDecodeFailures)
         // Applied without a reselect: the pools are unchanged, so the photo on screen
@@ -2697,15 +2712,49 @@ class SlideshowViewModel(
             return valid
         }
 
+        suspend fun trackedProbe(block: suspend () -> Pair<Int, Int>?): Pair<Int, Int>? {
+            val operation = nativeAllocationStageTracker.start(
+                com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Stage.BOUNDS_PROBE
+            )
+            return try {
+                block().also { dimensions ->
+                    operation.finish(
+                        if (dimensions != null) {
+                            com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Outcome.COMPLETED
+                        } else {
+                            com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Outcome.FAILED
+                        }
+                    )
+                }
+            } catch (timeout: TimeoutCancellationException) {
+                operation.finish(
+                    com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Outcome.TIMED_OUT
+                )
+                null
+            } catch (cancelled: CancellationException) {
+                operation.finish(
+                    com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Outcome.CANCELLED
+                )
+                throw cancelled
+            } catch (error: Throwable) {
+                operation.finish(
+                    com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Outcome.FAILED
+                )
+                throw error
+            }
+        }
+
         when (val cached = services.mediaCache.resolveIfCached(item)) {
             is MediaCache.ResolveResult.Ready -> {
-                val dimensions = withContext(Dispatchers.IO) {
-                    try {
-                        RemoteImageBoundsProbe.decode(cached.file.inputStream())
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Exception) {
-                        null
+                val dimensions = trackedProbe {
+                    withContext(Dispatchers.IO) {
+                        try {
+                            RemoteImageBoundsProbe.decode(cached.file.inputStream())
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            null
+                        }
                     }
                 }
                 return persist(dimensions)
@@ -2714,21 +2763,24 @@ class SlideshowViewModel(
         }
 
         val source = remoteSources.active(display.sourceId) ?: return null
-        val dimensions = withTimeoutOrNull(REMOTE_COLLAGE_PROBE_TIMEOUT_MS) {
-            withContext(Dispatchers.IO) {
-                try {
-                    val stream = source.openStream(
-                        item,
-                        OpenOptions(
-                            timeoutMs = REMOTE_COLLAGE_PROBE_TIMEOUT_MS,
-                            preferOriginal = false,
-                        ),
-                    )
-                    RemoteImageBoundsProbe.decode(stream)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    null
+        val dimensions = trackedProbe {
+            withTimeout(REMOTE_COLLAGE_PROBE_TIMEOUT_MS) {
+                withContext(Dispatchers.IO) {
+                    try {
+                        val stream = source.openStream(
+                            item,
+                            OpenOptions(
+                                timeoutMs = REMOTE_COLLAGE_PROBE_TIMEOUT_MS,
+                                preferOriginal = false,
+                                purpose = com.example.familyphotoframe.data.source.OpenPurpose.COLLAGE_BOUNDS,
+                            ),
+                        )
+                        RemoteImageBoundsProbe.decode(stream)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        null
+                    }
                 }
             }
         }
@@ -4641,6 +4693,10 @@ class SlideshowViewModel(
 
     fun setDecodeResolution(resolution: DecodeResolution) {
         viewModelScope.launch { services.settings.update { it.copy(decodeResolution = resolution) } }
+    }
+
+    fun setNativeMemoryHilMode(mode: com.example.familyphotoframe.data.settings.NativeMemoryHilMode) {
+        viewModelScope.launch { services.settings.update { it.copy(nativeMemoryHilMode = mode) } }
     }
 
     fun setCachePlaybackPool(enabled: Boolean) {

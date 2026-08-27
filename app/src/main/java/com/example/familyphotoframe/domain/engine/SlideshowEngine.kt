@@ -58,6 +58,7 @@ class SlideshowEngine(
         data object Rendered : Command
         data object InteractionHoldChanged : Command
         data object VisibilityHoldChanged : Command
+        data object DiagnosticHoldChanged : Command
         data class PreviewFolderOnce(val folderKey: String) : Command
         data object ReconcileShuffle : Command
     }
@@ -78,6 +79,7 @@ class SlideshowEngine(
     @Volatile private var interactionHold: Boolean = false
     @Volatile private var hostActive: Boolean = false
     @Volatile private var surfaceObscured: Boolean = false
+    @Volatile private var diagnosticHold: Boolean = false
     /** Survives conflation with lifecycle wakeups until a visible loop applies it. */
     @Volatile private var reselectPending: Boolean = false
     @Volatile private var selectionMode: SelectionMode = SelectionMode.FOLDER_BALANCED_SHUFFLE
@@ -320,6 +322,17 @@ class SlideshowEngine(
             if (value) "SLIDESHOW_CONTROLS_HOLD" else "SLIDESHOW_CONTROLS_RELEASE",
         )
         commands.trySend(Command.InteractionHoldChanged)
+    }
+
+    /** Hold automatic advancement without changing the user's paused state or current frame. */
+    fun setDiagnosticHold(value: Boolean) {
+        if (diagnosticHold == value) return
+        diagnosticHold = value
+        diagnostics.log(
+            DiagnosticsLog.Category.ENGINE,
+            if (value) "NATIVE_HIL_HOLD_STARTED" else "NATIVE_HIL_HOLD_RELEASED",
+        )
+        commands.trySend(Command.DiagnosticHoldChanged)
     }
 
     fun setHostActive(owner: Long, value: Boolean) {
@@ -687,7 +700,9 @@ class SlideshowEngine(
                 val currentId = _ui.value.current?.id
                 val hasContent = currentId != null
                 val waitingForRender = currentId != null && renderedCurrentId != currentId
-                if (paused || asleep || interactionHold || !hostActive || surfaceObscured || !hasContent) {
+                if (paused || asleep || interactionHold || diagnosticHold ||
+                    !hostActive || surfaceObscured || !hasContent
+                ) {
                     // These waits are genuinely open-ended: nothing but an explicit
                     // command (resume, wake, content becoming available) should end them.
                     handle(commands.receive())
@@ -762,6 +777,7 @@ class SlideshowEngine(
             Command.Reselect -> if (hostActive && !surfaceObscured) applyPendingReselect() else Unit
             Command.InteractionHoldChanged -> Unit
             Command.VisibilityHoldChanged -> Unit
+            Command.DiagnosticHoldChanged -> Unit
             Command.SleepChanged -> {
                 diagnostics.log(
                     DiagnosticsLog.Category.ENGINE,

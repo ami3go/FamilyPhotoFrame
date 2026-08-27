@@ -236,6 +236,7 @@ copy data/diagnostics/DiagnosticPrivacyPolicy.kt
 copy data/diagnostics/DiagnosticRateController.kt
 copy data/diagnostics/DiagnosticsHealthSnapshot.kt
 copy data/diagnostics/DiagnosticRuntimeState.kt
+copy data/diagnostics/NativeAllocationStageTracker.kt
 copy data/diagnostics/DiagnosticsBundle.kt
 copy data/diagnostics/CrashEnvelopeStore.kt
 copy data/diagnostics/MainThreadStallDetector.kt

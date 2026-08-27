@@ -268,6 +268,22 @@ enum class DecodeColorDepth { AUTO, FULL, LOW_MEMORY }
  */
 enum class DecodeResolution { AUTO, FULL_PANEL, REDUCED }
 
+/**
+ * Controlled Phase 2B playback variants used to isolate native allocation stages on HIL.
+ * They are persisted so a device restart does not silently change the experiment.
+ */
+enum class NativeMemoryHilMode {
+    NORMAL,
+    HOLD_COMMITTED_FRAME,
+    SINGLE_PHOTO_INSTANT,
+    SINGLE_PHOTO_CROSSFADE,
+    ;
+
+    val holdPlayback: Boolean get() = this == HOLD_COMMITTED_FRAME
+    val forceSinglePhoto: Boolean get() = this != NORMAL && this != HOLD_COMMITTED_FRAME
+    val disablePreload: Boolean get() = this != NORMAL
+}
+
 /** How portrait photos are grouped on a landscape frame. */
 enum class PortraitCollageMode { OFF, AUTOMATIC, ALWAYS_TWO, PREFER_THREE }
 
@@ -903,6 +919,8 @@ data class AppSettings(
     val decodeColorDepth: DecodeColorDepth = DecodeColorDepth.AUTO,
     /** Decoded pixel count per slide; see [DecodeResolution]. */
     val decodeResolution: DecodeResolution = DecodeResolution.AUTO,
+    /** Explicit native-memory HIL variant. Never enabled by default. */
+    val nativeMemoryHilMode: NativeMemoryHilMode = NativeMemoryHilMode.NORMAL,
     /**
      * Reuse the playback id list between slides instead of re-reading the whole photo
      * index on every advance (spec §9.6 pools). Off restores the previous behaviour.

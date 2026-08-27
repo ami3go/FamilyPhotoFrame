@@ -85,6 +85,58 @@ class RuntimeObservabilityTest {
         assertEquals(1_025L, closed.smbStreamsClosed)
     }
 
+    @Test fun smbStreamSnapshotExplainsPurposeDeadlineAndExpiry() {
+        val clock = AtomicLong(1_000L)
+        val tracker = RuntimeResourceTracker(clock::get)
+        val stream = tracker.openSmbStream(
+            purpose = RuntimeResourceTracker.SmbStreamPurpose.DISPLAY_CACHE,
+            deadlineMs = 120_000L,
+        )
+        clock.set(121_001L)
+
+        val overdue = tracker.snapshot()
+        assertEquals(RuntimeResourceTracker.SmbStreamPurpose.DISPLAY_CACHE, overdue.oldestSmbStreamPurpose)
+        assertEquals(120_000L, overdue.oldestSmbStreamDeadlineMs)
+        assertEquals(1, overdue.overdueSmbStreams)
+
+        stream.markDeadlineExpired()
+        stream.markDeadlineExpired()
+        stream.close()
+        val closed = tracker.snapshot()
+        assertEquals(1L, closed.smbStreamDeadlineExpirations)
+        assertEquals(0, closed.overdueSmbStreams)
+    }
+
+    @Test fun nativeStageTrackerCountsOutcomesAndHeapDeltasWithoutRetainingPayloads() {
+        val clock = AtomicLong(1_000L)
+        val nativeHeap = AtomicLong(10_000L)
+        val tracker = NativeAllocationStageTracker(clock::get, nativeHeap::get)
+        val decode = tracker.start(NativeAllocationStageTracker.Stage.PHOTO_DECODE)
+        clock.set(1_125L)
+        nativeHeap.set(14_096L)
+        decode.finish(NativeAllocationStageTracker.Outcome.COMPLETED)
+        decode.finish(NativeAllocationStageTracker.Outcome.FAILED)
+
+        val transition = tracker.start(NativeAllocationStageTracker.Stage.TRANSITION)
+        clock.set(1_250L)
+        nativeHeap.set(12_048L)
+        transition.finish(NativeAllocationStageTracker.Outcome.CANCELLED)
+
+        val probe = tracker.start(NativeAllocationStageTracker.Stage.BOUNDS_PROBE)
+        clock.set(1_300L)
+        probe.finish(NativeAllocationStageTracker.Outcome.TIMED_OUT)
+
+        val snapshot = tracker.snapshot()
+        assertEquals(1L, snapshot.photoDecode.started)
+        assertEquals(1L, snapshot.photoDecode.completed)
+        assertEquals(4_096L, snapshot.photoDecode.cumulativeNativeDeltaBytes)
+        assertEquals(125L, snapshot.photoDecode.maximumDurationMs)
+        assertEquals(1L, snapshot.transition.cancelled)
+        assertEquals(-2_048L, snapshot.transition.cumulativeNativeDeltaBytes)
+        assertEquals(0, snapshot.transition.active)
+        assertEquals(1L, snapshot.boundsProbe.timedOut)
+    }
+
     @Test fun breadcrumbSurvivesAStorageRoundTrip() {
         class MemoryStorage : PersistentRuntimeBreadcrumbs.Storage {
             var value: PersistentRuntimeBreadcrumbs.Breadcrumb? = null

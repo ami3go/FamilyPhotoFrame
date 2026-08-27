@@ -104,7 +104,11 @@ class ContentHashBackfiller(
                     var bytesRead = 0L
                     source.openStream(
                         item,
-                        OpenOptions(timeoutMs = timeoutMs, preferOriginal = true),
+                        OpenOptions(
+                            timeoutMs = timeoutMs,
+                            preferOriginal = true,
+                            purpose = com.example.familyphotoframe.data.source.OpenPurpose.CONTENT_HASH,
+                        ),
                     ).use { input ->
                         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                         while (true) {

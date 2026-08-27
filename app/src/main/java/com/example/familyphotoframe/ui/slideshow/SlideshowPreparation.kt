@@ -9,6 +9,7 @@ import coil.request.CachePolicy
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import com.example.familyphotoframe.data.diagnostics.BitmapLifecycleTracker
+import com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker
 import com.example.familyphotoframe.data.settings.AspectMode
 import com.example.familyphotoframe.data.settings.CollageGap
 import com.example.familyphotoframe.data.settings.CollageLayoutPreference
@@ -120,12 +121,14 @@ private suspend fun createTransitionBlur(
     collageGap: CollageGap,
     colorChoice: DecodeColorChoice,
     bitmapLifecycleTracker: BitmapLifecycleTracker,
+    nativeStageTracker: NativeAllocationStageTracker,
     onOutOfMemory: () -> Unit,
 ): Bitmap? {
     // withContext has prompt cancellation: a result created on Default can be discarded
     // while dispatching back to the caller. Keep a non-owning handoff guard so that exact
     // cancellation window cannot orphan the generated native pixel allocation.
     val undelivered = AtomicReference<Bitmap?>(null)
+    val operation = nativeStageTracker.start(NativeAllocationStageTracker.Stage.GENERATED_BITMAP)
     try {
         val result = withContext(Dispatchers.Default) {
             try {
@@ -219,7 +222,17 @@ private suspend fun createTransitionBlur(
             }
         }
         undelivered.compareAndSet(result, null)
+        operation.finish(
+            if (result != null) NativeAllocationStageTracker.Outcome.COMPLETED
+            else NativeAllocationStageTracker.Outcome.FAILED,
+        )
         return result
+    } catch (cancelled: CancellationException) {
+        operation.finish(NativeAllocationStageTracker.Outcome.CANCELLED)
+        throw cancelled
+    } catch (error: Throwable) {
+        operation.finish(NativeAllocationStageTracker.Outcome.FAILED)
+        throw error
     } finally {
         undelivered.getAndSet(null)?.let { escaped ->
             bitmapLifecycleTracker.recordRelease(
@@ -283,8 +296,10 @@ private suspend fun decodePhoto(
     targetW: Int,
     targetH: Int,
     colorChoice: DecodeColorChoice,
+    nativeStageTracker: NativeAllocationStageTracker,
 ): DecodePhotoResult {
-    return try {
+    val operation = nativeStageTracker.start(NativeAllocationStageTracker.Stage.PHOTO_DECODE)
+    val result = try {
         // Request construction is intentionally inside the OOM boundary. The API-22
         // field log proved the previous request-before-try ordering could bypass recovery.
         val request = ImageRequest.Builder(context)
@@ -337,6 +352,7 @@ private suspend fun decodePhoto(
             )
         }
     } catch (c: CancellationException) {
+        operation.finish(NativeAllocationStageTracker.Outcome.CANCELLED)
         throw c
     } catch (_: OutOfMemoryError) {
         DecodePhotoResult.Failed(
@@ -352,6 +368,11 @@ private suspend fun decodePhoto(
             decodeFailure(resolved.photo, DecodeFailureStage.IMAGE_LOADER, e.javaClass.simpleName)
         )
     }
+    operation.finish(
+        if (result is DecodePhotoResult.Ready) NativeAllocationStageTracker.Outcome.COMPLETED
+        else NativeAllocationStageTracker.Outcome.FAILED,
+    )
+    return result
 }
 
 private fun DisplayPhoto.metadataOrientation(): PhotoOrientation =
@@ -441,6 +462,7 @@ internal suspend fun prepareSlide(
     localThumbnailCache: com.example.familyphotoframe.data.cache.LocalThumbnailCache? = null,
     localThumbnailCacheProtectedStableIds: Set<String> = emptySet(),
     bitmapLifecycleTracker: BitmapLifecycleTracker,
+    nativeStageTracker: NativeAllocationStageTracker,
     onRecoverableOom: (DecodeFailure) -> Unit,
     onCollageCandidateFailure: (DecodeFailure) -> Unit,
     onCollageEvent: (
@@ -467,6 +489,7 @@ internal suspend fun prepareSlide(
         width,
         height,
         colorChoice,
+        nativeStageTracker,
     ).also { result ->
         if (result is DecodePhotoResult.Ready && !uncommitted.containsKey(result.tile.bitmap)) {
             bitmapLifecycleTracker.recordAllocation(
@@ -538,6 +561,7 @@ internal suspend fun prepareSlide(
                     collageGap,
                     colorChoice,
                     bitmapLifecycleTracker,
+                    nativeStageTracker,
                 ) {
                     onRecoverableOom(
                         decodeFailure(

@@ -152,8 +152,25 @@ object DiagnosticEventCatalog {
         "progressBucket", "includeSubfolders",
     )
 
+    private val nativeStageFields = buildSet {
+        val prefixes = listOf(
+            "nativeDecode",
+            "nativeBoundsProbe",
+            "nativeCacheVerify",
+            "nativeGenerated",
+            "nativeTransition",
+        )
+        val suffixes = listOf(
+            "Started", "Completed", "Failed", "Cancelled", "TimedOut", "Active",
+            "PeakActive", "OldestAgeMs", "MaxDurationMs", "NetDeltaKb",
+            "PositiveDeltaKb", "NegativeDeltaKb", "TrackingSaturated",
+        )
+        prefixes.forEach { prefix -> suffixes.forEach { suffix -> add(prefix + suffix) } }
+    }
+
     private val memoryFields = setOf(
         "trigger", "reason", "level", "response", "previousLevel", "memoryProtectionLevel",
+        "mode", "previousMode", "nativeHilMode",
         "heapUsedKb", "heapMaxKb", "heapBeforeKb", "heapAfterKb", "freedKb",
         "nativeHeapKb", "pssKb", "dalvikPssKb", "nativePssKb", "otherPssKb",
         "rssKb", "imageCacheKb", "imageCacheMaxKb", "imageCacheBeforeKb", "beforeKb",
@@ -163,7 +180,8 @@ object DiagnosticEventCatalog {
         "processMemoryBudgetKb", "processPressurePercent", "systemHeadroomPercent",
         "memoryPressureSource", "economyBaseline", "externalCriticalRemainingMs",
         "externalGuardedRemainingMs", "nativeGrowthKb", "nativeGrowthRateKbPerMin",
-        "nativeGrowthStreak", "renderTimeoutWindowCount", "renderTimeoutTotal",
+        "nativeGrowthStreak", "nativeCriticalLatched", "nativeCriticalAgeMs",
+        "nativeStableWindowStreak", "renderTimeoutWindowCount", "renderTimeoutTotal",
         "preparedSlideCount", "renderedSlideCount", "decodedBitmapCount", "appBitmapCount",
         "activeDecodedBytes", "pendingDisposals", "oldestPendingDisposalAgeMs", "gcRequested",
         "durationMs", "errorClass", "outcome",
@@ -174,7 +192,9 @@ object DiagnosticEventCatalog {
         "threadCount", "smbActiveContexts", "smbPeakContexts", "smbContextsCreated",
         "smbContextsClosed", "smbOldestContextAgeMs", "smbContextTrackingSaturated",
         "smbActiveStreams", "smbPeakStreams", "smbStreamsOpened",
-        "smbStreamsClosed", "smbOldestStreamAgeMs", "smbTrackingSaturated", "mediaActiveTransfers",
+        "smbStreamsClosed", "smbOldestStreamAgeMs", "smbOldestStreamPurpose",
+        "smbOldestStreamDeadlineMs", "smbOverdueStreams", "smbStreamDeadlineExpirations",
+        "smbTrackingSaturated", "mediaActiveTransfers",
         "mediaPeakTransfers", "mediaTransfersStarted", "mediaTransfersFinished",
         "mediaOldestTransferAgeMs", "mediaTrackingSaturated",
         "bitmapTrackedAllocations", "bitmapTrackedReleases", "bitmapTrackedAllocatedBytes",
@@ -183,7 +203,7 @@ object DiagnosticEventCatalog {
         "bitmapDecodedActiveCount", "bitmapDecodedActiveBytes", "bitmapGeneratedAllocations",
         "bitmapGeneratedActiveCount", "bitmapGeneratedActiveBytes", "bitmapTemporaryAllocations",
         "bitmapTemporaryActiveCount", "bitmapTemporaryActiveBytes", "bitmapReleaseUnderflowCount",
-    )
+    ) + nativeStageFields
 
     private val lifecycleFields = setOf(
         "activityToken", "activityState", "surface", "previousSurface", "engineState",
@@ -285,6 +305,7 @@ object DiagnosticEventCatalog {
         "FAVORITE_ADD", "FAVORITE_REMOVE",
         "FOLDER_RETRY", "PAUSE", "RESUME", "SLEEP_ENTER", "SLEEP_EXIT",
         "SLIDESHOW_CONTROLS_HOLD", "SLIDESHOW_CONTROLS_RELEASE",
+        "NATIVE_HIL_HOLD_STARTED", "NATIVE_HIL_HOLD_RELEASED",
         "PHOTO_FAVORITE_ADDED", "PHOTO_FAVORITE_REMOVED",
         "TRANSITION_LOW_PERFORMANCE_ENTERED", "TRANSITION_LOW_PERFORMANCE_EXITED",
         "ON_THIS_DAY_SKIPPED_EMPTY", "ON_THIS_DAY_TRIGGERED", "RENDER_ACK_TIMEOUT",
@@ -310,6 +331,7 @@ object DiagnosticEventCatalog {
         "MEMORY_SELF_RECOVERY_GC", "MEMORY_PROCESS_RESTART_SCHEDULED",
         "MEMORY_PROCESS_RESTART_SUPPRESSED", "MEMORY_PROCESS_RESTART_FAILED",
         "MEMORY_PROCESS_RECOVERY_COMPLETED",
+        "NATIVE_HIL_MODE_CHANGED",
     )
 
     private val cacheCodes = setOf("WEB_CACHE_CLEARED")

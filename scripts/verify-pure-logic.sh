@@ -253,7 +253,7 @@ cp app/src/main/java/com/example/familyphotoframe/web/WebPreview.kt "$PURE/WebPr
 # identity primitive, bounded writer and privacy boundary together.
 for file in DiagnosticEventSpec.kt DiagnosticOperationTracker.kt DiagnosticIdentityHasher.kt \
   DiagnosticPrivacyPolicy.kt DiagnosticRateController.kt DiagnosticsHealthSnapshot.kt \
-  DiagnosticRuntimeState.kt DiagnosticsBundle.kt CrashEnvelopeStore.kt MainThreadStallDetector.kt \
+  NativeAllocationStageTracker.kt DiagnosticRuntimeState.kt DiagnosticsBundle.kt CrashEnvelopeStore.kt MainThreadStallDetector.kt \
   ProcessExitReasonMapper.kt DiagnosticsLog.kt DiagnosticsJsonl.kt FileDiagnosticsSink.kt \
   RuntimeResourceTracker.kt BitmapLifecycleTracker.kt ProcfsResourceSampler.kt \
   PersistentRuntimeBreadcrumbs.kt; do

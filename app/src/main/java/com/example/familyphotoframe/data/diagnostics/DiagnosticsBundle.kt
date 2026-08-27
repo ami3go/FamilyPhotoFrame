@@ -84,6 +84,10 @@ object DiagnosticsBundleJson {
                 "smbPeakStreams" to runtime.memory.peakSmbStreams,
                 "smbStreamsOpened" to runtime.memory.smbStreamsOpened,
                 "smbStreamsClosed" to runtime.memory.smbStreamsClosed,
+                "smbOldestStreamPurpose" to runtime.memory.oldestSmbStreamPurpose,
+                "smbOldestStreamDeadlineMs" to runtime.memory.oldestSmbStreamDeadlineMs,
+                "smbOverdueStreams" to runtime.memory.overdueSmbStreams,
+                "smbStreamDeadlineExpirations" to runtime.memory.smbStreamDeadlineExpirations,
                 "mediaActiveTransfers" to runtime.memory.activeMediaTransfers,
                 "mediaPeakTransfers" to runtime.memory.peakMediaTransfers,
                 "mediaTransfersStarted" to runtime.memory.mediaTransfersStarted,
@@ -110,6 +114,27 @@ object DiagnosticsBundleJson {
                 "bitmapTemporaryActiveCount" to runtime.memory.bitmapTemporaryActiveCount,
                 "bitmapTemporaryActiveBytes" to runtime.memory.bitmapTemporaryActiveBytes,
                 "bitmapReleaseUnderflowCount" to runtime.memory.bitmapReleaseUnderflowCount,
+                "nativeHilMode" to runtime.memory.nativeHilMode,
+                "nativeDecodeStarted" to runtime.memory.nativeStages.photoDecode.started,
+                "nativeDecodeCompleted" to runtime.memory.nativeStages.photoDecode.completed,
+                "nativeDecodeNetDeltaKb" to
+                    runtime.memory.nativeStages.photoDecode.cumulativeNativeDeltaBytes / 1024L,
+                "nativeBoundsProbeStarted" to runtime.memory.nativeStages.boundsProbe.started,
+                "nativeBoundsProbeCompleted" to runtime.memory.nativeStages.boundsProbe.completed,
+                "nativeBoundsProbeNetDeltaKb" to
+                    runtime.memory.nativeStages.boundsProbe.cumulativeNativeDeltaBytes / 1024L,
+                "nativeCacheVerifyStarted" to runtime.memory.nativeStages.cacheVerify.started,
+                "nativeCacheVerifyCompleted" to runtime.memory.nativeStages.cacheVerify.completed,
+                "nativeCacheVerifyNetDeltaKb" to
+                    runtime.memory.nativeStages.cacheVerify.cumulativeNativeDeltaBytes / 1024L,
+                "nativeGeneratedStarted" to runtime.memory.nativeStages.generatedBitmap.started,
+                "nativeGeneratedCompleted" to runtime.memory.nativeStages.generatedBitmap.completed,
+                "nativeGeneratedNetDeltaKb" to
+                    runtime.memory.nativeStages.generatedBitmap.cumulativeNativeDeltaBytes / 1024L,
+                "nativeTransitionStarted" to runtime.memory.nativeStages.transition.started,
+                "nativeTransitionCompleted" to runtime.memory.nativeStages.transition.completed,
+                "nativeTransitionNetDeltaKb" to
+                    runtime.memory.nativeStages.transition.cumulativeNativeDeltaBytes / 1024L,
                 "imageCacheKb" to runtime.memory.imageCacheKb,
                 "surface" to safeCode(runtime.playback.surface, "UNKNOWN"),
                 "engineState" to safeCode(runtime.playback.engineState, "UNKNOWN"),

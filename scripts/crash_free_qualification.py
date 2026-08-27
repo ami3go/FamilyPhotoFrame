@@ -137,6 +137,47 @@ def _all_events_run(bundle: BundleData) -> tuple[list[dict[str, Any]], int | Non
     return list(bundle.events), (version if version >= 0 else None), app_version, start_at
 
 
+def _session_key(event: dict[str, Any]) -> str:
+    return str(event.get("sid") or event.get("sessionId") or "")
+
+
+def _primary_continuous_session(
+    events: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], str, int]:
+    """Select one uninterrupted process session for cadence and memory slopes.
+
+    Resource counters reset at process start. Combining equal-version sessions creates a
+    synthetic line across reboots/relaunches and can hide a strong in-session leak. Session and
+    crash gates still receive the complete build run; only continuous-process measurements use
+    this longest sampled session.
+    """
+    samples_by_session: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for event in events:
+        if event.get("code") == "HEAP_SAMPLE":
+            samples_by_session[_session_key(event)].append(event)
+    if not samples_by_session:
+        start = min((_time(event) for event in events), default=0)
+        return events, "", start
+
+    def score(item: tuple[str, list[dict[str, Any]]]) -> tuple[int, int, int]:
+        _, samples = item
+        ordered = sorted(samples, key=_time)
+        duration = _time(ordered[-1]) - _time(ordered[0]) if len(ordered) >= 2 else 0
+        return duration, len(ordered), _time(ordered[-1])
+
+    session_id, selected_samples = max(samples_by_session.items(), key=score)
+    if session_id:
+        selected_events = [event for event in events if _session_key(event) == session_id]
+    else:
+        selected_events = events
+    ordered_samples = sorted(selected_samples, key=_time)
+    start = _time(ordered_samples[0]) if ordered_samples else min(
+        (_time(event) for event in selected_events),
+        default=0,
+    )
+    return selected_events, session_id, start
+
+
 def _series(
     samples: list[dict[str, Any]], key: str, start_at: int = 0,
 ) -> tuple[list[tuple[int, float]], float]:
@@ -766,7 +807,7 @@ def _lifecycle_gate(events: list[dict[str, Any]], required: bool) -> GateResult:
 def _summary_metrics(events: list[dict[str, Any]], warmup_hours: float) -> dict[str, Any]:
     codes = _by_code(events)
     samples = sorted(codes.get("HEAP_SAMPLE", []), key=_time)
-    run_start = min((_time(event) for event in events), default=0)
+    run_start = _time(samples[0]) if samples else min((_time(event) for event in events), default=0)
     steady_start = run_start + int(warmup_hours * 3_600_000)
     duration_hours = (
         (_time(samples[-1]) - _time(samples[0])) / 3_600_000.0 if len(samples) >= 2 else None
@@ -794,6 +835,28 @@ def _summary_metrics(events: list[dict[str, Any]], warmup_hours: float) -> dict[
         ),
         "sessionCount": len(codes.get("SESSION_START", [])),
     })
+    steady_samples = [sample for sample in samples if _time(sample) >= steady_start]
+    if steady_samples:
+        first, last = steady_samples[0], steady_samples[-1]
+        for prefix, label in (
+            ("nativeDecode", "decode"),
+            ("nativeBoundsProbe", "boundsProbe"),
+            ("nativeCacheVerify", "cacheVerify"),
+            ("nativeGenerated", "generatedBitmap"),
+            ("nativeTransition", "transition"),
+        ):
+            metrics[f"{label}Started"] = max(
+                0,
+                _integer(last, f"{prefix}Started") - _integer(first, f"{prefix}Started"),
+            )
+            metrics[f"{label}Completed"] = max(
+                0,
+                _integer(last, f"{prefix}Completed") - _integer(first, f"{prefix}Completed"),
+            )
+            metrics[f"{label}NetNativeDeltaKb"] = (
+                _integer(last, f"{prefix}NetDeltaKb") -
+                _integer(first, f"{prefix}NetDeltaKb")
+            )
     return metrics
 
 
@@ -834,7 +897,8 @@ def qualify(
     baseline_bundle: BundleData | None = None,
 ) -> dict[str, Any]:
     profile = PROFILES[profile_key]
-    events, version_code, app_version, run_start = _latest_phase_run(bundle)
+    build_events, version_code, app_version, _ = _latest_phase_run(bundle)
+    events, selected_session_id, run_start = _primary_continuous_session(build_events)
     codes = _by_code(events)
     samples = sorted(codes.get("HEAP_SAMPLE", []), key=_time)
     sessions = sorted(codes.get("SESSION_START", []), key=_time)
@@ -843,9 +907,9 @@ def qualify(
     gates = [
         _identity_gate(version_code, app_version),
         _coverage_gate(events, profile),
-        _integrity_gate(bundle, events),
-        _failure_gate(events),
-        _session_gate(events),
+        _integrity_gate(bundle, build_events),
+        _failure_gate(build_events),
+        _session_gate(build_events),
         _heap_gate(samples, steady_start),
         _memory_metric_gate(samples, steady_start, "pssKb", "pss", "Total-PSS growth"),
         _memory_metric_gate(samples, steady_start, "nativePssKb", "native_pss", "Native-PSS growth"),
@@ -856,7 +920,7 @@ def qualify(
         _render_gate(events, steady_start, profile.minimum_presentations),
         *_transition_gates(events, steady_start, profile.minimum_presentations),
         _controller_gate(events, steady_start),
-        _self_recovery_gate(events),
+        _self_recovery_gate(build_events),
         _source_recovery_gate(events, profile.require_source_cycle),
         _lifecycle_gate(events, profile.require_lifecycle_cycle),
     ]
@@ -867,7 +931,8 @@ def qualify(
     candidate_metrics = _summary_metrics(events, profile.warmup_hours)
     baseline_metrics = None
     if baseline_bundle is not None:
-        baseline_events, _, _, _ = _all_events_run(baseline_bundle)
+        baseline_build_events, _, _, _ = _all_events_run(baseline_bundle)
+        baseline_events, _, _ = _primary_continuous_session(baseline_build_events)
         baseline_metrics = _summary_metrics(baseline_events, profile.warmup_hours)
 
     return {
@@ -878,7 +943,9 @@ def qualify(
             "appVersion": app_version,
             "versionCode": version_code,
             "runStartEpochMs": run_start,
+            "selectedSessionId": selected_session_id,
             "eventCount": len(events),
+            "buildEventCount": len(build_events),
             "metrics": candidate_metrics,
         },
         "baseline": {"metrics": baseline_metrics} if baseline_metrics is not None else None,

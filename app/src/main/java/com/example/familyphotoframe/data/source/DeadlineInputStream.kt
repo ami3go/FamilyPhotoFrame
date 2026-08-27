@@ -22,12 +22,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal class DeadlineInputStream(
     input: InputStream,
     timeoutMs: Long,
+    private val onDeadlineExpired: () -> Unit = {},
 ) : FilterInputStream(input) {
     private val closed = AtomicBoolean(false)
     private val timedOut = AtomicBoolean(false)
     private val deadline: ScheduledFuture<*> = scheduler.schedule(
         {
             timedOut.set(true)
+            runCatching(onDeadlineExpired)
             closeUnderlying()
         },
         timeoutMs.coerceAtLeast(1L),

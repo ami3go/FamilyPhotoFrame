@@ -23,11 +23,13 @@ import com.example.familyphotoframe.data.diagnostics.RuntimeSampler
 import com.example.familyphotoframe.data.diagnostics.SharedPreferencesRuntimeBreadcrumbStorage
 import com.example.familyphotoframe.data.diagnostics.BatteryTelemetry
 import com.example.familyphotoframe.data.diagnostics.BitmapLifecycleTracker
+import com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker
 import com.example.familyphotoframe.data.index.ContentHashBackfiller
 import com.example.familyphotoframe.data.index.ExifBackfiller
 import com.example.familyphotoframe.data.index.Indexer
 import com.example.familyphotoframe.data.secret.KeystoreSecretStore
 import com.example.familyphotoframe.data.settings.SettingsRepository
+import com.example.familyphotoframe.data.settings.NativeMemoryHilMode
 import com.example.familyphotoframe.data.source.AppPrivateFallbackSource
 import com.example.familyphotoframe.data.source.LocalUploadPhotoSource
 import com.example.familyphotoframe.data.source.BuiltInSourceIds
@@ -74,6 +76,12 @@ import kotlinx.coroutines.flow.first
  *  - bundled demo -> "fallback"
  */
 class ServiceLocator(private val appContext: Context) {
+
+    @Volatile private var currentNativeMemoryHilMode: NativeMemoryHilMode = NativeMemoryHilMode.NORMAL
+
+    fun setNativeMemoryHilMode(mode: NativeMemoryHilMode) {
+        currentNativeMemoryHilMode = mode
+    }
 
     val dispatchers: AppDispatchers = DefaultAppDispatchers
 
@@ -132,6 +140,13 @@ class ServiceLocator(private val appContext: Context) {
     /** Bitmap lifetime counters. This tracker retains no Bitmap references. */
     val bitmapLifecycleTracker: BitmapLifecycleTracker = BitmapLifecycleTracker()
 
+    /** Aggregate native-heap deltas at real decode/render stage boundaries. */
+    val nativeAllocationStageTracker: NativeAllocationStageTracker =
+        NativeAllocationStageTracker(
+            elapsedRealtimeMs = { android.os.SystemClock.elapsedRealtime() },
+            nativeHeapBytes = { Debug.getNativeHeapAllocatedSize() },
+        )
+
     private val procfsResourceSampler: ProcfsResourceSampler = ProcfsResourceSampler()
 
     /** Last presentation stage retained across an abrupt same-boot process restart. */
@@ -180,6 +195,7 @@ class ServiceLocator(private val appContext: Context) {
                 val procfs = procfsResourceSampler.sample()
                 val resources = runtimeResourceTracker.snapshot()
                 val bitmapLifecycle = bitmapLifecycleTracker.snapshot()
+                val nativeStages = nativeAllocationStageTracker.snapshot()
                 val sampleElapsedMs = android.os.SystemClock.elapsedRealtime()
                 val oldestPendingDisposalAgeMs = bitmapInventory
                     .oldestPendingDisposalStartedElapsedMs
@@ -227,6 +243,10 @@ class ServiceLocator(private val appContext: Context) {
                         peakSmbStreams = resources.peakSmbStreams,
                         smbStreamsOpened = resources.smbStreamsOpened,
                         smbStreamsClosed = resources.smbStreamsClosed,
+                        oldestSmbStreamPurpose = resources.oldestSmbStreamPurpose.name,
+                        oldestSmbStreamDeadlineMs = resources.oldestSmbStreamDeadlineMs,
+                        overdueSmbStreams = resources.overdueSmbStreams,
+                        smbStreamDeadlineExpirations = resources.smbStreamDeadlineExpirations,
                         smbTrackingSaturated = resources.smbTrackingSaturated,
                         peakMediaTransfers = resources.peakMediaTransfers,
                         mediaTransfersStarted = resources.mediaTransfersStarted,
@@ -250,6 +270,8 @@ class ServiceLocator(private val appContext: Context) {
                         bitmapTemporaryActiveCount = bitmapLifecycle.temporaryActiveCount,
                         bitmapTemporaryActiveBytes = bitmapLifecycle.temporaryActiveBytes,
                         bitmapReleaseUnderflowCount = bitmapLifecycle.releaseUnderflowCount,
+                        nativeHilMode = currentNativeMemoryHilMode.name,
+                        nativeStages = nativeStages,
                     )
                 )
                 linkedMapOf(
@@ -279,6 +301,13 @@ class ServiceLocator(private val appContext: Context) {
                     "nativeGrowthRateKbPerMin" to
                         memoryProtection.nativeGrowthRateKbPerMin.toString(),
                     "nativeGrowthStreak" to memoryProtection.nativeGrowthStreak.toString(),
+                    "nativeCriticalLatched" to memoryProtection.nativeCriticalLatched.toString(),
+                    "nativeCriticalAgeMs" to memoryProtection.nativeCriticalSinceElapsedMs
+                        .takeIf { memoryProtection.nativeCriticalLatched && it > 0L }
+                        ?.let { (sampleElapsedMs - it).coerceAtLeast(0L) }
+                        .let { (it ?: 0L).toString() },
+                    "nativeStableWindowStreak" to memoryProtection.nativeStableWindowStreak.toString(),
+                    "nativeHilMode" to currentNativeMemoryHilMode.name,
                     "renderTimeoutWindowCount" to
                         memoryProtection.renderTimeoutWindowCount.toString(),
                     "renderTimeoutTotal" to memoryProtection.totalRenderTimeoutCount.toString(),
@@ -299,6 +328,11 @@ class ServiceLocator(private val appContext: Context) {
                     "smbStreamsOpened" to resources.smbStreamsOpened.toString(),
                     "smbStreamsClosed" to resources.smbStreamsClosed.toString(),
                     "smbOldestStreamAgeMs" to resources.oldestSmbStreamAgeMs.toString(),
+                    "smbOldestStreamPurpose" to resources.oldestSmbStreamPurpose.name,
+                    "smbOldestStreamDeadlineMs" to resources.oldestSmbStreamDeadlineMs.toString(),
+                    "smbOverdueStreams" to resources.overdueSmbStreams.toString(),
+                    "smbStreamDeadlineExpirations" to
+                        resources.smbStreamDeadlineExpirations.toString(),
                     "smbTrackingSaturated" to resources.smbTrackingSaturated.toString(),
                     "mediaActiveTransfers" to resources.activeMediaTransfers.toString(),
                     "mediaPeakTransfers" to resources.peakMediaTransfers.toString(),
@@ -326,6 +360,29 @@ class ServiceLocator(private val appContext: Context) {
                     "bitmapReleaseUnderflowCount" to
                         bitmapLifecycle.releaseUnderflowCount.toString(),
                 ).apply {
+                    fun putStage(
+                        prefix: String,
+                        stage: NativeAllocationStageTracker.StageSnapshot,
+                    ) {
+                        put("${prefix}Started", stage.started.toString())
+                        put("${prefix}Completed", stage.completed.toString())
+                        put("${prefix}Failed", stage.failed.toString())
+                        put("${prefix}Cancelled", stage.cancelled.toString())
+                        put("${prefix}TimedOut", stage.timedOut.toString())
+                        put("${prefix}Active", stage.active.toString())
+                        put("${prefix}PeakActive", stage.peakActive.toString())
+                        put("${prefix}OldestAgeMs", stage.oldestActiveAgeMs.toString())
+                        put("${prefix}MaxDurationMs", stage.maximumDurationMs.toString())
+                        put("${prefix}NetDeltaKb", (stage.cumulativeNativeDeltaBytes / 1024L).toString())
+                        put("${prefix}PositiveDeltaKb", (stage.positiveNativeDeltaBytes / 1024L).toString())
+                        put("${prefix}NegativeDeltaKb", (stage.negativeNativeDeltaBytes / 1024L).toString())
+                        put("${prefix}TrackingSaturated", stage.trackingSaturated.toString())
+                    }
+                    putStage("nativeDecode", nativeStages.photoDecode)
+                    putStage("nativeBoundsProbe", nativeStages.boundsProbe)
+                    putStage("nativeCacheVerify", nativeStages.cacheVerify)
+                    putStage("nativeGenerated", nativeStages.generatedBitmap)
+                    putStage("nativeTransition", nativeStages.transition)
                     procfs.openFileDescriptorCount?.let { put("openFdCount", it.toString()) }
                     procfs.threadCount?.let { put("threadCount", it.toString()) }
                     systemMemory?.let {
@@ -369,6 +426,7 @@ class ServiceLocator(private val appContext: Context) {
                 override suspend fun clearAllCacheKeys() = photoDao.clearAllCacheKeys()
             },
             resourceTracker = runtimeResourceTracker,
+            nativeStageTracker = nativeAllocationStageTracker,
         )
     }
 

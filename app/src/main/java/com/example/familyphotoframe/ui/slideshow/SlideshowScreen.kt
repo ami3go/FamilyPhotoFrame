@@ -40,6 +40,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.ImageLoader
 import com.example.familyphotoframe.R
 import com.example.familyphotoframe.data.diagnostics.BitmapLifecycleTracker
+import com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker
 import com.example.familyphotoframe.data.settings.AspectMode
 import com.example.familyphotoframe.data.settings.CollageGap
 import com.example.familyphotoframe.data.settings.CollageScaleMode
@@ -48,6 +49,7 @@ import com.example.familyphotoframe.data.settings.PortraitFallback
 import com.example.familyphotoframe.domain.engine.DecodeFailure
 import com.example.familyphotoframe.domain.engine.DecodeFailureStage
 import com.example.familyphotoframe.data.settings.DecodeResolution
+import com.example.familyphotoframe.data.settings.NativeMemoryHilMode
 import com.example.familyphotoframe.domain.engine.DecodeColorPolicy
 import com.example.familyphotoframe.domain.engine.DeviceMemoryTier
 import com.example.familyphotoframe.domain.engine.DeviceMemoryTierPolicy
@@ -211,6 +213,7 @@ fun SlideshowScreen(
                 onVisiblePresentationChanged = vm::onVisiblePresentationChanged,
                 onBitmapInventory = vm::onBitmapInventory,
                 bitmapLifecycleTracker = vm.bitmapLifecycleTracker,
+                nativeStageTracker = vm.nativeAllocationStageTracker,
                 onMemoryCleanup = vm::onMemoryCleanup,
                 onMotionDiagnostic = vm::logThreePhotoMotion,
                 manualNavigationActive = controlsVisible,
@@ -391,6 +394,7 @@ private fun PlayingContent(
     onVisiblePresentationChanged: (List<DisplayPhoto>) -> Unit,
     onBitmapInventory: (PreparedBitmapInventory, PlaybackMemoryState) -> Unit,
     bitmapLifecycleTracker: BitmapLifecycleTracker,
+    nativeStageTracker: NativeAllocationStageTracker,
     onMemoryCleanup: (Int, Long, Long) -> Unit,
     /** Task §16: panel-motion detail for one three-photo frame. */
     onMotionDiagnostic: (List<Long>, String) -> Unit,
@@ -407,7 +411,8 @@ private fun PlayingContent(
     val context = LocalContext.current
     val selected = state.engine.current
     val next = state.engine.next
-    val softFocusNeeded = memoryProtection.allowSoftFocus &&
+    val softFocusNeeded = state.nativeMemoryHilMode == NativeMemoryHilMode.NORMAL &&
+        memoryProtection.allowSoftFocus &&
         state.transitionSelectionMode == TransitionSelectionMode.FIXED &&
             state.transition == TransitionMode.SOFT_FOCUS_FADE &&
             !state.transitionReduceMotion
@@ -529,7 +534,11 @@ private fun PlayingContent(
         val decodeW = (targetW * effectiveScale).roundToInt().coerceAtLeast(1)
         val decodeH = (targetH * effectiveScale).roundToInt().coerceAtLeast(1)
         val configuredMaxPhotos = state.portraitCollage.maxPhotosClamped
-        val memoryMaxPhotos = memoryProtection.maxCollagePhotos
+        val memoryMaxPhotos = if (state.nativeMemoryHilMode.forceSinglePhoto) {
+            1
+        } else {
+            memoryProtection.maxCollagePhotos
+        }
         val maxPhotos = minOf(configuredMaxPhotos, memoryMaxPhotos)
         return prepareSlide(
             context = context,
@@ -551,7 +560,8 @@ private fun PlayingContent(
             collageFillWithOtherOrientations = state.portraitCollage.fillWithOtherOrientations,
             collageLayoutPreference = state.portraitCollage.layoutPreference,
             prepareSoftFocusBlur = softFocusNeeded && !fastManual,
-            allowBlurredBackground = memoryProtection.allowBlurredBackdrop && !fastManual,
+            allowBlurredBackground = state.nativeMemoryHilMode == NativeMemoryHilMode.NORMAL &&
+                memoryProtection.allowBlurredBackdrop && !fastManual,
             colorChoice = DecodeColorPolicy.choose(
                 preference = state.decodeColorDepth,
                 heapMaxBytes = Runtime.getRuntime().maxMemory(),
@@ -569,6 +579,7 @@ private fun PlayingContent(
             localThumbnailCache = localThumbnailCache,
             localThumbnailCacheProtectedStableIds = setOfNotNull(selected?.stableId, next?.stableId),
             bitmapLifecycleTracker = bitmapLifecycleTracker,
+            nativeStageTracker = nativeStageTracker,
             onRecoverableOom = { failure ->
                 onRecoverableOom(photo, failure.reason ?: "slide_preparation_allocation")
             },
@@ -594,6 +605,7 @@ private fun PlayingContent(
         targetH,
         state.portraitCollage,
         softFocusNeeded,
+        state.nativeMemoryHilMode,
         memoryProtection.decisionVersion,
         hostActive,
         hostGeneration,
@@ -700,6 +712,7 @@ private fun PlayingContent(
         targetH,
         state.portraitCollage,
         softFocusNeeded,
+        state.nativeMemoryHilMode,
         memoryProtection.decisionVersion,
         manualNavigationActive,
         hostActive,
@@ -709,7 +722,8 @@ private fun PlayingContent(
         val prewarmManual = manualNavigationActive && committedHandle != null
         val lifecycleToken = hostPlaybackToken()
         if (!hostActive || lifecycleToken == null ||
-            !isHostPlaybackTokenCurrent(lifecycleToken) || !memoryProtection.allowNextPreload
+            !isHostPlaybackTokenCurrent(lifecycleToken) ||
+                state.nativeMemoryHilMode.disablePreload || !memoryProtection.allowNextPreload
         ) {
             registry.latest(photo.id)?.takeIf { handle ->
                 handle !in setOfNotNull(
@@ -758,8 +772,8 @@ private fun PlayingContent(
 
     // Drop any next-slide allocation immediately when pressure changes the decision.
     // After an actual OOM, request one GC only after strong references have been pruned.
-    LaunchedEffect(memoryProtection.decisionVersion) {
-        if (!memoryProtection.allowNextPreload) {
+    LaunchedEffect(memoryProtection.decisionVersion, state.nativeMemoryHilMode) {
+        if (!memoryProtection.allowNextPreload || state.nativeMemoryHilMode.disablePreload) {
             registry.retain(
                 setOfNotNull(
                     candidateHandle,
@@ -802,6 +816,7 @@ private fun PlayingContent(
         state.transition,
         state.transitionReduceMotion,
         state.transitionDurationMs,
+        state.nativeMemoryHilMode,
         hostActive,
         hostGeneration,
     ) {
@@ -830,6 +845,66 @@ private fun PlayingContent(
             return@LaunchedEffect
         }
 
+        if (state.nativeMemoryHilMode == NativeMemoryHilMode.SINGLE_PHOTO_INSTANT) {
+            val previousInstantHandle = committedHandle
+            val operation = nativeStageTracker.start(NativeAllocationStageTracker.Stage.TRANSITION)
+            try {
+                transitionProgress.snapTo(1f)
+                committedHandle = targetHandle
+                outgoingHandle = null
+                incomingHandle = null
+                activeTransition = ResolvedTransition(
+                    TransitionMode.CROSSFADE,
+                    fallbackReason = "native_hil_instant",
+                )
+                transitionState = TransitionState.Committed(target.anchor.id)
+                // Let Compose submit one frame so the measured stage includes any Skia upload
+                // caused by this bitmap, while still retaining no outgoing transition frame.
+                withFrameNanos { it }
+                if (!isHostPlaybackTokenCurrent(lifecycleToken) ||
+                    candidateHandle != targetHandle || selected?.id != target.anchor.id
+                ) {
+                    committedHandle = previousInstantHandle
+                    transitionState = slide(previousInstantHandle)?.let {
+                        TransitionState.Committed(it.anchor.id)
+                    } ?: TransitionState.Idle
+                    operation.finish(NativeAllocationStageTracker.Outcome.CANCELLED)
+                    publishBitmapInventory()
+                    return@LaunchedEffect
+                }
+                onRendered(
+                    target.anchor.id,
+                    target.photos.map { it.id },
+                    target.dataSources,
+                    null,
+                )
+                onPresentationStage(target.anchor.id, "NATIVE_HIL_INSTANT_COMMIT", false)
+                if (manualCandidateHandle == targetHandle) manualCandidateHandle = null
+                registry.retain(setOf(targetHandle))
+                operation.finish(NativeAllocationStageTracker.Outcome.COMPLETED)
+                publishBitmapInventory()
+            } catch (cancelled: CancellationException) {
+                if (committedHandle == targetHandle) {
+                    committedHandle = previousInstantHandle
+                    transitionState = slide(previousInstantHandle)?.let {
+                        TransitionState.Committed(it.anchor.id)
+                    } ?: TransitionState.Idle
+                }
+                operation.finish(NativeAllocationStageTracker.Outcome.CANCELLED)
+                throw cancelled
+            } catch (error: Throwable) {
+                if (committedHandle == targetHandle) {
+                    committedHandle = previousInstantHandle
+                    transitionState = slide(previousInstantHandle)?.let {
+                        TransitionState.Committed(it.anchor.id)
+                    } ?: TransitionState.Idle
+                }
+                operation.finish(NativeAllocationStageTracker.Outcome.FAILED)
+                throw error
+            }
+            return@LaunchedEffect
+        }
+
         val previousHandle = committedHandle
         val previous = slide(previousHandle)
         val transitionGeneration = transitionGenerationCounter.incrementAndGet()
@@ -843,6 +918,8 @@ private fun PlayingContent(
             ResolvedTransition(TransitionMode.CROSSFADE, fallbackReason = "cold_start")
         } else if (manualNavigation) {
             ResolvedTransition(TransitionMode.CROSSFADE, fallbackReason = "manual_navigation")
+        } else if (state.nativeMemoryHilMode == NativeMemoryHilMode.SINGLE_PHOTO_CROSSFADE) {
+            ResolvedTransition(TransitionMode.CROSSFADE, fallbackReason = "native_hil_single_crossfade")
         } else {
             transitionSelector.select(
                 mode = state.transitionSelectionMode,
@@ -920,9 +997,11 @@ private fun PlayingContent(
         )
         onTransitionEvent(event("TRANSITION_STARTED"))
 
+        val stageOperation = nativeStageTracker.start(NativeAllocationStageTracker.Stage.TRANSITION)
         val frameSampler = TransitionFrameSampler()
         var firstFrameAtNs: Long? = null
         var completed = false
+        var stageOutcome = NativeAllocationStageTracker.Outcome.CANCELLED
         val animationStartedAtNs = SystemClock.elapsedRealtimeNanos()
         try {
             val firstFrameNs = withFrameNanos { it }
@@ -940,6 +1019,13 @@ private fun PlayingContent(
                 if (progress >= 1f) break
             }
             completed = true
+            stageOutcome = NativeAllocationStageTracker.Outcome.COMPLETED
+        } catch (cancelled: CancellationException) {
+            stageOutcome = NativeAllocationStageTracker.Outcome.CANCELLED
+            throw cancelled
+        } catch (error: Throwable) {
+            stageOutcome = NativeAllocationStageTracker.Outcome.FAILED
+            throw error
         } finally {
             val metrics = frameSampler.summary()
             val actualDurationMs =
@@ -947,7 +1033,8 @@ private fun PlayingContent(
             val startLatencyMs = firstFrameAtNs?.let { first ->
                 (first - readyAtNs).coerceAtLeast(0L) / 1_000_000L
             }
-            withContext(NonCancellable) {
+            try {
+                withContext(NonCancellable) {
                 // onStop cancels this effect, but the historical implementation committed
                 // from NonCancellable anyway. Keep a prepared candidate for resume while
                 // refusing to make it visible or report it rendered in an old generation.
@@ -1008,7 +1095,9 @@ private fun PlayingContent(
                         setOfNotNull(
                             committedHandle,
                             candidateHandle,
-                            if (memoryProtection.allowNextPreload) {
+                            if (memoryProtection.allowNextPreload &&
+                                !state.nativeMemoryHilMode.disablePreload
+                            ) {
                                 next?.id?.let { registry.latest(it) }
                             } else null,
                         )
@@ -1061,12 +1150,17 @@ private fun PlayingContent(
                     committedHandle,
                     candidateHandle,
                     selected?.id?.let { registry.latest(it) },
-                    if (memoryProtection.allowNextPreload) {
+                    if (memoryProtection.allowNextPreload &&
+                        !state.nativeMemoryHilMode.disablePreload
+                    ) {
                         next?.id?.let { registry.latest(it) }
                     } else null,
                 )
                 registry.retain(keep)
                 publishBitmapInventory()
+                }
+            } finally {
+                stageOperation.finish(stageOutcome)
             }
         }
     }
@@ -1160,7 +1254,7 @@ private fun PlayingContent(
                     prepared = it,
                     state = state,
                     imageLoader = imageLoader,
-                    allowDisplayMotion = true,
+                    allowDisplayMotion = state.nativeMemoryHilMode == NativeMemoryHilMode.NORMAL,
                     motionStore = motionStore,
                     memoryProtection = memoryProtection,
                     reclaimer = reclaimer,

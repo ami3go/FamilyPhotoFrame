@@ -221,11 +221,15 @@ class SmbPhotoSource(
         try {
             val openedInput = SmbFile(item.openToken, lease.value.context).inputStream
             input = openedInput
-            val openedResourceLease = resourceTracker.openSmbStream()
+            val openedResourceLease = resourceTracker.openSmbStream(
+                purpose = options.purpose.toTrackerPurpose(),
+                deadlineMs = options.timeoutMs,
+            )
             resourceLease = openedResourceLease
             DeadlineInputStream(
                 LeaseReleasingInputStream(openedInput, lease, openedResourceLease),
                 options.timeoutMs,
+                onDeadlineExpired = openedResourceLease::markDeadlineExpired,
             )
         } catch (error: Throwable) {
             runCatching { input?.close() }
@@ -258,4 +262,13 @@ class SmbPhotoSource(
 
     /** Path within the share, relative to the configured root. */
     private fun relPath(f: SmbFile): String = f.path.removePrefix(shareBase).trimEnd('/')
+
+    private fun OpenPurpose.toTrackerPurpose(): RuntimeResourceTracker.SmbStreamPurpose = when (this) {
+        OpenPurpose.DISPLAY_CACHE -> RuntimeResourceTracker.SmbStreamPurpose.DISPLAY_CACHE
+        OpenPurpose.COLLAGE_BOUNDS -> RuntimeResourceTracker.SmbStreamPurpose.COLLAGE_BOUNDS
+        OpenPurpose.EXIF_METADATA -> RuntimeResourceTracker.SmbStreamPurpose.EXIF_METADATA
+        OpenPurpose.CONTENT_HASH -> RuntimeResourceTracker.SmbStreamPurpose.CONTENT_HASH
+        OpenPurpose.INDEX_METADATA -> RuntimeResourceTracker.SmbStreamPurpose.INDEX_METADATA
+        OpenPurpose.OTHER -> RuntimeResourceTracker.SmbStreamPurpose.OTHER
+    }
 }

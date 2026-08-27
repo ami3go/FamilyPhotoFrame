@@ -330,7 +330,13 @@ class Indexer(
     private suspend fun readExifSafely(source: PhotoSource, item: PhotoItem): ExifMetadata? =
         try {
             withTimeoutOrNull(exifTimeoutMs) {
-                source.openStream(item, OpenOptions(timeoutMs = exifTimeoutMs)).use { input ->
+                source.openStream(
+                    item,
+                    OpenOptions(
+                        timeoutMs = exifTimeoutMs,
+                        purpose = com.example.familyphotoframe.data.source.OpenPurpose.INDEX_METADATA,
+                    ),
+                ).use { input ->
                     ExifExtractor.extract(input)
                 }
             }

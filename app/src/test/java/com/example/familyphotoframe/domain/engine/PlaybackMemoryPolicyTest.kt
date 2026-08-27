@@ -335,6 +335,21 @@ class PlaybackMemoryPolicyTest {
             nativePssBytes = state.nativePssBytes,
         )
         assertEquals(0, state.nativeGrowthStreak)
+        assertTrue(state.nativeCriticalLatched)
+
+        state = PlaybackMemoryPolicy.sample(
+            previous = state,
+            heapUsedBytes = heap / 2L,
+            heapMaxBytes = heap,
+            nowElapsedMs = now + 2L * PlaybackMemoryPolicy.NATIVE_GROWTH_MAX_WINDOW_MS,
+            processPssBytes = 80L * 1024L * 1024L,
+            nativePssBytes = state.nativePssBytes,
+        )
+        assertFalse(state.nativeCriticalLatched)
+        assertEquals(
+            PlaybackMemoryPolicy.NATIVE_STABLE_WINDOWS_TO_RELEASE,
+            state.nativeStableWindowStreak,
+        )
     }
 
     @Test fun lowMemoryTierStartsWithABoundedEconomyProfile() {

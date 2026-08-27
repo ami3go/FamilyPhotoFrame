@@ -52,6 +52,10 @@ data class PlaybackMemoryState(
     val nativeGrowthStreak: Int = 0,
     val nativeGrowthWindowBaselineBytes: Long = 0L,
     val nativeGrowthWindowStartedElapsedMs: Long = 0L,
+    /** A native critical condition remains latched until two measured plateau windows. */
+    val nativeCriticalLatched: Boolean = false,
+    val nativeCriticalSinceElapsedMs: Long = 0L,
+    val nativeStableWindowStreak: Int = 0,
     /** Latest bounded transfer evidence; freshness is controlled by [sample]. */
     val activeMediaTransfers: Int = 0,
     val oldestMediaTransferAgeMs: Long = 0L,
@@ -165,6 +169,7 @@ object PlaybackMemoryPolicy {
     const val NATIVE_GROWTH_CRITICAL_BYTES = 4L * 1024L * 1024L
     const val NATIVE_GROWTH_CRITICAL_RATE_KB_PER_MIN = 64
     const val NATIVE_GROWTH_CRITICAL_STREAK = 3
+    const val NATIVE_STABLE_WINDOWS_TO_RELEASE = 2
 
     const val GUARDED_RECOVERY_HOLD_MS = 3L * 60_000L
     const val CRITICAL_RECOVERY_HOLD_MS = 5L * 60_000L
@@ -197,6 +202,8 @@ object PlaybackMemoryPolicy {
         val windowBaselineBytes: Long,
         val windowStartedElapsedMs: Long,
         val signal: ExternalSignal,
+        val windowClosed: Boolean,
+        val growing: Boolean,
     )
 
     private fun thresholds(heapMaxBytes: Long): Thresholds =
@@ -328,10 +335,42 @@ object PlaybackMemoryPolicy {
             windowBaselineBytes = previous.nativeGrowthWindowBaselineBytes,
             windowStartedElapsedMs = previous.nativeGrowthWindowStartedElapsedMs,
             signal = ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE),
+            windowClosed = false,
+            growing = false,
         )
+        val nativeLatchTriggered = nativeAssessment.signal.level == ExternalLevel.CRITICAL &&
+            nativeAssessment.signal.source == PlaybackMemoryPressureSource.NATIVE_PSS_GROWTH
+        val nativeStableWindowStreak = when {
+            nativeLatchTriggered -> 0
+            !previous.nativeCriticalLatched -> 0
+            nativeAssessment.windowClosed && nativeAssessment.growing -> 0
+            nativeAssessment.windowClosed ->
+                (previous.nativeStableWindowStreak + 1).coerceAtMost(NATIVE_STABLE_WINDOWS_TO_RELEASE)
+            else -> previous.nativeStableWindowStreak
+        }
+        val nativeLatchReleased = previous.nativeCriticalLatched &&
+            nativeStableWindowStreak >= NATIVE_STABLE_WINDOWS_TO_RELEASE &&
+            processPercent < PROCESS_GUARDED_ENTER_PERCENT && !lowMemory
+        val nativeCriticalLatched = (previous.nativeCriticalLatched || nativeLatchTriggered) &&
+            !nativeLatchReleased
+        val nativeCriticalSince = when {
+            nativeCriticalLatched && previous.nativeCriticalLatched ->
+                previous.nativeCriticalSinceElapsedMs
+            nativeCriticalLatched -> nowElapsedMs
+            else -> 0L
+        }
+        val nativeLatchSignal = if (nativeCriticalLatched) {
+            ExternalSignal(
+                ExternalLevel.CRITICAL,
+                PlaybackMemoryPressureSource.NATIVE_PSS_GROWTH,
+            )
+        } else {
+            ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE)
+        }
         val signal = strongestSignal(
             memorySignal,
             nativeAssessment.signal,
+            nativeLatchSignal,
             transferSignal,
             renderSignal,
         )
@@ -431,6 +470,9 @@ object PlaybackMemoryPolicy {
             nativeGrowthStreak = nativeAssessment.streak,
             nativeGrowthWindowBaselineBytes = nativeAssessment.windowBaselineBytes,
             nativeGrowthWindowStartedElapsedMs = nativeAssessment.windowStartedElapsedMs,
+            nativeCriticalLatched = nativeCriticalLatched,
+            nativeCriticalSinceElapsedMs = nativeCriticalSince,
+            nativeStableWindowStreak = nativeStableWindowStreak,
             activeMediaTransfers = transferCount,
             oldestMediaTransferAgeMs = transferAge,
             renderTimeoutWindowStartedElapsedMs = renderWindowStarted,
@@ -550,6 +592,8 @@ object PlaybackMemoryPolicy {
                 windowBaselineBytes = current,
                 windowStartedElapsedMs = if (current == 0L) 0L else now,
                 signal = ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE),
+                windowClosed = false,
+                growing = false,
             )
         }
 
@@ -576,6 +620,8 @@ object PlaybackMemoryPolicy {
                 windowBaselineBytes = previous.nativeGrowthWindowBaselineBytes,
                 windowStartedElapsedMs = previous.nativeGrowthWindowStartedElapsedMs,
                 signal = ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE),
+                windowClosed = false,
+                growing = false,
             )
         }
 
@@ -608,6 +654,8 @@ object PlaybackMemoryPolicy {
             windowBaselineBytes = current,
             windowStartedElapsedMs = now,
             signal = signal,
+            windowClosed = true,
+            growing = growing,
         )
     }
 

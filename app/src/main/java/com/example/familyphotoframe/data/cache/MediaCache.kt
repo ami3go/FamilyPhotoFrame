@@ -2,10 +2,12 @@ package com.example.familyphotoframe.data.cache
 
 import android.content.Context
 import android.graphics.BitmapFactory
+import com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker
 import com.example.familyphotoframe.data.diagnostics.RuntimeResourceTracker
 import com.example.familyphotoframe.data.db.CacheIndexDao
 import com.example.familyphotoframe.data.db.CacheIndexEntity
 import com.example.familyphotoframe.data.source.OpenOptions
+import com.example.familyphotoframe.data.source.OpenPurpose
 import com.example.familyphotoframe.data.source.PhotoItem
 import com.example.familyphotoframe.data.source.PhotoSource
 import kotlinx.coroutines.CoroutineDispatcher
@@ -54,6 +56,8 @@ class MediaCache(
     private val photoIndex: PhotoCacheIndexWriter? = null,
     /** Shared process counters used by the one-minute runtime evidence sampler. */
     private val resourceTracker: RuntimeResourceTracker = RuntimeResourceTracker(),
+    /** Aggregate native-heap attribution for the bounds-only cache verification decode. */
+    private val nativeStageTracker: NativeAllocationStageTracker = NativeAllocationStageTracker(),
     /** Max cache size in bytes; defaults to spec §16.1 formula. */
     private val maxBytesProvider: (suspend () -> Long)? = null,
 ) {
@@ -240,7 +244,10 @@ class MediaCache(
             withTimeout(TOTAL_TRANSFER_TIMEOUT_MS) {
                 source.openStream(
                     item,
-                    OpenOptions(timeoutMs = TOTAL_TRANSFER_TIMEOUT_MS),
+                    OpenOptions(
+                        timeoutMs = TOTAL_TRANSFER_TIMEOUT_MS,
+                        purpose = OpenPurpose.DISPLAY_CACHE,
+                    ),
                 ).use { input ->
                     stage = FailureStage.SOURCE_READ
                     FileOutputStream(tmp).use { out ->
@@ -321,9 +328,20 @@ class MediaCache(
 
     /** Bounds-only decode: distinguishes "file exists" from "decodes" (spec §16.1). */
     private fun decodes(f: File): Boolean {
-        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(f.path, opts)
-        return opts.outWidth > 0 && opts.outHeight > 0
+        val operation = nativeStageTracker.start(NativeAllocationStageTracker.Stage.CACHE_VERIFY)
+        return try {
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(f.path, opts)
+            val valid = opts.outWidth > 0 && opts.outHeight > 0
+            operation.finish(
+                if (valid) NativeAllocationStageTracker.Outcome.COMPLETED
+                else NativeAllocationStageTracker.Outcome.FAILED,
+            )
+            valid
+        } catch (error: Throwable) {
+            operation.finish(NativeAllocationStageTracker.Outcome.FAILED)
+            throw error
+        }
     }
 
     /** Removes crash leftovers and stale DB rows before the first cache operation. */
