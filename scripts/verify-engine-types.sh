@@ -251,6 +251,7 @@ copy domain/engine/RecoveryPolicy.kt
 copy domain/engine/PlaybackMemoryPolicy.kt
 copy domain/engine/PlaybackMemoryGuard.kt
 copy domain/engine/PlaybackPoolCachePolicy.kt
+copy domain/engine/RenderAckRecoveryPolicy.kt
 copy domain/engine/SourcePoolPolicy.kt
 copy domain/engine/SlideshowEngine.kt
 copy slideshow/shuffle/ShuffleModels.kt

@@ -107,7 +107,7 @@ object DiagnosticEventCatalog {
         "folderToken", "presentationToken", "playlistToken", "photoToken", "anchorToken",
         "layout", "transitionCode", "selectionMode", "poolSize", "primaryCount",
         "fallbackCount", "count", "found", "active", "paused", "asleep", "favorite",
-        "cachedOnly", "failures", "stage", "durationMs", "elapsedMs", "decodeMs",
+        "cachedOnly", "renderAck", "failures", "stage", "durationMs", "elapsedMs", "decodeMs",
         "renderMs", "intervalMs", "members", "candidateCount", "reducedMotion",
         "performanceClass", "frameCount", "slowFrames", "frozenFrames", "p50Ms",
         "p95Ms", "p99Ms", "maxMs", "cycle", "remaining", "eligible", "inserted",

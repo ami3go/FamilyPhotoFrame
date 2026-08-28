@@ -173,6 +173,9 @@ sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/engine/HostLifecycleGate.kt \
   > "$PURE/HostLifecycleGate.kt"
 sed 's/^package .*//' \
+  app/src/main/java/com/example/familyphotoframe/domain/engine/RenderAckRecoveryPolicy.kt \
+  > "$PURE/RenderAckRecoveryPolicy.kt"
+sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/engine/PlaybackMemoryPolicy.kt \
   > "$PURE/PlaybackMemoryPolicy.kt"
 sed 's/^package .*//' \

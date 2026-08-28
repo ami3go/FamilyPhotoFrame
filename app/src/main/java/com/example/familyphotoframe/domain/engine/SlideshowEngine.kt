@@ -169,6 +169,8 @@ class SlideshowEngine(
     /** One terminal render outcome is accepted per selected current photo. */
     private var renderedCurrentId: Long? = null
     private var failedCurrentId: Long? = null
+    /** Last photo confirmed visible by the UI, retained across an identical re-selection. */
+    private var lastRenderedPhotoId: Long? = null
 
     /** Playback-pool reuse; see [CachedPool]. Turning it off re-queries on every advance. */
     fun setCachePlaybackPool(enabled: Boolean) {
@@ -548,6 +550,7 @@ class SlideshowEngine(
             val current = _ui.value.current ?: return@launch
             if (current.id != anchorId || renderedCurrentId == anchorId || failedCurrentId == anchorId) return@launch
             renderedCurrentId = anchorId
+            lastRenderedPhotoId = anchorId
 
             val ids = (listOf(anchorId) + memberIds).distinct()
             val now = System.currentTimeMillis()
@@ -1025,7 +1028,15 @@ class SlideshowEngine(
 
     private suspend fun setCurrent(pick: Pick, computeNextPreview: Boolean) {
         val photo = pick.item.toDisplayPhoto()
-        renderedCurrentId = null
+        val reusesVisiblePresentation = RenderAckRecoveryPolicy.reusesVisiblePresentation(
+            currentPhotoId = _ui.value.current?.id,
+            lastRenderedPhotoId = lastRenderedPhotoId,
+            selectedPhotoId = photo.id,
+        )
+        // An explicit one-photo pool can select the already committed image again. There
+        // is then no Compose state change that could produce another UI acknowledgement;
+        // preserve the known-visible acknowledgement and begin a fresh dwell interval.
+        renderedCurrentId = photo.id.takeIf { reusesVisiblePresentation }
         failedCurrentId = null
         playingFallback = pick.fromFallback
         activeReservation = pick.reservation
@@ -1049,6 +1060,7 @@ class SlideshowEngine(
             "cachedOnly" to photo.needsCache.toString(),
             "selectionMode" to selectionMode.name,
             "active" to (pick.reservation != null).toString(),
+            "renderAck" to if (reusesVisiblePresentation) "REUSED_VISIBLE" else "AWAITING_UI",
         )
         val canPreselect = computeNextPreview &&
             selectionMode != SelectionMode.FOLDER_BALANCED_SHUFFLE &&

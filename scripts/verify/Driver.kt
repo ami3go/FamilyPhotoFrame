@@ -25,6 +25,7 @@ fun main() {
     runScanFilterChecks()
     runRecoveryPolicyChecks()
     runHostLifecycleGateChecks()
+    runRenderAckRecoveryChecks()
     runPlaybackMemoryPolicyChecks()
     runDecodeColorPolicyChecks()
     runMemorySelfRecoveryChecks()
