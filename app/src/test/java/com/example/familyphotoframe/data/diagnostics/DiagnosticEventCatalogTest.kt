@@ -9,16 +9,26 @@ class DiagnosticEventCatalogTest {
     @Test fun onThisDayEvents_areRegisteredAsEngineEvents() {
         val skipped = DiagnosticEventCatalog.find("ON_THIS_DAY_SKIPPED_EMPTY")
         val triggered = DiagnosticEventCatalog.find("ON_THIS_DAY_TRIGGERED")
+        val exhausted = DiagnosticEventCatalog.find("ON_THIS_DAY_POOL_EXHAUSTED")
         assertNotNull(skipped)
         assertNotNull(triggered)
+        assertNotNull(exhausted)
         assertEquals(DiagnosticsLog.Category.ENGINE, skipped?.category)
         assertEquals(DiagnosticsLog.Category.ENGINE, triggered?.category)
+        assertEquals(DiagnosticsLog.Category.ENGINE, exhausted?.category)
     }
 
     @Test fun onThisDayTriggered_preservesStructuredFields() {
         val triggered = DiagnosticEventCatalog.require("ON_THIS_DAY_TRIGGERED")
         assertTrue("years" in triggered.permittedFields)
         assertTrue("preview" in triggered.permittedFields)
+    }
+
+    @Test fun onThisDayCompletion_preservesPoolProgress() {
+        val exhausted = DiagnosticEventCatalog.require("ON_THIS_DAY_POOL_EXHAUSTED")
+        assertTrue("photoToken" in exhausted.permittedFields)
+        assertTrue("poolSize" in exhausted.permittedFields)
+        assertTrue("remaining" in exhausted.permittedFields)
     }
 
     @Test fun collageSelectionEvaluation_isRegisteredWithOptimizerFields() {

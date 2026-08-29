@@ -142,6 +142,10 @@ class SlideshowEngine(
      * §4.2) rather than derived from a SQL predicate like every other selection mode.
      */
     private var onThisDayIds: List<Long> = emptyList()
+    /** Final unique On This Day photo selected but not yet visibly acknowledged. */
+    private var onThisDayTerminalPhotoId: Long? = null
+    /** Once every unique interlude photo has been shown, hold its final visible frame. */
+    private var onThisDayInterludeComplete: Boolean = false
     /** True until the first presentation of this process is selected. */
     private var startupSelectionPending: Boolean = true
 
@@ -372,7 +376,9 @@ class SlideshowEngine(
      * [Command.Reselect] (via [setPlayback]) that reads this pool right away.
      */
     fun setOnThisDayPool(ids: List<Long>) {
-        onThisDayIds = ids
+        onThisDayIds = ids.distinct()
+        onThisDayTerminalPhotoId = null
+        onThisDayInterludeComplete = false
     }
 
     /** Request idempotent queue reconciliation without changing the visible slide. */
@@ -578,6 +584,14 @@ class SlideshowEngine(
                 "layout" to layout.orEmpty(),
                 "selectionMode" to selectionMode.name,
             )
+            if (OnThisDayPlaybackPolicy.shouldHoldVisibleFrame(
+                    isOnThisDay = selectionMode == SelectionMode.ON_THIS_DAY,
+                    terminalPhotoId = onThisDayTerminalPhotoId,
+                    renderedPhotoId = anchorId,
+                )
+            ) {
+                completeOnThisDayInterlude(current)
+            }
             commands.trySend(Command.Rendered)
         }
     }
@@ -593,6 +607,12 @@ class SlideshowEngine(
             ) return@launch
 
             failedCurrentId = failure.photoId
+            if (onThisDayTerminalPhotoId == failure.photoId) {
+                // A terminal item that fails is not a successful completion. Let the
+                // normal failure path advance and select another eligible item instead
+                // of pinning an invisible/failed frame for the rest of the interlude.
+                onThisDayTerminalPhotoId = null
+            }
             activeReservation?.takeIf { it.anchorPhotoId == failure.photoId }?.let { reservation ->
                 val reason = failure.reason ?: failure.exceptionClass ?: "decode_failure"
                 val folderLevelFailure = failure.stage == DecodeFailureStage.SOURCE_READ &&
@@ -729,6 +749,12 @@ class SlideshowEngine(
                     } else {
                         handle(cmd)
                     }
+                } else if (selectionMode == SelectionMode.ON_THIS_DAY && onThisDayInterludeComplete) {
+                    // The finite memory pool has been visibly presented. Keep its final
+                    // frame up until the timed playlist override expires (or a manual
+                    // command arrives); do not keep re-selecting the same photo each
+                    // normal slideshow interval.
+                    handle(commands.receive())
                 } else {
                     // A full interval starts only after successful visible presentation;
                     // any manual command still pre-empts it immediately.
@@ -842,6 +868,8 @@ class SlideshowEngine(
         reservedNext = null
         previewReturnPick = null
         boundedSelectionFallbackActive = false
+        onThisDayTerminalPhotoId = null
+        onThisDayInterludeComplete = false
     }
 
 
@@ -857,6 +885,9 @@ class SlideshowEngine(
     }
 
     private suspend fun advance(forward: Boolean) {
+        if (forward && selectionMode == SelectionMode.ON_THIS_DAY && onThisDayInterludeComplete) {
+            return
+        }
         if (selectionMode == SelectionMode.FOLDER_BALANCED_SHUFFLE ||
             boundedSelectionFallbackActive || activeReservation != null
         ) {
@@ -1038,6 +1069,9 @@ class SlideshowEngine(
         // preserve the known-visible acknowledgement and begin a fresh dwell interval.
         renderedCurrentId = photo.id.takeIf { reusesVisiblePresentation }
         failedCurrentId = null
+        onThisDayTerminalPhotoId = photo.id.takeIf {
+            selectionMode == SelectionMode.ON_THIS_DAY && pick.onThisDayTerminal
+        }
         playingFallback = pick.fromFallback
         activeReservation = pick.reservation
         activeShuffleScopeKey = pick.scopeKey ?: activeShuffleScopeKey
@@ -1064,6 +1098,7 @@ class SlideshowEngine(
         )
         val canPreselect = computeNextPreview &&
             selectionMode != SelectionMode.FOLDER_BALANCED_SHUFFLE &&
+            OnThisDayPlaybackPolicy.shouldPreloadNext(selectionMode == SelectionMode.ON_THIS_DAY) &&
             !boundedSelectionFallbackActive
         val preview = if (canPreselect) {
             pick().also { reservedNext = it }?.item?.toDisplayPhoto()
@@ -1089,6 +1124,31 @@ class SlideshowEngine(
                 _ui.value.cycleTotal
             },
         )
+        // The final On This Day item can already be the committed visible photo. Compose
+        // deliberately emits no second render acknowledgement in that case, so complete
+        // the finite interlude from the durable prior acknowledgement instead of waiting
+        // for an event that cannot arrive.
+        if (reusesVisiblePresentation && OnThisDayPlaybackPolicy.shouldHoldVisibleFrame(
+                isOnThisDay = selectionMode == SelectionMode.ON_THIS_DAY,
+                terminalPhotoId = onThisDayTerminalPhotoId,
+                renderedPhotoId = lastRenderedPhotoId,
+            )
+        ) {
+            completeOnThisDayInterlude(photo)
+        }
+    }
+
+    private fun completeOnThisDayInterlude(photo: DisplayPhoto) {
+        if (onThisDayInterludeComplete) return
+        onThisDayTerminalPhotoId = null
+        onThisDayInterludeComplete = true
+        diagnostics.log(
+            DiagnosticsLog.Category.ENGINE,
+            "ON_THIS_DAY_POOL_EXHAUSTED",
+            "photoToken" to diagnosticToken(photo.stableId.ifBlank { photo.id.toString() }, "photo"),
+            "poolSize" to onThisDayIds.size.toString(),
+            "remaining" to "0",
+        )
     }
 
     /** Sleep outranks pause, which outranks normal playback (spec §9.1). */
@@ -1107,6 +1167,8 @@ class SlideshowEngine(
         val reservation: ReservedPresentation? = null,
         val scopeKey: String? = null,
         val historyPhotoIds: List<Long> = emptyList(),
+        /** True when this is the last unique item in an On This Day interlude pool. */
+        val onThisDayTerminal: Boolean = false,
     )
 
     /** Prefer a displayable primary photo; fall back to the fallback pool (spec §9.3 on_empty). */
@@ -1223,15 +1285,20 @@ class SlideshowEngine(
         }
         if (pool.isEmpty()) return null
         queue.sync(pool, shuffleMode = selectionMode == SelectionMode.SHUFFLE_NO_REPEAT, random = random)
+        if (selectionMode == SelectionMode.ON_THIS_DAY && onThisDayInterludeComplete) return null
         repeat(MAX_QUEUE_MISSES) {
             val id = queue.next(random) ?: return null
+            val onThisDayTerminal = OnThisDayPlaybackPolicy.isTerminalPick(
+                isOnThisDay = selectionMode == SelectionMode.ON_THIS_DAY,
+                remainingAfterPick = queue.remainingInCycle,
+            )
             val row = dao.byId(id)
             if (row != null && isRuntimeDisplayable(row)) {
                 _ui.value = _ui.value.copy(
                     cycleShown = queue.poolSize - queue.remainingInCycle,
                     cycleTotal = queue.poolSize,
                 )
-                return Pick(row, fromFallback)
+                return Pick(row, fromFallback, onThisDayTerminal = onThisDayTerminal)
             }
         }
         return null

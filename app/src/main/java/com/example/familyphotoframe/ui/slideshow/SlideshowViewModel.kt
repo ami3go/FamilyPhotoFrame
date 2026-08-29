@@ -36,6 +36,7 @@ import com.example.familyphotoframe.data.settings.PlaylistScheduleRule
 import com.example.familyphotoframe.domain.schedule.RescanSchedule
 import com.example.familyphotoframe.domain.schedule.SleepSchedule
 import com.example.familyphotoframe.domain.schedule.PlaylistSchedule
+import com.example.familyphotoframe.domain.schedule.PlaylistOverrideWakePolicy
 import com.example.familyphotoframe.domain.schedule.BrightnessPolicy
 import com.example.familyphotoframe.domain.schedule.OnThisDaySchedule
 import com.example.familyphotoframe.domain.onthisday.OnThisDaySelection
@@ -3856,8 +3857,19 @@ class SlideshowViewModel(
                 } else {
                     _state.update { it.copy(activePlaylistRuleName = null) }
                 }
-                val minutes = PlaylistSchedule.minutesUntilBoundary(config.scheduleRules, now)
-                delay(minutes.coerceIn(1, 15).toLong() * 60_000L)
+                val scheduleDelayMs = PlaylistSchedule.minutesUntilBoundary(config.scheduleRules, now)
+                    .coerceIn(1, 15).toLong() * 60_000L
+                // A timed manual override (notably On This Day) is also a schedule
+                // boundary. Without this, a five-minute interlude can remain active
+                // until the watcher's next fifteen-minute wake and repeatedly select
+                // its final image in the meantime.
+                delay(
+                    PlaylistOverrideWakePolicy.nextWakeDelayMs(
+                        nowEpochMs = now,
+                        scheduleDelayMs = scheduleDelayMs,
+                        overrideUntilEpochMs = config.manualOverrideUntilEpochMs,
+                    )
+                )
             }
         }
     }

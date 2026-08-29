@@ -49,3 +49,21 @@ Inspect `HEAP_SAMPLE` fields over the stable portion of each run (after the firs
 On sustained native growth at at least 120% of the process budget, the app latches `CRITICAL`,
 requests at most one GC after 30 minutes, and can schedule one controlled legacy-device restart
 after another two minutes. Native-pressure restarts are limited to once per four hours.
+
+## Phase 3B interlude check — build 26.48.1
+
+The Phase 3 log showed that an On This Day override could wake only on the normal playlist-watch
+cadence, leaving a configured five-minute interlude active for up to fifteen minutes. It also
+reselected the final memory every normal slide interval after the finite pool was exhausted.
+
+For one scheduled or manually previewed On This Day interlude, verify that:
+
+- exactly one `ON_THIS_DAY_POOL_EXHAUSTED` event is emitted after the final distinct photo is
+  visibly rendered;
+- no further `SLIDE_SELECTED selectionMode=ON_THIS_DAY` events occur before the override exits;
+- `PLAYLIST_SCHEDULE_SWITCHED` returns to the normal/default playlist at the configured override
+  expiry, rather than waiting for the normal fifteen-minute watcher cadence; and
+- normal shuffle resumes without a `RENDER_ACK_TIMEOUT` or a new SMB transfer for the held image.
+
+This is a bounded control-flow correction. It does not claim to resolve the native-PSS slope;
+run the mode matrix above before attributing that slope to decode or rendering.

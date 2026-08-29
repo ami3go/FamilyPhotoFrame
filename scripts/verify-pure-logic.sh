@@ -176,6 +176,9 @@ sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/engine/RenderAckRecoveryPolicy.kt \
   > "$PURE/RenderAckRecoveryPolicy.kt"
 sed 's/^package .*//' \
+  app/src/main/java/com/example/familyphotoframe/domain/engine/OnThisDayPlaybackPolicy.kt \
+  > "$PURE/OnThisDayPlaybackPolicy.kt"
+sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/engine/PlaybackMemoryPolicy.kt \
   > "$PURE/PlaybackMemoryPolicy.kt"
 sed 's/^package .*//' \
@@ -199,6 +202,9 @@ sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/schedule/RescanSchedule.kt > "$PURE/RescanSchedule.kt"
 sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/schedule/SleepSchedule.kt > "$PURE/SleepSchedule.kt"
+sed 's/^package .*//' \
+  app/src/main/java/com/example/familyphotoframe/domain/schedule/PlaylistOverrideWakePolicy.kt \
+  > "$PURE/PlaylistOverrideWakePolicy.kt"
 sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/schedule/BrightnessTimeline.kt > "$PURE/BrightnessTimeline.kt"
 # Platform image-format capability policy is pure and protects old frames from
