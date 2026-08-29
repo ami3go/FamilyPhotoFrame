@@ -131,7 +131,8 @@ object DiagnosticEventCatalog {
         "direction", "fallbackUsed", "slowFrameCount", "maximumFrameMs", "startLatencyMs",
         "preparedSlideCount", "activeDecodedBytes", "outgoingPresentationToken",
         "incomingPresentationToken", "transitionGeneration", "hostGeneration",
-        "cancellationInitiator",
+        "cancellationInitiator", "selectionAgeMs", "lastPresentationStage", "stageAgeMs",
+        "selectionGeneration",
     )
 
     private val sourceFields = setOf(
@@ -309,7 +310,7 @@ object DiagnosticEventCatalog {
         "PHOTO_FAVORITE_ADDED", "PHOTO_FAVORITE_REMOVED",
         "TRANSITION_LOW_PERFORMANCE_ENTERED", "TRANSITION_LOW_PERFORMANCE_EXITED",
         "ON_THIS_DAY_SKIPPED_EMPTY", "ON_THIS_DAY_TRIGGERED", "ON_THIS_DAY_POOL_EXHAUSTED",
-        "RENDER_ACK_TIMEOUT",
+        "RENDER_ACK_TIMEOUT", "PRESENTATION_STAGE",
     )
 
     private val legacySourceCodes = setOf(
@@ -350,7 +351,7 @@ object DiagnosticEventCatalog {
         "FOLDER_PRESENTED", "PRESENTATION_COMMITTED", "PRESENTATION_RELEASED",
         "PRESENTATION_PREPARED_COMMIT", "PANEL_MOTION", "COLLAGE_PRELOAD_STARTED",
         "COLLAGE_READY", "COLLAGE_RENDERED", "COLLAGE_SELECTION_EVALUATED",
-        "COLLAGE_DOWNGRADED", "COLLAGE_FALLBACK_SINGLE",
+        "COLLAGE_DOWNGRADED", "COLLAGE_FALLBACK_SINGLE", "PRESENTATION_STAGE",
     )
 
     private val errorCodes = setOf(

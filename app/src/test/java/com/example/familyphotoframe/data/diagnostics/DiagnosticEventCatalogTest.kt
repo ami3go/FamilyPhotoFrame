@@ -56,4 +56,15 @@ class DiagnosticEventCatalogTest {
         assertTrue("found" in early.permittedFields)
         assertTrue("poolSize" in early.permittedFields)
     }
+
+    @Test fun renderAcknowledgementTelemetry_preservesTimeoutAndStageFields() {
+        val timeout = DiagnosticEventCatalog.require("RENDER_ACK_TIMEOUT")
+        val stage = DiagnosticEventCatalog.require("PRESENTATION_STAGE")
+        assertEquals(DiagnosticsLog.Category.ENGINE, stage.category)
+        assertTrue("photoToken" in stage.permittedFields)
+        assertTrue("stage" in stage.permittedFields)
+        assertTrue("lastPresentationStage" in timeout.permittedFields)
+        assertTrue("selectionAgeMs" in timeout.permittedFields)
+        assertTrue("stageAgeMs" in timeout.permittedFields)
+    }
 }

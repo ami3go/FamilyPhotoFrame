@@ -5198,6 +5198,17 @@ class SlideshowViewModel(
 
     fun onPresentationStage(anchorId: Long, stage: String, active: Boolean) {
         val photo = _state.value.engine.current?.takeIf { it.id == anchorId }
+        engine.reportPresentationStage(anchorId, stage)
+        services.diagnostics.log(
+            DiagnosticsLog.Category.ENGINE,
+            "PRESENTATION_STAGE",
+            "photoToken" to diagnosticToken(
+                photo?.stableId?.ifBlank { anchorId.toString() } ?: anchorId.toString(),
+                "photo",
+            ),
+            "stage" to stage,
+            "active" to active.toString(),
+        )
         services.runtimeBreadcrumbs.record(
             operation = "PRESENTATION",
             stage = stage,

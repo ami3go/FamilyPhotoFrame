@@ -176,6 +176,9 @@ sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/engine/RenderAckRecoveryPolicy.kt \
   > "$PURE/RenderAckRecoveryPolicy.kt"
 sed 's/^package .*//' \
+  app/src/main/java/com/example/familyphotoframe/domain/engine/RenderAckTimeoutPolicy.kt \
+  > "$PURE/RenderAckTimeoutPolicy.kt"
+sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/engine/OnThisDayPlaybackPolicy.kt \
   > "$PURE/OnThisDayPlaybackPolicy.kt"
 sed 's/^package .*//' \

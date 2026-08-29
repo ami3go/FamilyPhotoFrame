@@ -67,3 +67,22 @@ For one scheduled or manually previewed On This Day interlude, verify that:
 
 This is a bounded control-flow correction. It does not claim to resolve the native-PSS slope;
 run the mode matrix above before attributing that slope to decode or rendering.
+
+## Phase 3C render-ack trace — build 26.49.1
+
+Phase 3B HIL evidence retained two general `RENDER_ACK_TIMEOUT` events, but did not record how
+far each selected slide reached in the Compose preparation and transition handoff. Phase 3C keeps
+the existing 30-second recovery unchanged and records a bounded `PRESENTATION_STAGE` trail for the
+selected photo.
+
+For each timeout, inspect `reason`, `lastPresentationStage`, `selectionAgeMs`, and `stageAgeMs`,
+then join `PRESENTATION_STAGE` events using `photoToken`:
+
+- `PREPARATION_NOT_STARTED`: the UI never began preparation.
+- `PREPARATION_STALLED`: preparation began but never produced a prepared slide.
+- `TRANSITION_NOT_STARTED`: preparation/commit finished but the renderer never began it.
+- `TRANSITION_STALLED`: a transition started but did not complete.
+- `PRESENTATION_ABORTED`: cancellation or stale/rejected work ended the handoff.
+
+No timeout-policy or slideshow-advance behavior changes are included in this build; this trace is
+the evidence gate for the next behavioral correction.

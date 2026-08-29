@@ -26,6 +26,7 @@ fun main() {
     runRecoveryPolicyChecks()
     runHostLifecycleGateChecks()
     runRenderAckRecoveryChecks()
+    runRenderAckPhase3CChecks()
     runOnThisDayPhase3BChecks()
     runPlaybackMemoryPolicyChecks()
     runDecodeColorPolicyChecks()

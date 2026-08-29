@@ -175,6 +175,9 @@ class SlideshowEngine(
     private var failedCurrentId: Long? = null
     /** Last photo confirmed visible by the UI, retained across an identical re-selection. */
     private var lastRenderedPhotoId: Long? = null
+    /** Bounded hand-off trace for the currently awaited render acknowledgement. */
+    private var renderAckTrace = RenderAckTrace()
+    private var renderAckGeneration = 0L
 
     /** Playback-pool reuse; see [CachedPool]. Turning it off re-queries on every advance. */
     fun setCachePlaybackPool(enabled: Boolean) {
@@ -557,6 +560,7 @@ class SlideshowEngine(
             if (current.id != anchorId || renderedCurrentId == anchorId || failedCurrentId == anchorId) return@launch
             renderedCurrentId = anchorId
             lastRenderedPhotoId = anchorId
+            renderAckTrace = renderAckTrace.update(anchorId, "RENDERED")
 
             val ids = (listOf(anchorId) + memberIds).distinct()
             val now = System.currentTimeMillis()
@@ -596,6 +600,21 @@ class SlideshowEngine(
         }
     }
 
+    /**
+     * Records the last UI hand-off stage for the selected photo. Stale callbacks are
+     * ignored, so a cancelled composition cannot overwrite the next selection's timeout
+     * evidence.
+     */
+    fun reportPresentationStage(anchorId: Long, stage: String) {
+        loopScope?.launch {
+            val current = _ui.value.current ?: return@launch
+            if (current.id != anchorId || renderedCurrentId == anchorId || failedCurrentId == anchorId) {
+                return@launch
+            }
+            renderAckTrace = renderAckTrace.update(anchorId, safeDiagnosticCode(stage))
+        }
+    }
+
     fun reportDecodeFailure(failure: DecodeFailure) {
         // A painter can recompose and emit the same terminal state more than once. Accept
         // only the first failure for the currently selected presentation.
@@ -607,6 +626,7 @@ class SlideshowEngine(
             ) return@launch
 
             failedCurrentId = failure.photoId
+            renderAckTrace = renderAckTrace.update(failure.photoId, "PREPARE_FAILED")
             if (onThisDayTerminalPhotoId == failure.photoId) {
                 // A terminal item that fails is not a successful completion. Let the
                 // normal failure path advance and select another eligible item instead
@@ -738,10 +758,18 @@ class SlideshowEngine(
                     val cmd = withTimeoutOrNull(RENDER_ACK_TIMEOUT_MS) { commands.receive() }
                     if (cmd == null) {
                         _ui.value.current?.let {
+                            val trace = renderAckTrace.forPhoto(it.id)
                             diagnostics.log(
                                 DiagnosticsLog.Category.ENGINE,
                                 "RENDER_ACK_TIMEOUT",
                                 "photoToken" to diagnosticToken(it.stableId.ifBlank { it.id.toString() }, "photo"),
+                                "reason" to RenderAckTimeoutPolicy.reasonFor(trace.lastStage),
+                                "lastPresentationStage" to trace.lastStage,
+                                "selectionAgeMs" to trace.selectionAgeMs().toString(),
+                                "stageAgeMs" to trace.stageAgeMs().toString(),
+                                "selectionGeneration" to trace.generation.toString(),
+                                "selectionMode" to selectionMode.name,
+                                "active" to hostActive.toString(),
                             )
                         }
                         onRenderAckTimeout()
@@ -1069,6 +1097,7 @@ class SlideshowEngine(
         // preserve the known-visible acknowledgement and begin a fresh dwell interval.
         renderedCurrentId = photo.id.takeIf { reusesVisiblePresentation }
         failedCurrentId = null
+        renderAckTrace = RenderAckTrace.selected(photo.id, ++renderAckGeneration)
         onThisDayTerminalPhotoId = photo.id.takeIf {
             selectionMode == SelectionMode.ON_THIS_DAY && pick.onThisDayTerminal
         }
@@ -1160,6 +1189,42 @@ class SlideshowEngine(
 
     private fun playingState(): EngineState =
         if (playingFallback) EngineState.PLAYING_FALLBACK else EngineState.PLAYING_PRIMARY
+
+    /** Tiny monotonic trace; it deliberately retains no image, path, or bitmap object. */
+    private data class RenderAckTrace(
+        val photoId: Long? = null,
+        val generation: Long = 0L,
+        val selectedAtElapsedMs: Long = 0L,
+        val lastStage: String = RenderAckTimeoutPolicy.SELECTED,
+        val stageAtElapsedMs: Long = 0L,
+    ) {
+        fun update(anchorId: Long, stage: String, now: Long = elapsedNowMs()): RenderAckTrace =
+            if (photoId == anchorId) copy(lastStage = stage, stageAtElapsedMs = now) else this
+
+        fun forPhoto(anchorId: Long): RenderAckTrace =
+            takeIf { photoId == anchorId } ?: RenderAckTrace(
+                photoId = anchorId,
+                lastStage = "UNKNOWN",
+            )
+
+        fun selectionAgeMs(now: Long = elapsedNowMs()): Long =
+            (now - selectedAtElapsedMs).coerceAtLeast(0L)
+
+        fun stageAgeMs(now: Long = elapsedNowMs()): Long =
+            (now - stageAtElapsedMs).coerceAtLeast(0L)
+
+        companion object {
+            fun selected(photoId: Long, generation: Long, now: Long = elapsedNowMs()): RenderAckTrace =
+                RenderAckTrace(
+                    photoId = photoId,
+                    generation = generation,
+                    selectedAtElapsedMs = now,
+                    stageAtElapsedMs = now,
+                )
+
+            private fun elapsedNowMs(): Long = System.nanoTime() / 1_000_000L
+        }
+    }
 
     private data class Pick(
         val item: PhotoItemEntity,
