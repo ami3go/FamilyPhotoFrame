@@ -196,7 +196,9 @@ fun SlideshowScreen(
             is Surface.Playing -> PlayingContent(
                 state = state,
                 imageLoader = imageLoader,
-                resolveModel = vm::resolveModel,
+                resolveModel = { photo, onPreparationSubstage ->
+                    vm.resolveModel(photo, onPreparationSubstage)
+                },
                 loadCollageCandidates = vm::portraitCollageCandidates,
                 probeRemoteDimensions = vm::probeRemoteCollageDimensions,
                 onDecodeFailure = vm::onDecodeFailure,
@@ -206,6 +208,7 @@ fun SlideshowScreen(
                 onTransitionEvent = vm::onTransitionEvent,
                 onPresentationStage = vm::onPresentationStage,
                 onPreparationSubstage = vm::onPreparationSubstage,
+                onPreparationCancelled = vm::onPreparationCancelled,
                 onPreparationWatchdogTimeout = vm::onPreparationWatchdogTimeout,
                 onPrepared = vm::onPrepared,
                 onRendered = vm::onRendered,
@@ -370,7 +373,7 @@ fun SlideshowScreen(
 private fun PlayingContent(
     state: SlideshowUiState,
     imageLoader: ImageLoader,
-    resolveModel: suspend (DisplayPhoto) -> PhotoModelResolution,
+    resolveModel: suspend (DisplayPhoto, (String) -> Unit) -> PhotoModelResolution,
     loadCollageCandidates: suspend (DisplayPhoto, Int) -> List<DisplayPhoto>,
     probeRemoteDimensions: suspend (DisplayPhoto) -> Pair<Int, Int>?,
     onDecodeFailure: (DecodeFailure) -> Unit,
@@ -389,6 +392,7 @@ private fun PlayingContent(
     onTransitionEvent: (TransitionEvent) -> Unit,
     onPresentationStage: (Long, String, Boolean) -> Unit,
     onPreparationSubstage: (Long, String) -> Unit,
+    onPreparationCancelled: (Long) -> Unit,
     onPreparationWatchdogTimeout: (Long) -> Unit,
     onPrepared: suspend (Long, List<Long>, String?) -> Boolean,
     onRendered: (Long, List<Long>, List<String?>, String?) -> Unit,
@@ -715,7 +719,12 @@ private fun PlayingContent(
             onPresentationStage(photo.id, "PREPARED", true)
             publishBitmapInventory()
         } catch (cancelled: CancellationException) {
-            onPresentationStage(photo.id, "PREPARE_CANCELLED", false)
+            // A configuration/dimension change can cancel this effect while the engine
+            // still awaits the same selected photo.  Report the cancellation through its
+            // dedicated recovery path so it advances immediately instead of waiting for
+            // the 30-second render-ack fallback.  Stale cancellations are rejected by
+            // the engine after a newer selection has replaced this photo.
+            onPreparationCancelled(photo.id)
             throw cancelled
         } finally {
             // Cancellation can occur while onPrepared suspends. No snapshot handle owns a

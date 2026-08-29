@@ -2599,7 +2599,10 @@ class SlideshowViewModel(
      * verified local file, so Coil never sees a network URL or NAS-relative token.
      * Returns either a ready model or a structured failure; the UI records the failure and advances.
      */
-    suspend fun resolveModel(display: DisplayPhoto): PhotoModelResolution {
+    suspend fun resolveModel(
+        display: DisplayPhoto,
+        onPreparationSubstage: (String) -> Unit = {},
+    ): PhotoModelResolution {
         val extension = ImageFormatSupport.extension(display.fileName)
         if (!ImageFormatSupport.isPlatformDecodable(
                 display.fileName, display.mimeType, Build.VERSION.SDK_INT,
@@ -2636,8 +2639,15 @@ class SlideshowViewModel(
             fileModifiedEpochMs = display.fileModifiedEpochMs,
             openToken = display.openToken,
         )
+        // Do not persist these routine markers.  The selected presentation's bounded
+        // in-memory trace retains the last one, so a watchdog event can distinguish a
+        // cache lock, stream open, transfer, verification, or commit without rotating
+        // the diagnostic bundle during a normal soak.
+        val onMediaCacheStage: (MediaCache.ResolveStage) -> Unit = { stage ->
+            onPreparationSubstage("MEDIA_CACHE_${stage.name}")
+        }
         val cacheResult = if (remotePrimaryCachedOnly && display.sourceId == remotePrimarySourceId) {
-            services.mediaCache.resolveIfCached(item)
+            services.mediaCache.resolveIfCached(item, onMediaCacheStage)
         } else {
             val src = remoteSources.active(display.sourceId)
                 ?: return PhotoModelResolution.Failed(
@@ -2654,7 +2664,7 @@ class SlideshowViewModel(
                 _state.value.engine.current?.stableId,
                 _state.value.engine.next?.stableId,
             ).filter { it.isNotEmpty() }.toSet()
-            services.mediaCache.resolve(item, src, protectedKeys)
+            services.mediaCache.resolve(item, src, protectedKeys, onMediaCacheStage)
         }
 
         return when (cacheResult) {
@@ -5213,6 +5223,24 @@ class SlideshowViewModel(
 
     fun onPreparationSubstage(anchorId: Long, substage: String) {
         engine.reportPreparationSubstage(anchorId, substage)
+    }
+
+    /**
+     * A selected preparation can be cancelled by a display configuration change while
+     * the engine still waits for its acknowledgement.  This is a recoverable UI hand-off
+     * abort, not a decode failure: keep the current file eligible and let the engine pick
+     * the next presentation immediately.
+     */
+    fun onPreparationCancelled(anchorId: Long) {
+        val photo = _state.value.engine.current?.takeIf { it.id == anchorId }
+        engine.reportPreparationCancelled(anchorId)
+        services.runtimeBreadcrumbs.record(
+            operation = "PRESENTATION",
+            stage = "PREPARE_CANCELLED",
+            active = false,
+            presentationToken = diagnosticToken(anchorId.toString(), "presentation"),
+            sourceKind = photo?.sourceId?.let(::diagnosticSourceKind) ?: "NONE",
+        )
     }
 
     fun onPreparationWatchdogTimeout(anchorId: Long) {

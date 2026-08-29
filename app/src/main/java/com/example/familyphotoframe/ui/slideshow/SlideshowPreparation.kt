@@ -263,9 +263,10 @@ private fun decodeFailure(
 
 private suspend fun resolvePhoto(
     photo: DisplayPhoto,
-    resolveModel: suspend (DisplayPhoto) -> PhotoModelResolution,
+    resolveModel: suspend (DisplayPhoto, (String) -> Unit) -> PhotoModelResolution,
+    onPreparationSubstage: (String) -> Unit,
 ): ResolvePhotoResult = try {
-    when (val resolution = resolveModel(photo)) {
+    when (val resolution = resolveModel(photo, onPreparationSubstage)) {
         is PhotoModelResolution.Ready -> ResolvePhotoResult.Ready(
             ResolvedPhoto(photo, resolution.model, resolution.localThumbnailCacheEligible)
         )
@@ -441,7 +442,7 @@ internal suspend fun prepareSlide(
     context: android.content.Context,
     photo: DisplayPhoto,
     imageLoader: ImageLoader,
-    resolveModel: suspend (DisplayPhoto) -> PhotoModelResolution,
+    resolveModel: suspend (DisplayPhoto, (String) -> Unit) -> PhotoModelResolution,
     loadCollageCandidates: suspend (DisplayPhoto, Int) -> List<DisplayPhoto>,
     probeRemoteDimensions: suspend (DisplayPhoto) -> Pair<Int, Int>?,
     collageMode: PortraitCollageMode,
@@ -587,7 +588,11 @@ internal suspend fun prepareSlide(
         }
 
         onPreparationSubstage("MODEL_RESOLUTION")
-        val resolvedAnchor = when (val resolved = resolvePhoto(photo, resolveModel)) {
+        val resolvedAnchor = when (val resolved = resolvePhoto(
+            photo,
+            resolveModel,
+            onPreparationSubstage,
+        )) {
             is ResolvePhotoResult.Ready -> resolved.photo
             is ResolvePhotoResult.Failed -> return PrepareSlideResult.Failed(resolved.failure)
         }
@@ -720,7 +725,11 @@ internal suspend fun prepareSlide(
                 }
                 CollageCandidateInspectionAction.PROBE_LOCAL -> localProbeCount++
             }
-            val resolved = when (val result = resolvePhoto(candidate, resolveModel)) {
+            val resolved = when (val result = resolvePhoto(
+                candidate,
+                resolveModel,
+                onPreparationSubstage,
+            )) {
                 is ResolvePhotoResult.Ready -> result.photo
                 is ResolvePhotoResult.Failed -> {
                     onCollageCandidateFailure(result.failure)
@@ -900,7 +909,11 @@ internal suspend fun prepareSlide(
 
             for (id in decodeOrder) {
                 val inspected = inspectedById[id] ?: continue
-                val resolved = inspected.resolved ?: when (val model = resolvePhoto(inspected.photo, resolveModel)) {
+                val resolved = inspected.resolved ?: when (val model = resolvePhoto(
+                    inspected.photo,
+                    resolveModel,
+                    onPreparationSubstage,
+                )) {
                     is ResolvePhotoResult.Ready -> model.photo
                     is ResolvePhotoResult.Failed -> {
                         if (id == photo.id) return PrepareSlideResult.Failed(model.failure)

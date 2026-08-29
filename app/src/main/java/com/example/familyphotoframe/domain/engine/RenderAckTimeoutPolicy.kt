@@ -23,6 +23,17 @@ internal object RenderAckTimeoutPolicy {
         else -> false
     }
 
+    /**
+     * A Compose preparation can be cancelled by a display-configuration recreation while
+     * its selected photo is still current.  It is neither a decode error nor a terminal
+     * render state, so the engine should advance immediately rather than wait for the
+     * broader render-ack timeout.
+     */
+    fun shouldRecoverCancelledPreparation(lastStage: String?): Boolean = when (lastStage) {
+        "RENDERED", "PREPARE_FAILED", "NATIVE_HIL_INSTANT_COMMIT" -> false
+        else -> true
+    }
+
     fun reasonFor(lastStage: String?): String = when (lastStage) {
         null, SELECTED -> "PREPARATION_NOT_STARTED"
         "PREPARE_STARTED" -> "PREPARATION_STALLED"

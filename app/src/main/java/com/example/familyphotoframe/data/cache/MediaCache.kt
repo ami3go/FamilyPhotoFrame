@@ -76,6 +76,27 @@ class MediaCache(
         UNKNOWN,
     }
 
+    /**
+     * Fine-grained progress markers for a single cache resolution.
+     *
+     * The slideshow keeps these only in its bounded per-presentation trace.  They are
+     * deliberately callbacks instead of durable events: ordinary cache traffic must not
+     * rotate a diagnostic bundle, while a watchdog timeout still needs to identify the
+     * blocking boundary that was reached last.
+     */
+    enum class ResolveStage {
+        RECONCILIATION_LOCK_WAIT,
+        RECONCILIATION,
+        KEY_LOCK_WAIT,
+        CACHE_LOOKUP,
+        TRANSFER_SLOT_WAIT,
+        STREAM_OPEN,
+        TRANSFER_COPY,
+        VERIFY_DECODE,
+        CACHE_COMMIT,
+        EVICTION,
+    }
+
     sealed interface ResolveResult {
         data class Ready(val file: File, val cacheHit: Boolean) : ResolveResult
         data class Failed(
@@ -112,11 +133,13 @@ class MediaCache(
         item: PhotoItem,
         source: PhotoSource,
         protectedKeys: Set<String>,
+        onStage: (ResolveStage) -> Unit = {},
     ): ResolveResult = withContext(io) {
         val key = keyFor(item)
         try {
-            ensureReconciled()
-            withKeyLock(key) {
+            ensureReconciled(onStage)
+            withKeyLock(key, onWait = { onStage(ResolveStage.KEY_LOCK_WAIT) }) {
+                onStage(ResolveStage.CACHE_LOOKUP)
                 val cached = maintenanceLock.withLock {
                     val existing = dao.get(key)
                     if (existing != null) {
@@ -135,12 +158,14 @@ class MediaCache(
                 }
                 if (cached != null) return@withKeyLock cached
                 val generation = cacheGeneration.get()
+                onStage(ResolveStage.TRANSFER_SLOT_WAIT)
                 when (val downloaded = transferSlots.withPermit {
                     resourceTracker.startMediaTransfer().use {
-                        download(item, source, key, generation)
+                        download(item, source, key, generation, onStage)
                     }
                 }) {
                     is ResolveResult.Ready -> {
+                        onStage(ResolveStage.EVICTION)
                         evictIfNeeded(protectedKeys + key)
                         downloaded
                     }
@@ -166,11 +191,15 @@ class MediaCache(
      * stall the slideshow for a timeout per photo. A missing or unreadable entry is
      * cleaned up here so the index cannot keep advertising a file that is gone.
      */
-    suspend fun resolveIfCached(item: PhotoItem): ResolveResult = withContext(io) {
+    suspend fun resolveIfCached(
+        item: PhotoItem,
+        onStage: (ResolveStage) -> Unit = {},
+    ): ResolveResult = withContext(io) {
         val key = keyFor(item)
         try {
-            ensureReconciled()
-            withKeyLock(key) {
+            ensureReconciled(onStage)
+            withKeyLock(key, onWait = { onStage(ResolveStage.KEY_LOCK_WAIT) }) {
+                onStage(ResolveStage.CACHE_LOOKUP)
                 maintenanceLock.withLock {
                     val existing = dao.get(key)
                         ?: return@withLock ResolveResult.Failed(FailureStage.CACHE_LOOKUP)
@@ -196,12 +225,17 @@ class MediaCache(
         (resolveIfCached(item) as? ResolveResult.Ready)?.file
 
     /** One producer per stable cache key; waiters re-check the committed entry. */
-    private suspend fun <T> withKeyLock(key: String, block: suspend () -> T): T {
+    private suspend fun <T> withKeyLock(
+        key: String,
+        onWait: () -> Unit = {},
+        block: suspend () -> T,
+    ): T {
         val holder = synchronized(keyLocksGuard) {
             keyLocks.getOrPut(key, ::KeyLock).also { it.users++ }
         }
         var locked = false
         return try {
+            onWait()
             holder.mutex.lock()
             locked = true
             block()
@@ -229,6 +263,7 @@ class MediaCache(
         source: PhotoSource,
         key: String,
         generation: Long,
+        onStage: (ResolveStage) -> Unit,
     ): ResolveResult {
         val target = File(dir, key)
         // Unique per call so concurrent downloads of the same key (e.g. current photo also
@@ -242,6 +277,7 @@ class MediaCache(
                 throw CacheStorageReserveException(RESERVED_FREE_BYTES)
             }
             withTimeout(TOTAL_TRANSFER_TIMEOUT_MS) {
+                onStage(ResolveStage.STREAM_OPEN)
                 source.openStream(
                     item,
                     OpenOptions(
@@ -250,6 +286,7 @@ class MediaCache(
                     ),
                 ).use { input ->
                     stage = FailureStage.SOURCE_READ
+                    onStage(ResolveStage.TRANSFER_COPY)
                     FileOutputStream(tmp).use { out ->
                         input.copyToCancellable(
                             output = out,
@@ -262,11 +299,13 @@ class MediaCache(
                 }
             }
             stage = FailureStage.VERIFY_DECODE
+            onStage(ResolveStage.VERIFY_DECODE)
             if (!decodes(tmp)) {
                 tmp.delete()
                 return ResolveResult.Failed(FailureStage.VERIFY_DECODE)
             }
             stage = FailureStage.CACHE_COMMIT
+            onStage(ResolveStage.CACHE_COMMIT)
             maintenanceLock.withLock {
                 if (cacheGeneration.get() != generation) {
                     throw java.io.IOException("cache_cleared_during_transfer")
@@ -345,10 +384,12 @@ class MediaCache(
     }
 
     /** Removes crash leftovers and stale DB rows before the first cache operation. */
-    private suspend fun ensureReconciled() {
+    private suspend fun ensureReconciled(onStage: (ResolveStage) -> Unit = {}) {
         if (reconciled) return
+        onStage(ResolveStage.RECONCILIATION_LOCK_WAIT)
         reconcileLock.withLock {
             if (reconciled) return
+            onStage(ResolveStage.RECONCILIATION)
             maintenanceLock.withLock {
                 var afterKey = ""
                 while (true) {

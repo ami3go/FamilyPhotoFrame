@@ -27,6 +27,13 @@ class RenderAckTimeoutPolicyTest {
         assertEquals(false, RenderAckTimeoutPolicy.shouldRecoverPreparation("TRANSITION_STARTED"))
     }
 
+    @Test fun currentPreparationCancellation_recoversWithoutTreatingThePhotoAsFailed() {
+        assertEquals(true, RenderAckTimeoutPolicy.shouldRecoverCancelledPreparation("PREPARE_STARTED"))
+        assertEquals(true, RenderAckTimeoutPolicy.shouldRecoverCancelledPreparation("PREPARED"))
+        assertEquals(false, RenderAckTimeoutPolicy.shouldRecoverCancelledPreparation("RENDERED"))
+        assertEquals(false, RenderAckTimeoutPolicy.shouldRecoverCancelledPreparation("PREPARE_FAILED"))
+    }
+
     @Test fun terminalStagesExplainWhyTheAcknowledgementWasNeverDelivered() {
         assertEquals("FAILURE_NOT_DELIVERED", RenderAckTimeoutPolicy.reasonFor("PREPARE_FAILED"))
         assertEquals("PRESENTATION_ABORTED", RenderAckTimeoutPolicy.reasonFor("TRANSITION_CANCELLED"))

@@ -173,6 +173,8 @@ class SlideshowEngine(
     /** One terminal render outcome is accepted per selected current photo. */
     private var renderedCurrentId: Long? = null
     private var failedCurrentId: Long? = null
+    /** Prevent duplicate UI cancellation callbacks from skipping more than one slide. */
+    private var cancellationRecoveryCurrentId: Long? = null
     /** Last photo confirmed visible by the UI, retained across an identical re-selection. */
     private var lastRenderedPhotoId: Long? = null
     /** Bounded hand-off trace for the currently awaited render acknowledgement. */
@@ -612,6 +614,42 @@ class SlideshowEngine(
                 return@launch
             }
             renderAckTrace = renderAckTrace.update(anchorId, safeDiagnosticCode(stage))
+        }
+    }
+
+    /**
+     * Recover a current selected preparation that Compose cancelled during a display
+     * recreation.  The cancellation is intentionally not passed to [reportDecodeFailure]:
+     * the file may be perfectly healthy, and a later selection may prepare it normally.
+     */
+    fun reportPreparationCancelled(anchorId: Long) {
+        loopScope?.launch {
+            val current = _ui.value.current ?: return@launch
+            if (current.id != anchorId || renderedCurrentId == anchorId || failedCurrentId == anchorId ||
+                cancellationRecoveryCurrentId == anchorId || _ui.value.paused || asleep ||
+                !hostActive || surfaceObscured
+            ) return@launch
+            val trace = renderAckTrace.forPhoto(anchorId)
+            if (!RenderAckTimeoutPolicy.shouldRecoverCancelledPreparation(trace.lastStage)) return@launch
+
+            cancellationRecoveryCurrentId = anchorId
+            renderAckTrace = trace.update(anchorId, "PREPARE_CANCELLED")
+            diagnostics.log(
+                DiagnosticsLog.Category.ENGINE,
+                "PREPARATION_CANCELLED_RECOVERED",
+                "photoToken" to diagnosticToken(current.stableId.ifBlank { current.id.toString() }, "photo"),
+                "reason" to "CURRENT_PREPARATION_CANCELLED",
+                "lastPresentationStage" to trace.lastStage,
+                "preparationSubstage" to trace.preparationSubstage,
+                "selectionAgeMs" to trace.selectionAgeMs().toString(),
+                "stageAgeMs" to trace.stageAgeMs().toString(),
+                "preparationSubstageAgeMs" to trace.preparationSubstageAgeMs().toString(),
+                "selectionGeneration" to trace.generation.toString(),
+                "selectionMode" to selectionMode.name,
+                "cancellationInitiator" to "UI_PREPARATION_CANCELLED",
+                "active" to hostActive.toString(),
+            )
+            commands.trySend(Command.Next)
         }
     }
 
@@ -1154,6 +1192,7 @@ class SlideshowEngine(
         // preserve the known-visible acknowledgement and begin a fresh dwell interval.
         renderedCurrentId = photo.id.takeIf { reusesVisiblePresentation }
         failedCurrentId = null
+        cancellationRecoveryCurrentId = null
         renderAckTrace = RenderAckTrace.selected(photo.id, ++renderAckGeneration)
         onThisDayTerminalPhotoId = photo.id.takeIf {
             selectionMode == SelectionMode.ON_THIS_DAY && pick.onThisDayTerminal
