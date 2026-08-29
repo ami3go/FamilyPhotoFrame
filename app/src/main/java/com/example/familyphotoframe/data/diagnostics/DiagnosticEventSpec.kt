@@ -132,7 +132,8 @@ object DiagnosticEventCatalog {
         "preparedSlideCount", "activeDecodedBytes", "outgoingPresentationToken",
         "incomingPresentationToken", "transitionGeneration", "hostGeneration",
         "cancellationInitiator", "selectionAgeMs", "lastPresentationStage", "stageAgeMs",
-        "selectionGeneration",
+        "selectionGeneration", "preparationSubstage", "preparationSubstageAgeMs",
+        "watchdogTimeoutMs",
     )
 
     private val sourceFields = setOf(
@@ -310,7 +311,7 @@ object DiagnosticEventCatalog {
         "PHOTO_FAVORITE_ADDED", "PHOTO_FAVORITE_REMOVED",
         "TRANSITION_LOW_PERFORMANCE_ENTERED", "TRANSITION_LOW_PERFORMANCE_EXITED",
         "ON_THIS_DAY_SKIPPED_EMPTY", "ON_THIS_DAY_TRIGGERED", "ON_THIS_DAY_POOL_EXHAUSTED",
-        "RENDER_ACK_TIMEOUT", "PRESENTATION_STAGE",
+        "RENDER_ACK_TIMEOUT", "PREPARATION_WATCHDOG_TIMEOUT", "PRESENTATION_STAGE",
     )
 
     private val legacySourceCodes = setOf(
@@ -375,6 +376,7 @@ object DiagnosticEventCatalog {
         "SOURCE_UNAVAILABLE", "SOURCE_BACKOFF", "SOURCE_BACKOFF_EXHAUSTED",
         "SYNOLOGY_UNAVAILABLE", "WEBDAV_UNAVAILABLE", "SMB_UNAVAILABLE",
         "SOURCE_RECOVERY_PROMOTION_ABORTED", "TRANSITION_PERFORMANCE_WARNING",
+        "PREPARATION_WATCHDOG_TIMEOUT",
         "WEB_CONNECTION_REJECTED", "MEMORY_PROCESS_RESTART_SCHEDULED",
         "MEMORY_PROCESS_RESTART_SUPPRESSED",
     )

@@ -205,6 +205,8 @@ fun SlideshowScreen(
                 onRecoverableOom = vm::onRecoverablePresentationOom,
                 onTransitionEvent = vm::onTransitionEvent,
                 onPresentationStage = vm::onPresentationStage,
+                onPreparationSubstage = vm::onPreparationSubstage,
+                onPreparationWatchdogTimeout = vm::onPreparationWatchdogTimeout,
                 onPrepared = vm::onPrepared,
                 onRendered = vm::onRendered,
                 previewCaptureRequest = webPreviewCaptureRequest,
@@ -386,6 +388,8 @@ private fun PlayingContent(
     onRecoverableOom: (DisplayPhoto, String) -> Unit,
     onTransitionEvent: (TransitionEvent) -> Unit,
     onPresentationStage: (Long, String, Boolean) -> Unit,
+    onPreparationSubstage: (Long, String) -> Unit,
+    onPreparationWatchdogTimeout: (Long) -> Unit,
     onPrepared: suspend (Long, List<Long>, String?) -> Boolean,
     onRendered: (Long, List<Long>, List<String?>, String?) -> Unit,
     previewCaptureRequest: WebPreviewCaptureRequest?,
@@ -518,7 +522,11 @@ private fun PlayingContent(
 
     // Serialize current/next preparation. This prevents startup races from selecting the
     // same collage companions while still giving the full dwell interval to prepare next.
-    suspend fun build(photo: DisplayPhoto, fastManual: Boolean = false): PrepareSlideResult {
+    suspend fun build(
+        photo: DisplayPhoto,
+        fastManual: Boolean = false,
+        onPreparationSubstage: ((String) -> Unit)? = null,
+    ): PrepareSlideResult {
         suspend fun prepare(): PrepareSlideResult {
         // Two independent scales: a static one that keeps a small-memory frame from ever
         // decoding more pixels than it can see the point of, and the guard's reactive one
@@ -588,13 +596,22 @@ private fun PlayingContent(
                 onCollageCandidateFailure(failure)
             },
             onCollageEvent = onCollageEvent,
+            onPreparationSubstage = { stage -> onPreparationSubstage?.invoke(stage) },
         )
         }
 
         // A manual skip has higher priority than speculative collage preload.
         // Use a single-anchor decode when no prepared target exists instead of
         // queueing behind remote collage probes and companion decodes.
-        return if (fastManual) prepare() else preparationMutex.withLock { prepare() }
+        if (fastManual) {
+            onPreparationSubstage?.invoke("PREPARATION_ENTERED")
+            return prepare()
+        }
+        onPreparationSubstage?.invoke("PREPARATION_MUTEX_WAIT")
+        return preparationMutex.withLock {
+            onPreparationSubstage?.invoke("PREPARATION_ENTERED")
+            prepare()
+        }
     }
 
     // A complete presentation becomes a candidate, but does not replace the currently
@@ -630,7 +647,11 @@ private fun PlayingContent(
                     (fastManual && slide(handle) != null) ||
                     slide(handle)?.let { !softFocusNeeded || it.transitionBlurredBitmap != null } == true
             }
-            val handle = existingHandle ?: when (val result = build(photo, fastManual = fastManual)) {
+            val handle = existingHandle ?: when (val result = build(
+                photo,
+                fastManual = fastManual,
+                onPreparationSubstage = { stage -> onPreparationSubstage(photo.id, stage) },
+            )) {
                 is PrepareSlideResult.Ready -> {
                     // Some Android 5/network decode calls are not cooperatively cancellable.
                     // Revalidate after the blocking boundary before admitting their bitmap
@@ -704,10 +725,23 @@ private fun PlayingContent(
         }
     }
 
+    // A selected slide must not wait for the engine's broader render-ack timeout merely
+    // because preparation is wedged.  The engine verifies that this photo is still current
+    // and still pre-render before advancing, so a late effect cannot skip a newer slide.
+    LaunchedEffect(selected?.id, hostActive, hostGeneration) {
+        val photo = selected ?: return@LaunchedEffect
+        if (!hostActive || hostPlaybackToken() == null) return@LaunchedEffect
+        delay(com.example.familyphotoframe.domain.engine.RenderAckTimeoutPolicy.PREPARATION_WATCHDOG_TIMEOUT_MS)
+        onPreparationWatchdogTimeout(photo.id)
+    }
+
     // Prepare the following presentation immediately and keep the committed slide visible
-    // until all single/collage members have decoded successfully.
+    // until all single/collage members have decoded successfully.  Key this work to the
+    // selected anchor too: when a new current slide is chosen, an older speculative preload
+    // is cancelled before it can keep the shared preparation mutex ahead of the visible work.
     LaunchedEffect(
         next?.id,
+        selected?.id,
         targetW,
         targetH,
         state.portraitCollage,

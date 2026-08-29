@@ -615,6 +615,61 @@ class SlideshowEngine(
         }
     }
 
+    /**
+     * Records the fine-grained preparation boundary without treating it as a renderer
+     * stage.  The trace is intentionally in-memory only; routine stage events used to
+     * rotate the bulk diagnostic stream before a failure could be captured.
+     */
+    fun reportPreparationSubstage(anchorId: Long, substage: String) {
+        loopScope?.launch {
+            val current = _ui.value.current ?: return@launch
+            if (current.id != anchorId || renderedCurrentId == anchorId || failedCurrentId == anchorId) {
+                return@launch
+            }
+            renderAckTrace = renderAckTrace.updatePreparation(
+                anchorId,
+                safeDiagnosticCode(substage),
+            )
+        }
+    }
+
+    /**
+     * The UI watchdog is deliberately narrower than [RENDER_ACK_TIMEOUT_MS]: it only
+     * recovers a selection that has not left preparation.  A superseded Compose effect is
+     * cancelled by the new selection; late bitmap results are already retired by the UI
+     * hand-off guards.
+     */
+    fun reportPreparationWatchdogTimeout(anchorId: Long) {
+        loopScope?.launch {
+            val current = _ui.value.current ?: return@launch
+            if (current.id != anchorId || renderedCurrentId == anchorId || failedCurrentId == anchorId ||
+                _ui.value.paused || asleep || !hostActive || surfaceObscured
+            ) return@launch
+            val trace = renderAckTrace.forPhoto(anchorId)
+            if (!RenderAckTimeoutPolicy.shouldRecoverPreparation(
+                    trace.lastStage,
+                    trace.preparationSubstage,
+                )
+            ) return@launch
+            diagnostics.log(
+                DiagnosticsLog.Category.ENGINE,
+                "PREPARATION_WATCHDOG_TIMEOUT",
+                "photoToken" to diagnosticToken(current.stableId.ifBlank { current.id.toString() }, "photo"),
+                "reason" to RenderAckTimeoutPolicy.reasonFor(trace.lastStage),
+                "lastPresentationStage" to trace.lastStage,
+                "preparationSubstage" to trace.preparationSubstage,
+                "selectionAgeMs" to trace.selectionAgeMs().toString(),
+                "stageAgeMs" to trace.stageAgeMs().toString(),
+                "preparationSubstageAgeMs" to trace.preparationSubstageAgeMs().toString(),
+                "watchdogTimeoutMs" to RenderAckTimeoutPolicy.PREPARATION_WATCHDOG_TIMEOUT_MS.toString(),
+                "selectionGeneration" to trace.generation.toString(),
+                "selectionMode" to selectionMode.name,
+                "active" to hostActive.toString(),
+            )
+            commands.trySend(Command.Next)
+        }
+    }
+
     fun reportDecodeFailure(failure: DecodeFailure) {
         // A painter can recompose and emit the same terminal state more than once. Accept
         // only the first failure for the currently selected presentation.
@@ -765,8 +820,10 @@ class SlideshowEngine(
                                 "photoToken" to diagnosticToken(it.stableId.ifBlank { it.id.toString() }, "photo"),
                                 "reason" to RenderAckTimeoutPolicy.reasonFor(trace.lastStage),
                                 "lastPresentationStage" to trace.lastStage,
+                                "preparationSubstage" to trace.preparationSubstage,
                                 "selectionAgeMs" to trace.selectionAgeMs().toString(),
                                 "stageAgeMs" to trace.stageAgeMs().toString(),
+                                "preparationSubstageAgeMs" to trace.preparationSubstageAgeMs().toString(),
                                 "selectionGeneration" to trace.generation.toString(),
                                 "selectionMode" to selectionMode.name,
                                 "active" to hostActive.toString(),
@@ -1197,9 +1254,18 @@ class SlideshowEngine(
         val selectedAtElapsedMs: Long = 0L,
         val lastStage: String = RenderAckTimeoutPolicy.SELECTED,
         val stageAtElapsedMs: Long = 0L,
+        val preparationSubstage: String = "NOT_STARTED",
+        val preparationSubstageAtElapsedMs: Long = 0L,
     ) {
         fun update(anchorId: Long, stage: String, now: Long = elapsedNowMs()): RenderAckTrace =
             if (photoId == anchorId) copy(lastStage = stage, stageAtElapsedMs = now) else this
+
+        fun updatePreparation(anchorId: Long, substage: String, now: Long = elapsedNowMs()): RenderAckTrace =
+            if (photoId == anchorId) {
+                copy(preparationSubstage = substage, preparationSubstageAtElapsedMs = now)
+            } else {
+                this
+            }
 
         fun forPhoto(anchorId: Long): RenderAckTrace =
             takeIf { photoId == anchorId } ?: RenderAckTrace(
@@ -1213,6 +1279,9 @@ class SlideshowEngine(
         fun stageAgeMs(now: Long = elapsedNowMs()): Long =
             (now - stageAtElapsedMs).coerceAtLeast(0L)
 
+        fun preparationSubstageAgeMs(now: Long = elapsedNowMs()): Long =
+            (now - preparationSubstageAtElapsedMs).coerceAtLeast(0L)
+
         companion object {
             fun selected(photoId: Long, generation: Long, now: Long = elapsedNowMs()): RenderAckTrace =
                 RenderAckTrace(
@@ -1220,6 +1289,7 @@ class SlideshowEngine(
                     generation = generation,
                     selectedAtElapsedMs = now,
                     stageAtElapsedMs = now,
+                    preparationSubstageAtElapsedMs = now,
                 )
 
             private fun elapsedNowMs(): Long = System.nanoTime() / 1_000_000L

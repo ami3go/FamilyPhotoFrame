@@ -16,6 +16,17 @@ class RenderAckTimeoutPolicyTest {
         assertEquals("TRANSITION_STALLED", RenderAckTimeoutPolicy.reasonFor("TRANSITION_STARTED"))
     }
 
+    @Test fun preparationWatchdog_onlyRecoversBeforePreparationCompletes() {
+        assertEquals(true, RenderAckTimeoutPolicy.shouldRecoverPreparation(null))
+        assertEquals(true, RenderAckTimeoutPolicy.shouldRecoverPreparation("PREPARE_STARTED"))
+        assertEquals(
+            false,
+            RenderAckTimeoutPolicy.shouldRecoverPreparation("PREPARE_STARTED", "PREPARATION_READY"),
+        )
+        assertEquals(false, RenderAckTimeoutPolicy.shouldRecoverPreparation("PREPARED"))
+        assertEquals(false, RenderAckTimeoutPolicy.shouldRecoverPreparation("TRANSITION_STARTED"))
+    }
+
     @Test fun terminalStagesExplainWhyTheAcknowledgementWasNeverDelivered() {
         assertEquals("FAILURE_NOT_DELIVERED", RenderAckTimeoutPolicy.reasonFor("PREPARE_FAILED"))
         assertEquals("PRESENTATION_ABORTED", RenderAckTimeoutPolicy.reasonFor("TRANSITION_CANCELLED"))

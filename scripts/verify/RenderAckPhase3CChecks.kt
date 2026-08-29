@@ -20,4 +20,19 @@ fun runRenderAckPhase3CChecks() {
         "RENDER_CALLBACK_NOT_DELIVERED",
         RenderAckTimeoutPolicy.reasonFor("TRANSITION_COMPLETED"),
     )
+    check(
+        "preparation watchdog only recovers pre-render stages",
+        true,
+        RenderAckTimeoutPolicy.shouldRecoverPreparation("PREPARE_STARTED"),
+    )
+    check(
+        "preparation watchdog leaves transition recovery to the render guard",
+        false,
+        RenderAckTimeoutPolicy.shouldRecoverPreparation("PREPARED"),
+    )
+    check(
+        "preparation watchdog does not race an already-ready slide",
+        false,
+        RenderAckTimeoutPolicy.shouldRecoverPreparation("PREPARE_STARTED", "PREPARATION_READY"),
+    )
 }

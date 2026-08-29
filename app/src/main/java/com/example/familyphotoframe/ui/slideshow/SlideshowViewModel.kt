@@ -5199,16 +5199,9 @@ class SlideshowViewModel(
     fun onPresentationStage(anchorId: Long, stage: String, active: Boolean) {
         val photo = _state.value.engine.current?.takeIf { it.id == anchorId }
         engine.reportPresentationStage(anchorId, stage)
-        services.diagnostics.log(
-            DiagnosticsLog.Category.ENGINE,
-            "PRESENTATION_STAGE",
-            "photoToken" to diagnosticToken(
-                photo?.stableId?.ifBlank { anchorId.toString() } ?: anchorId.toString(),
-                "photo",
-            ),
-            "stage" to stage,
-            "active" to active.toString(),
-        )
+        // Keep normal stage transitions in the bounded in-memory trace.  Persisting every
+        // intermediate stage rotated the bulk log during an otherwise healthy soak; timeout
+        // events now carry the current stage plus the exact preparation substage instead.
         services.runtimeBreadcrumbs.record(
             operation = "PRESENTATION",
             stage = stage,
@@ -5216,6 +5209,14 @@ class SlideshowViewModel(
             presentationToken = diagnosticToken(anchorId.toString(), "presentation"),
             sourceKind = photo?.sourceId?.let(::diagnosticSourceKind) ?: "NONE",
         )
+    }
+
+    fun onPreparationSubstage(anchorId: Long, substage: String) {
+        engine.reportPreparationSubstage(anchorId, substage)
+    }
+
+    fun onPreparationWatchdogTimeout(anchorId: Long) {
+        engine.reportPreparationWatchdogTimeout(anchorId)
     }
 
     fun onRendered(

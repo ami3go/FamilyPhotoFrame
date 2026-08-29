@@ -9,6 +9,20 @@ package com.example.familyphotoframe.domain.engine
 internal object RenderAckTimeoutPolicy {
     const val SELECTED = "SELECTED"
 
+    /**
+     * A selected slide normally reaches the image decoder in a few seconds.  Keep this
+     * below the engine's final render-ack recovery so a wedged preparation is abandoned
+     * promptly, while the existing 30-second timeout remains a last-resort guard for the
+     * entire UI hand-off.
+     */
+    const val PREPARATION_WATCHDOG_TIMEOUT_MS = 20_000L
+
+    fun shouldRecoverPreparation(lastStage: String?, preparationSubstage: String? = null): Boolean = when (lastStage) {
+        null, SELECTED -> true
+        "PREPARE_STARTED" -> preparationSubstage != "PREPARATION_READY"
+        else -> false
+    }
+
     fun reasonFor(lastStage: String?): String = when (lastStage) {
         null, SELECTED -> "PREPARATION_NOT_STARTED"
         "PREPARE_STARTED" -> "PREPARATION_STALLED"

@@ -59,6 +59,7 @@ class DiagnosticEventCatalogTest {
 
     @Test fun renderAcknowledgementTelemetry_preservesTimeoutAndStageFields() {
         val timeout = DiagnosticEventCatalog.require("RENDER_ACK_TIMEOUT")
+        val watchdog = DiagnosticEventCatalog.require("PREPARATION_WATCHDOG_TIMEOUT")
         val stage = DiagnosticEventCatalog.require("PRESENTATION_STAGE")
         assertEquals(DiagnosticsLog.Category.ENGINE, stage.category)
         assertTrue("photoToken" in stage.permittedFields)
@@ -66,5 +67,8 @@ class DiagnosticEventCatalogTest {
         assertTrue("lastPresentationStage" in timeout.permittedFields)
         assertTrue("selectionAgeMs" in timeout.permittedFields)
         assertTrue("stageAgeMs" in timeout.permittedFields)
+        assertTrue("preparationSubstage" in timeout.permittedFields)
+        assertTrue("preparationSubstageAgeMs" in watchdog.permittedFields)
+        assertTrue("watchdogTimeoutMs" in watchdog.permittedFields)
     }
 }

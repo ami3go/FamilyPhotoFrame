@@ -475,6 +475,7 @@ internal suspend fun prepareSlide(
         reason: String?,
         details: Map<String, String>,
     ) -> Unit,
+    onPreparationSubstage: (String) -> Unit = {},
 ): PrepareSlideResult {
     val uncommitted = IdentityHashMap<Bitmap, BitmapLifecycleTracker.Kind>()
 
@@ -504,11 +505,14 @@ internal suspend fun prepareSlide(
         if (localThumbnailCache == null || !resolved.localThumbnailCacheEligible) {
             return decodeOwned(resolved, width, height)
         }
+        onPreparationSubstage("THUMBNAIL_CACHE_LOOKUP")
         val cachedFile = localThumbnailCache.get(resolved.photo.stableId, width, height)
         if (cachedFile != null) {
+            onPreparationSubstage("THUMBNAIL_CACHE_DECODE")
             val fromCache = decodeOwned(resolved.copy(model = cachedFile), width, height)
             if (fromCache is DecodePhotoResult.Ready) return fromCache
         }
+        onPreparationSubstage("ANCHOR_DECODE")
         val decoded = decodeOwned(resolved, width, height)
         if (decoded is DecodePhotoResult.Ready) {
             localThumbnailCache.put(
@@ -578,9 +582,11 @@ internal suspend fun prepareSlide(
             }
             val prepared = slide.withTransitionBlur(blur)
             prepared.allBitmaps().forEach(uncommitted::remove)
+            onPreparationSubstage("PREPARATION_READY")
             return PrepareSlideResult.Ready(prepared)
         }
 
+        onPreparationSubstage("MODEL_RESOLUTION")
         val resolvedAnchor = when (val resolved = resolvePhoto(photo, resolveModel)) {
             is ResolvePhotoResult.Ready -> resolved.photo
             is ResolvePhotoResult.Failed -> return PrepareSlideResult.Failed(resolved.failure)
@@ -592,6 +598,7 @@ internal suspend fun prepareSlide(
             allowTransitionBlur: Boolean = true,
             eventDetails: Map<String, String> = emptyMap(),
         ): PrepareSlideResult {
+            onPreparationSubstage("ANCHOR_DECODE")
             return when (val decoded = decodeAnchorCacheable(resolvedAnchor, targetW, targetH)) {
                 is DecodePhotoResult.Ready -> {
                     val slide = PreparedSlide.Single(
@@ -667,6 +674,7 @@ internal suspend fun prepareSlide(
             )
         }
 
+        onPreparationSubstage("COLLAGE_CANDIDATE_LOOKUP")
         emit("COLLAGE_PRELOAD_STARTED")
         val rawCandidates = loadCollageCandidates(photo, MAX_COLLAGE_CANDIDATES)
             .asSequence()
