@@ -1,12 +1,12 @@
 # Phase 4 selected-transfer test
 
-Build `26.52.1` adds a bounded cache-transfer path for the currently selected
+Build `26.53.1` adds a bounded cache-transfer path for the currently selected
 presentation. It does not change the native-memory allocation strategy; the Phase 2B
 HIL matrix is still required to identify that owner.
 
 ## Device run
 
-1. Install build `26.52.1` / version code `52`.
+1. Install build `26.53.1` / version code `53`.
 2. Use normal playback with the real SMB source for 2–4 hours.
 3. Export diagnostics after the run. If a selected cache transfer stalls, keep the
    device running long enough to observe the next presentation recover.
@@ -40,3 +40,16 @@ Healthy recovery has a `SLIDE_SELECTED` event immediately after the cancellation
 with no `RENDER_ACK_TIMEOUT`. A timeout during `MEDIA_CACHE_TRANSFER_COPY` with zero
 or stale progress supports an I/O-stall diagnosis; continuously increasing bytes points
 instead to a slow source or an overly small selected deadline.
+
+## First hardware cycle finding
+
+The first `26.52.1` V80 run exposed a same-photo retry gap after a selected transfer reached
+its deadline. The engine selected the same anchor again, but Compose keyed preparation only by
+photo id, so the replacement attempt produced no new preparation effect. That caused repeated
+`RENDER_ACK_TIMEOUT` records with `PREPARATION_NOT_STARTED` until another state change happened.
+
+Build `26.53.1` publishes a monotonically increasing selection generation to the UI, keys both
+selected preparation and its watchdog by that generation, and rejects stage, transfer,
+cancellation, and watchdog callbacks from an older attempt. The new hardware cycle must show that
+a selected deadline is followed by a real new attempt or a different selected photo, without a
+same-token `PREPARATION_NOT_STARTED` timeout loop.

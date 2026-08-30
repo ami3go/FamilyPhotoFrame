@@ -1,6 +1,16 @@
 fun runRenderAckRecoveryChecks() {
     println("-- render acknowledgement recovery --")
     check(
+        "stale same-photo preparation callbacks are rejected by generation",
+        false,
+        RenderAckRecoveryPolicy.isCurrentAttempt(12L, 13L),
+    )
+    check(
+        "current preparation callbacks keep flowing",
+        true,
+        RenderAckRecoveryPolicy.isCurrentAttempt(13L, 13L),
+    )
+    check(
         "visible same-photo re-selection bypasses an unobservable acknowledgement",
         true,
         RenderAckRecoveryPolicy.reusesVisiblePresentation(41L, 41L, 41L),

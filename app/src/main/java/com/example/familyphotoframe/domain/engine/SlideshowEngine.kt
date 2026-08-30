@@ -607,12 +607,22 @@ class SlideshowEngine(
      * ignored, so a cancelled composition cannot overwrite the next selection's timeout
      * evidence.
      */
-    fun reportPresentationStage(anchorId: Long, stage: String) {
+    fun reportPresentationStage(
+        anchorId: Long,
+        stage: String,
+        expectedSelectionGeneration: Long? = null,
+    ) {
         loopScope?.launch {
             val current = _ui.value.current ?: return@launch
             if (current.id != anchorId || renderedCurrentId == anchorId || failedCurrentId == anchorId) {
                 return@launch
             }
+            if (expectedSelectionGeneration != null &&
+                !RenderAckRecoveryPolicy.isCurrentAttempt(
+                    expectedSelectionGeneration,
+                    renderAckTrace.generation,
+                )
+            ) return@launch
             renderAckTrace = renderAckTrace.update(anchorId, safeDiagnosticCode(stage))
         }
     }
@@ -622,7 +632,7 @@ class SlideshowEngine(
      * recreation.  The cancellation is intentionally not passed to [reportDecodeFailure]:
      * the file may be perfectly healthy, and a later selection may prepare it normally.
      */
-    fun reportPreparationCancelled(anchorId: Long) {
+    fun reportPreparationCancelled(anchorId: Long, expectedSelectionGeneration: Long) {
         loopScope?.launch {
             val current = _ui.value.current ?: return@launch
             if (current.id != anchorId || renderedCurrentId == anchorId || failedCurrentId == anchorId ||
@@ -630,6 +640,11 @@ class SlideshowEngine(
                 !hostActive || surfaceObscured
             ) return@launch
             val trace = renderAckTrace.forPhoto(anchorId)
+            if (!RenderAckRecoveryPolicy.isCurrentAttempt(
+                    expectedSelectionGeneration,
+                    trace.generation,
+                )
+            ) return@launch
             if (!RenderAckTimeoutPolicy.shouldRecoverCancelledPreparation(trace.lastStage)) return@launch
 
             cancellationRecoveryCurrentId = anchorId
@@ -661,12 +676,21 @@ class SlideshowEngine(
      * stage.  The trace is intentionally in-memory only; routine stage events used to
      * rotate the bulk diagnostic stream before a failure could be captured.
      */
-    fun reportPreparationSubstage(anchorId: Long, substage: String) {
+    fun reportPreparationSubstage(
+        anchorId: Long,
+        expectedSelectionGeneration: Long,
+        substage: String,
+    ) {
         loopScope?.launch {
             val current = _ui.value.current ?: return@launch
             if (current.id != anchorId || renderedCurrentId == anchorId || failedCurrentId == anchorId) {
                 return@launch
             }
+            if (!RenderAckRecoveryPolicy.isCurrentAttempt(
+                    expectedSelectionGeneration,
+                    renderAckTrace.generation,
+                )
+            ) return@launch
             renderAckTrace = renderAckTrace.updatePreparation(
                 anchorId,
                 safeDiagnosticCode(substage),
@@ -681,6 +705,7 @@ class SlideshowEngine(
      */
     fun reportPreparationTransfer(
         anchorId: Long,
+        expectedSelectionGeneration: Long,
         state: String,
         copiedBytes: Long,
         expectedBytes: Long,
@@ -692,6 +717,11 @@ class SlideshowEngine(
             if (current.id != anchorId || renderedCurrentId == anchorId || failedCurrentId == anchorId) {
                 return@launch
             }
+            if (!RenderAckRecoveryPolicy.isCurrentAttempt(
+                    expectedSelectionGeneration,
+                    renderAckTrace.generation,
+                )
+            ) return@launch
             renderAckTrace = renderAckTrace.updateTransfer(
                 anchorId = anchorId,
                 state = safeDiagnosticCode(state),
@@ -709,13 +739,18 @@ class SlideshowEngine(
      * cancelled by the new selection; late bitmap results are already retired by the UI
      * hand-off guards.
      */
-    fun reportPreparationWatchdogTimeout(anchorId: Long) {
+    fun reportPreparationWatchdogTimeout(anchorId: Long, expectedSelectionGeneration: Long) {
         loopScope?.launch {
             val current = _ui.value.current ?: return@launch
             if (current.id != anchorId || renderedCurrentId == anchorId || failedCurrentId == anchorId ||
                 _ui.value.paused || asleep || !hostActive || surfaceObscured
             ) return@launch
             val trace = renderAckTrace.forPhoto(anchorId)
+            if (!RenderAckRecoveryPolicy.isCurrentAttempt(
+                    expectedSelectionGeneration,
+                    trace.generation,
+                )
+            ) return@launch
             if (!RenderAckTimeoutPolicy.shouldRecoverPreparation(
                     trace.lastStage,
                     trace.preparationSubstage,
@@ -1231,7 +1266,8 @@ class SlideshowEngine(
         renderedCurrentId = photo.id.takeIf { reusesVisiblePresentation }
         failedCurrentId = null
         cancellationRecoveryCurrentId = null
-        renderAckTrace = RenderAckTrace.selected(photo.id, ++renderAckGeneration)
+        val selectionGeneration = ++renderAckGeneration
+        renderAckTrace = RenderAckTrace.selected(photo.id, selectionGeneration)
         onThisDayTerminalPhotoId = photo.id.takeIf {
             selectionMode == SelectionMode.ON_THIS_DAY && pick.onThisDayTerminal
         }
@@ -1271,6 +1307,7 @@ class SlideshowEngine(
             ?: _ui.value.shuffleProgress.copy(unavailableSourceCount = unavailableSourceIds.size)
         _ui.value = _ui.value.copy(
             current = photo,
+            selectionGeneration = selectionGeneration,
             next = preview,
             state = currentState(),
             reservedCandidateIds = pick.reservation?.candidatePhotoIds.orEmpty(),

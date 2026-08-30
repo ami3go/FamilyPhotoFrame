@@ -6,6 +6,14 @@ import org.junit.Test
 
 class RenderAckRecoveryPolicyTest {
 
+    @Test fun aCancelledSamePhotoAttemptCannotAcknowledgeItsReplacement() {
+        assertFalse(RenderAckRecoveryPolicy.isCurrentAttempt(12L, 13L))
+    }
+
+    @Test fun callbacksFromTheCurrentSelectionAttemptAreAccepted() {
+        assertTrue(RenderAckRecoveryPolicy.isCurrentAttempt(13L, 13L))
+    }
+
     @Test fun sameCommittedPhotoDoesNotRequireAnUnobservableSecondRender() {
         assertTrue(
             RenderAckRecoveryPolicy.reusesVisiblePresentation(

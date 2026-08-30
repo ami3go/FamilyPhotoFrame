@@ -208,6 +208,7 @@ fun SlideshowScreen(
                 onRecoverableOom = vm::onRecoverablePresentationOom,
                 onTransitionEvent = vm::onTransitionEvent,
                 onPresentationStage = vm::onPresentationStage,
+                onPreparationAttemptStage = vm::onPreparationAttemptStage,
                 onPreparationSubstage = vm::onPreparationSubstage,
                 onPreparationTransferUpdate = vm::onPreparationTransferUpdate,
                 onPreparationCancelled = vm::onPreparationCancelled,
@@ -393,10 +394,11 @@ private fun PlayingContent(
     onRecoverableOom: (DisplayPhoto, String) -> Unit,
     onTransitionEvent: (TransitionEvent) -> Unit,
     onPresentationStage: (Long, String, Boolean) -> Unit,
-    onPreparationSubstage: (Long, String) -> Unit,
-    onPreparationTransferUpdate: (Long, PreparationTransferUpdate) -> Unit,
-    onPreparationCancelled: (Long) -> Unit,
-    onPreparationWatchdogTimeout: (Long) -> Unit,
+    onPreparationAttemptStage: (Long, Long, String, Boolean) -> Unit,
+    onPreparationSubstage: (Long, Long, String) -> Unit,
+    onPreparationTransferUpdate: (Long, Long, PreparationTransferUpdate) -> Unit,
+    onPreparationCancelled: (Long, Long) -> Unit,
+    onPreparationWatchdogTimeout: (Long, Long) -> Unit,
     onPrepared: suspend (Long, List<Long>, String?) -> Boolean,
     onRendered: (Long, List<Long>, List<String?>, String?) -> Unit,
     previewCaptureRequest: WebPreviewCaptureRequest?,
@@ -636,6 +638,7 @@ private fun PlayingContent(
     // visible presentation until the explicit transition coordinator commits it.
     LaunchedEffect(
         selected?.id,
+        state.engine.selectionGeneration,
         targetW,
         targetH,
         state.portraitCollage,
@@ -647,6 +650,7 @@ private fun PlayingContent(
     ) {
         var uncommittedHandle: PreparedSlideHandle? = null
         val photo = selected ?: return@LaunchedEffect
+        val selectionGeneration = state.engine.selectionGeneration
         val selectedTransferDeadlineMonotonicMs = presentationMonotonicNowMs() +
             MediaTransferPolicy.SELECTED_PRESENTATION_DEADLINE_MS
         try {
@@ -654,7 +658,7 @@ private fun PlayingContent(
             val lifecycleToken = hostPlaybackToken() ?: return@LaunchedEffect
             if (!hostActive || !isHostPlaybackTokenCurrent(lifecycleToken)) return@LaunchedEffect
             if (!memoryProtection.allowSelectedDecode) return@LaunchedEffect
-            onPresentationStage(photo.id, "PREPARE_STARTED", true)
+            onPreparationAttemptStage(photo.id, selectionGeneration, "PREPARE_STARTED", true)
             if (incomingHandle == null) {
                 transitionState = TransitionState.Preparing(
                     currentPresentationId = slide(committedHandle)?.anchor?.id,
@@ -670,8 +674,12 @@ private fun PlayingContent(
             val handle = existingHandle ?: when (val result = build(
                 photo,
                 fastManual = fastManual,
-                onPreparationSubstage = { stage -> onPreparationSubstage(photo.id, stage) },
-                onTransferUpdate = { update -> onPreparationTransferUpdate(photo.id, update) },
+                onPreparationSubstage = { stage ->
+                    onPreparationSubstage(photo.id, selectionGeneration, stage)
+                },
+                onTransferUpdate = { update ->
+                    onPreparationTransferUpdate(photo.id, selectionGeneration, update)
+                },
                 selectedTransferDeadlineMonotonicMs = selectedTransferDeadlineMonotonicMs,
             )) {
                 is PrepareSlideResult.Ready -> {
@@ -682,7 +690,7 @@ private fun PlayingContent(
                         !isHostPlaybackTokenCurrent(lifecycleToken)
                     ) {
                         registry.retireUnowned(result.slide)
-                        onPresentationStage(photo.id, "PREPARE_STALE", false)
+                        onPreparationAttemptStage(photo.id, selectionGeneration, "PREPARE_STALE", false)
                         publishBitmapInventory()
                         return@LaunchedEffect
                     }
@@ -694,22 +702,27 @@ private fun PlayingContent(
                     if (!currentCoroutineContext().isActive ||
                         !isHostPlaybackTokenCurrent(lifecycleToken)
                     ) {
-                        onPresentationStage(photo.id, "PREPARE_STALE", false)
+                        onPreparationAttemptStage(photo.id, selectionGeneration, "PREPARE_STALE", false)
                         return@LaunchedEffect
                     }
-                    onPresentationStage(photo.id, "PREPARE_FAILED", false)
+                    onPreparationAttemptStage(photo.id, selectionGeneration, "PREPARE_FAILED", false)
                     onDecodeFailure(result.failure)
                     return@LaunchedEffect
                 }
             }
             val preparedSlide = slide(handle) ?: run {
-                onPresentationStage(photo.id, "PREPARED_SLIDE_MISSING", false)
+                onPreparationAttemptStage(
+                    photo.id,
+                    selectionGeneration,
+                    "PREPARED_SLIDE_MISSING",
+                    false,
+                )
                 return@LaunchedEffect
             }
             if (!currentCoroutineContext().isActive ||
                 !isHostPlaybackTokenCurrent(lifecycleToken)
             ) {
-                onPresentationStage(photo.id, "PREPARE_STALE", false)
+                onPreparationAttemptStage(photo.id, selectionGeneration, "PREPARE_STALE", false)
                 return@LaunchedEffect
             }
             val preparedCommitted = onPrepared(
@@ -720,13 +733,18 @@ private fun PlayingContent(
             if (!currentCoroutineContext().isActive ||
                 !isHostPlaybackTokenCurrent(lifecycleToken)
             ) {
-                onPresentationStage(photo.id, "PREPARE_STALE", false)
+                onPreparationAttemptStage(photo.id, selectionGeneration, "PREPARE_STALE", false)
                 return@LaunchedEffect
             }
             if (!preparedCommitted) {
                 if (handle != committedHandle) registry.remove(handle)
                 uncommittedHandle = null
-                onPresentationStage(photo.id, "PREPARED_COMMIT_REJECTED", false)
+                onPreparationAttemptStage(
+                    photo.id,
+                    selectionGeneration,
+                    "PREPARED_COMMIT_REJECTED",
+                    false,
+                )
                 publishBitmapInventory()
                 return@LaunchedEffect
             }
@@ -734,7 +752,7 @@ private fun PlayingContent(
             manualCandidateHandle = if (fastManual) handle else null
             // The Compose-visible handle now owns this registry entry.
             uncommittedHandle = null
-            onPresentationStage(photo.id, "PREPARED", true)
+            onPreparationAttemptStage(photo.id, selectionGeneration, "PREPARED", true)
             publishBitmapInventory()
         } catch (cancelled: CancellationException) {
             // A configuration/dimension change can cancel this effect while the engine
@@ -742,7 +760,7 @@ private fun PlayingContent(
             // dedicated recovery path so it advances immediately instead of waiting for
             // the 30-second render-ack fallback.  Stale cancellations are rejected by
             // the engine after a newer selection has replaced this photo.
-            onPreparationCancelled(photo.id)
+            onPreparationCancelled(photo.id, selectionGeneration)
             throw cancelled
         } finally {
             // Cancellation can occur while onPrepared suspends. No snapshot handle owns a
@@ -755,11 +773,17 @@ private fun PlayingContent(
     // A selected slide must not wait for the engine's broader render-ack timeout merely
     // because preparation is wedged.  The engine verifies that this photo is still current
     // and still pre-render before advancing, so a late effect cannot skip a newer slide.
-    LaunchedEffect(selected?.id, hostActive, hostGeneration) {
+    LaunchedEffect(
+        selected?.id,
+        state.engine.selectionGeneration,
+        hostActive,
+        hostGeneration,
+    ) {
         val photo = selected ?: return@LaunchedEffect
+        val selectionGeneration = state.engine.selectionGeneration
         if (!hostActive || hostPlaybackToken() == null) return@LaunchedEffect
         delay(com.example.familyphotoframe.domain.engine.RenderAckTimeoutPolicy.PREPARATION_WATCHDOG_TIMEOUT_MS)
-        onPreparationWatchdogTimeout(photo.id)
+        onPreparationWatchdogTimeout(photo.id, selectionGeneration)
     }
 
     // Prepare the following presentation immediately and keep the committed slide visible

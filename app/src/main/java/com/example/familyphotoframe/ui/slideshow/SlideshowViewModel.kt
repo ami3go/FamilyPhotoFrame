@@ -5259,14 +5259,36 @@ class SlideshowViewModel(
         )
     }
 
-    fun onPreparationSubstage(anchorId: Long, substage: String) {
-        engine.reportPreparationSubstage(anchorId, substage)
+    internal fun onPreparationAttemptStage(
+        anchorId: Long,
+        selectionGeneration: Long,
+        stage: String,
+        active: Boolean,
+    ) {
+        val photo = _state.value.engine.current?.takeIf { it.id == anchorId }
+        engine.reportPresentationStage(anchorId, stage, selectionGeneration)
+        services.runtimeBreadcrumbs.record(
+            operation = "PRESENTATION",
+            stage = stage,
+            active = active,
+            presentationToken = diagnosticToken(anchorId.toString(), "presentation"),
+            sourceKind = photo?.sourceId?.let(::diagnosticSourceKind) ?: "NONE",
+        )
+    }
+
+    fun onPreparationSubstage(anchorId: Long, selectionGeneration: Long, substage: String) {
+        engine.reportPreparationSubstage(anchorId, selectionGeneration, substage)
     }
 
     /** Forward only the current selected presentation's bounded cache-transfer trace. */
-    internal fun onPreparationTransferUpdate(anchorId: Long, update: PreparationTransferUpdate) {
+    internal fun onPreparationTransferUpdate(
+        anchorId: Long,
+        selectionGeneration: Long,
+        update: PreparationTransferUpdate,
+    ) {
         engine.reportPreparationTransfer(
             anchorId = anchorId,
+            expectedSelectionGeneration = selectionGeneration,
             state = update.state.name,
             copiedBytes = update.copiedBytes,
             expectedBytes = update.expectedBytes,
@@ -5281,9 +5303,9 @@ class SlideshowViewModel(
      * abort, not a decode failure: keep the current file eligible and let the engine pick
      * the next presentation immediately.
      */
-    fun onPreparationCancelled(anchorId: Long) {
+    fun onPreparationCancelled(anchorId: Long, selectionGeneration: Long) {
         val photo = _state.value.engine.current?.takeIf { it.id == anchorId }
-        engine.reportPreparationCancelled(anchorId)
+        engine.reportPreparationCancelled(anchorId, selectionGeneration)
         services.runtimeBreadcrumbs.record(
             operation = "PRESENTATION",
             stage = "PREPARE_CANCELLED",
@@ -5293,8 +5315,8 @@ class SlideshowViewModel(
         )
     }
 
-    fun onPreparationWatchdogTimeout(anchorId: Long) {
-        engine.reportPreparationWatchdogTimeout(anchorId)
+    fun onPreparationWatchdogTimeout(anchorId: Long, selectionGeneration: Long) {
+        engine.reportPreparationWatchdogTimeout(anchorId, selectionGeneration)
     }
 
     fun onRendered(

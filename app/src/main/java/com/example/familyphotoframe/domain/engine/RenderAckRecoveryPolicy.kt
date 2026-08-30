@@ -9,6 +9,10 @@ package com.example.familyphotoframe.domain.engine
  * photo is still on screen.
  */
 internal object RenderAckRecoveryPolicy {
+    /** Reject callbacks from a cancelled attempt that selected the same photo again. */
+    fun isCurrentAttempt(expectedGeneration: Long, actualGeneration: Long): Boolean =
+        expectedGeneration == actualGeneration
+
     fun reusesVisiblePresentation(
         currentPhotoId: Long?,
         lastRenderedPhotoId: Long?,
