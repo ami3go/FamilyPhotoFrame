@@ -101,6 +101,51 @@ internal sealed interface PrepareSlideResult {
     data class Failed(val failure: DecodeFailure) : PrepareSlideResult
 }
 
+/** Whether model resolution is for the visible selection or speculative preload work. */
+internal enum class ModelResolutionPriority {
+    SELECTED_PRESENTATION,
+    BACKGROUND_PRELOAD,
+}
+
+/**
+ * Per-preparation resolution constraints.  A selected deadline is absolute in
+ * monotonic milliseconds, so each anchor/collage cache request consumes
+ * only the time remaining before the selected presentation's 20-second watchdog.
+ */
+internal data class ModelResolutionRequest(
+    val priority: ModelResolutionPriority,
+    val selectedTransferDeadlineMonotonicMs: Long? = null,
+)
+
+internal fun presentationMonotonicNowMs(): Long = System.nanoTime() / 1_000_000L
+
+/**
+ * Privacy-safe cache-transfer state retained only for the selected presentation's
+ * bounded timeout trace.  It never carries a path, file name, or image object.
+ */
+internal enum class PreparationTransferState {
+    STARTED,
+    PROGRESS,
+    SELECTED_DEADLINE,
+    STREAM_CLOSE_REQUESTED,
+    TRANSFER_SLOT_RELEASED,
+}
+
+internal data class PreparationTransferUpdate(
+    val state: PreparationTransferState,
+    val copiedBytes: Long,
+    val expectedBytes: Long,
+    val deadlineMs: Long,
+    val streamCloseSucceeded: Boolean? = null,
+)
+
+internal typealias PhotoModelResolver = suspend (
+    DisplayPhoto,
+    ModelResolutionRequest,
+    (String) -> Unit,
+    (PreparationTransferUpdate) -> Unit,
+) -> PhotoModelResolution
+
 private fun DecodeColorChoice.toBitmapConfig(): Bitmap.Config = when (this) {
     DecodeColorChoice.ARGB_8888 -> Bitmap.Config.ARGB_8888
     DecodeColorChoice.RGB_565 -> Bitmap.Config.RGB_565
@@ -263,10 +308,17 @@ private fun decodeFailure(
 
 private suspend fun resolvePhoto(
     photo: DisplayPhoto,
-    resolveModel: suspend (DisplayPhoto, (String) -> Unit) -> PhotoModelResolution,
+    resolveModel: PhotoModelResolver,
+    request: ModelResolutionRequest,
     onPreparationSubstage: (String) -> Unit,
+    onPreparationTransferUpdate: (PreparationTransferUpdate) -> Unit,
 ): ResolvePhotoResult = try {
-    when (val resolution = resolveModel(photo, onPreparationSubstage)) {
+    when (val resolution = resolveModel(
+        photo,
+        request,
+        onPreparationSubstage,
+        onPreparationTransferUpdate,
+    )) {
         is PhotoModelResolution.Ready -> ResolvePhotoResult.Ready(
             ResolvedPhoto(photo, resolution.model, resolution.localThumbnailCacheEligible)
         )
@@ -442,7 +494,7 @@ internal suspend fun prepareSlide(
     context: android.content.Context,
     photo: DisplayPhoto,
     imageLoader: ImageLoader,
-    resolveModel: suspend (DisplayPhoto, (String) -> Unit) -> PhotoModelResolution,
+    resolveModel: PhotoModelResolver,
     loadCollageCandidates: suspend (DisplayPhoto, Int) -> List<DisplayPhoto>,
     probeRemoteDimensions: suspend (DisplayPhoto) -> Pair<Int, Int>?,
     collageMode: PortraitCollageMode,
@@ -476,7 +528,11 @@ internal suspend fun prepareSlide(
         reason: String?,
         details: Map<String, String>,
     ) -> Unit,
+    modelResolutionRequest: ModelResolutionRequest = ModelResolutionRequest(
+        ModelResolutionPriority.BACKGROUND_PRELOAD,
+    ),
     onPreparationSubstage: (String) -> Unit = {},
+    onPreparationTransferUpdate: (PreparationTransferUpdate) -> Unit = {},
 ): PrepareSlideResult {
     val uncommitted = IdentityHashMap<Bitmap, BitmapLifecycleTracker.Kind>()
 
@@ -591,7 +647,9 @@ internal suspend fun prepareSlide(
         val resolvedAnchor = when (val resolved = resolvePhoto(
             photo,
             resolveModel,
+            modelResolutionRequest,
             onPreparationSubstage,
+            onPreparationTransferUpdate,
         )) {
             is ResolvePhotoResult.Ready -> resolved.photo
             is ResolvePhotoResult.Failed -> return PrepareSlideResult.Failed(resolved.failure)
@@ -728,7 +786,9 @@ internal suspend fun prepareSlide(
             val resolved = when (val result = resolvePhoto(
                 candidate,
                 resolveModel,
+                modelResolutionRequest,
                 onPreparationSubstage,
+                onPreparationTransferUpdate,
             )) {
                 is ResolvePhotoResult.Ready -> result.photo
                 is ResolvePhotoResult.Failed -> {
@@ -912,7 +972,9 @@ internal suspend fun prepareSlide(
                 val resolved = inspected.resolved ?: when (val model = resolvePhoto(
                     inspected.photo,
                     resolveModel,
+                    modelResolutionRequest,
                     onPreparationSubstage,
+                    onPreparationTransferUpdate,
                 )) {
                     is ResolvePhotoResult.Ready -> model.photo
                     is ResolvePhotoResult.Failed -> {

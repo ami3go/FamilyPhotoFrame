@@ -71,6 +71,11 @@ class DiagnosticEventCatalogTest {
         assertTrue("preparationSubstage" in timeout.permittedFields)
         assertTrue("preparationSubstageAgeMs" in watchdog.permittedFields)
         assertTrue("watchdogTimeoutMs" in watchdog.permittedFields)
+        assertTrue("mediaTransferState" in watchdog.permittedFields)
+        assertTrue("mediaTransferCopiedBytes" in watchdog.permittedFields)
+        assertTrue("mediaTransferProgressAgeMs" in cancellation.permittedFields)
+        assertTrue("mediaTransferStreamCloseRequested" in cancellation.permittedFields)
+        assertTrue("mediaTransferSlotReleased" in timeout.permittedFields)
         assertEquals(DiagnosticsLog.Category.ENGINE, cancellation.category)
         assertTrue("cancellationInitiator" in cancellation.permittedFields)
     }

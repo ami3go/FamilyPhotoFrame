@@ -12,10 +12,10 @@ import com.example.familyphotoframe.data.source.PhotoItem
 import com.example.familyphotoframe.data.source.PhotoSource
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.File
@@ -97,6 +97,27 @@ class MediaCache(
         EVICTION,
     }
 
+    /**
+     * Bounded, privacy-safe transfer evidence retained by the selected presentation
+     * trace.  It is intentionally not a durable event per read: the timeout/cancellation
+     * event carries the final snapshot without consuming the diagnostic bulk budget.
+     */
+    enum class TransferTelemetryState {
+        STARTED,
+        PROGRESS,
+        SELECTED_DEADLINE,
+        STREAM_CLOSE_REQUESTED,
+        TRANSFER_SLOT_RELEASED,
+    }
+
+    data class TransferTelemetry(
+        val state: TransferTelemetryState,
+        val copiedBytes: Long,
+        val expectedBytes: Long,
+        val deadlineMs: Long,
+        val streamCloseSucceeded: Boolean? = null,
+    )
+
     sealed interface ResolveResult {
         data class Ready(val file: File, val cacheHit: Boolean) : ResolveResult
         data class Failed(
@@ -133,7 +154,11 @@ class MediaCache(
         item: PhotoItem,
         source: PhotoSource,
         protectedKeys: Set<String>,
+        priority: MediaTransferPriority = MediaTransferPriority.BACKGROUND_PRELOAD,
+        /** Absolute monotonic selected-presentation deadline, or the priority default. */
+        transferDeadlineMonotonicMs: Long? = null,
         onStage: (ResolveStage) -> Unit = {},
+        onTransferTelemetry: (TransferTelemetry) -> Unit = {},
     ): ResolveResult = withContext(io) {
         val key = keyFor(item)
         try {
@@ -159,9 +184,23 @@ class MediaCache(
                 if (cached != null) return@withKeyLock cached
                 val generation = cacheGeneration.get()
                 onStage(ResolveStage.TRANSFER_SLOT_WAIT)
-                when (val downloaded = transferSlots.withPermit {
+                when (val downloaded = withTransferPermit(
+                    item = item,
+                    priority = priority,
+                    transferDeadlineMonotonicMs = transferDeadlineMonotonicMs,
+                    onTransferTelemetry = onTransferTelemetry,
+                ) { effectiveTransferDeadlineMs ->
                     resourceTracker.startMediaTransfer().use {
-                        download(item, source, key, generation, onStage)
+                        download(
+                            item = item,
+                            source = source,
+                            key = key,
+                            generation = generation,
+                            priority = priority,
+                            transferDeadlineMs = effectiveTransferDeadlineMs,
+                            onStage = onStage,
+                            onTransferTelemetry = onTransferTelemetry,
+                        )
                     }
                 }) {
                     is ResolveResult.Ready -> {
@@ -263,7 +302,10 @@ class MediaCache(
         source: PhotoSource,
         key: String,
         generation: Long,
+        priority: MediaTransferPriority,
+        transferDeadlineMs: Long,
         onStage: (ResolveStage) -> Unit,
+        onTransferTelemetry: (TransferTelemetry) -> Unit,
     ): ResolveResult {
         val target = File(dir, key)
         // Unique per call so concurrent downloads of the same key (e.g. current photo also
@@ -272,27 +314,64 @@ class MediaCache(
         var stage = FailureStage.SOURCE_READ
         var targetCommitted = false
         var indexCommitted = false
+        var copiedBytes = 0L
+        val expectedBytes = item.sizeBytes.coerceAtLeast(0L)
         return try {
             if (dir.usableSpace <= RESERVED_FREE_BYTES) {
                 throw CacheStorageReserveException(RESERVED_FREE_BYTES)
             }
-            withTimeout(TOTAL_TRANSFER_TIMEOUT_MS) {
+            withTimeout(transferDeadlineMs) {
                 onStage(ResolveStage.STREAM_OPEN)
                 source.openStream(
                     item,
                     OpenOptions(
-                        timeoutMs = TOTAL_TRANSFER_TIMEOUT_MS,
+                        // The source-level deadline stays at the long established limit.
+                        // A selected presentation is cancelled by this coroutine's earlier
+                        // deadline instead, so one slow item is not misclassified as a
+                        // source-wide SMB outage.
+                        timeoutMs = MediaTransferPolicy.BACKGROUND_PRELOAD_DEADLINE_MS,
                         purpose = OpenPurpose.DISPLAY_CACHE,
                     ),
                 ).use { input ->
                     stage = FailureStage.SOURCE_READ
                     onStage(ResolveStage.TRANSFER_COPY)
+                    onTransferTelemetry(
+                        TransferTelemetry(
+                            state = TransferTelemetryState.STARTED,
+                            copiedBytes = copiedBytes,
+                            expectedBytes = expectedBytes,
+                            deadlineMs = transferDeadlineMs,
+                        )
+                    )
                     FileOutputStream(tmp).use { out ->
                         input.copyToCancellable(
                             output = out,
                             maxBytes = MAX_ENTRY_BYTES,
                             minimumUsableBytes = RESERVED_FREE_BYTES,
                             usableBytes = { dir.usableSpace },
+                            onProgress = { copied ->
+                                copiedBytes = copied
+                                onTransferTelemetry(
+                                    TransferTelemetry(
+                                        state = TransferTelemetryState.PROGRESS,
+                                        copiedBytes = copied,
+                                        expectedBytes = expectedBytes,
+                                        deadlineMs = transferDeadlineMs,
+                                    )
+                                )
+                            },
+                            onCancellationClose = { copied, closeSucceeded ->
+                                copiedBytes = copied
+                                onTransferTelemetry(
+                                    TransferTelemetry(
+                                        state = TransferTelemetryState.STREAM_CLOSE_REQUESTED,
+                                        copiedBytes = copied,
+                                        expectedBytes = expectedBytes,
+                                        deadlineMs = transferDeadlineMs,
+                                        streamCloseSucceeded = closeSucceeded,
+                                    )
+                                )
+                            },
                         )
                         out.fd.sync()
                     }
@@ -332,6 +411,18 @@ class MediaCache(
             }
             ResolveResult.Ready(target, cacheHit = false)
         } catch (c: CancellationException) {
+            if (c is TimeoutCancellationException &&
+                priority == MediaTransferPriority.SELECTED_PRESENTATION
+            ) {
+                onTransferTelemetry(
+                    TransferTelemetry(
+                        state = TransferTelemetryState.SELECTED_DEADLINE,
+                        copiedBytes = copiedBytes,
+                        expectedBytes = expectedBytes,
+                        deadlineMs = transferDeadlineMs,
+                    )
+                )
+            }
             tmp.delete()
             if (targetCommitted && !indexCommitted) target.delete()
             throw c
@@ -345,6 +436,69 @@ class MediaCache(
             )
         }
     }
+
+    /**
+     * Emits slot-release evidence only after the semaphore has actually been returned.
+     * A waiting selected presentation remains identified by [ResolveStage.TRANSFER_SLOT_WAIT]
+     * rather than producing a misleading release record before it acquired a slot.
+     */
+    private suspend fun <T> withTransferPermit(
+        item: PhotoItem,
+        priority: MediaTransferPriority,
+        transferDeadlineMonotonicMs: Long?,
+        onTransferTelemetry: (TransferTelemetry) -> Unit,
+        block: suspend (transferDeadlineMs: Long) -> T,
+    ): T {
+        val selectedDeadlineMs = transferDeadlineMonotonicMs?.let { deadline ->
+            (deadline - monotonicNowMs()).coerceAtLeast(1L)
+        }
+        var permitAcquired = false
+        if (priority == MediaTransferPriority.SELECTED_PRESENTATION && selectedDeadlineMs != null) {
+            try {
+                withTimeout(selectedDeadlineMs) {
+                    transferSlots.acquire()
+                    permitAcquired = true
+                }
+            } catch (timeout: TimeoutCancellationException) {
+                if (permitAcquired) {
+                    transferSlots.release()
+                    permitAcquired = false
+                }
+                onTransferTelemetry(
+                    TransferTelemetry(
+                        state = TransferTelemetryState.SELECTED_DEADLINE,
+                        copiedBytes = 0L,
+                        expectedBytes = item.sizeBytes.coerceAtLeast(0L),
+                        deadlineMs = selectedDeadlineMs,
+                    )
+                )
+                throw timeout
+            }
+        } else {
+            transferSlots.acquire()
+            permitAcquired = true
+        }
+        val transferDeadlineMs = transferDeadlineMonotonicMs?.let { deadline ->
+            (deadline - monotonicNowMs()).coerceAtLeast(1L)
+        } ?: MediaTransferPolicy.deadlineMs(priority)
+        return try {
+            block(transferDeadlineMs)
+        } finally {
+            if (permitAcquired) {
+                transferSlots.release()
+                onTransferTelemetry(
+                    TransferTelemetry(
+                        state = TransferTelemetryState.TRANSFER_SLOT_RELEASED,
+                        copiedBytes = 0L,
+                        expectedBytes = item.sizeBytes.coerceAtLeast(0L),
+                        deadlineMs = transferDeadlineMs,
+                    )
+                )
+            }
+        }
+    }
+
+    private fun monotonicNowMs(): Long = System.nanoTime() / 1_000_000L
 
     private fun isSourceLevelFailure(error: Throwable): Boolean {
         if (error is UnknownHostException || error is ConnectException ||
@@ -461,8 +615,6 @@ class MediaCache(
         private const val EMPTY_PROTECTED_SENTINEL = "__never_a_cache_key__"
         private const val MAX_ENTRY_BYTES = 256L * MB
         private const val RESERVED_FREE_BYTES = 512L * MB
-        private const val TOTAL_TRANSFER_TIMEOUT_MS = 2L * 60L * 1000L
-
         private fun subtractSize(total: Long, removed: Long): Long {
             val safeRemoved = removed.coerceAtLeast(0L)
             return if (safeRemoved >= total) 0L else total - safeRemoved

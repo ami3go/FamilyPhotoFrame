@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -29,6 +30,8 @@ class CancellableStreamCopyTest {
                 releasedRead.countDown()
             }
         }
+        var cancellationCopiedBytes = -1L
+        var cancellationCloseSucceeded = false
         val job = launch(Dispatchers.IO) {
             source.copyToCancellable(
                 ByteArrayOutputStream(),
@@ -36,12 +39,18 @@ class CancellableStreamCopyTest {
                 minimumUsableBytes = 0,
                 usableBytes = { Long.MAX_VALUE },
                 bufferSize = 32,
+                onCancellationClose = { copiedBytes, closeSucceeded ->
+                    cancellationCopiedBytes = copiedBytes
+                    cancellationCloseSucceeded = closeSucceeded
+                },
             )
         }
 
         assertTrue(enteredRead.await(2, TimeUnit.SECONDS))
         job.cancelAndJoin()
         assertTrue(source.closed)
+        assertEquals(0L, cancellationCopiedBytes)
+        assertTrue(cancellationCloseSucceeded)
     }
 
     @Test(expected = TransferLimitExceededException::class)
@@ -55,5 +64,20 @@ class CancellableStreamCopyTest {
                 bufferSize = 16,
             )
         }
+    }
+
+    @Test fun progressReportsTheFinalCopiedByteCountWithoutPerReadNoise() = runBlocking {
+        val updates = mutableListOf<Long>()
+        val copied = ByteArray(64).inputStream().copyToCancellable(
+            ByteArrayOutputStream(),
+            maxBytes = 128,
+            minimumUsableBytes = 0,
+            usableBytes = { Long.MAX_VALUE },
+            bufferSize = 16,
+            onProgress = { updates += it },
+        )
+
+        assertEquals(64L, copied)
+        assertEquals(listOf(64L), updates)
     }
 }

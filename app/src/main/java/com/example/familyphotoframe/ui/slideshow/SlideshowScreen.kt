@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.ImageLoader
 import com.example.familyphotoframe.R
+import com.example.familyphotoframe.data.cache.MediaTransferPolicy
 import com.example.familyphotoframe.data.diagnostics.BitmapLifecycleTracker
 import com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker
 import com.example.familyphotoframe.data.settings.AspectMode
@@ -196,8 +197,8 @@ fun SlideshowScreen(
             is Surface.Playing -> PlayingContent(
                 state = state,
                 imageLoader = imageLoader,
-                resolveModel = { photo, onPreparationSubstage ->
-                    vm.resolveModel(photo, onPreparationSubstage)
+                resolveModel = { photo, request, onPreparationSubstage, onTransferUpdate ->
+                    vm.resolveModel(photo, request, onPreparationSubstage, onTransferUpdate)
                 },
                 loadCollageCandidates = vm::portraitCollageCandidates,
                 probeRemoteDimensions = vm::probeRemoteCollageDimensions,
@@ -208,6 +209,7 @@ fun SlideshowScreen(
                 onTransitionEvent = vm::onTransitionEvent,
                 onPresentationStage = vm::onPresentationStage,
                 onPreparationSubstage = vm::onPreparationSubstage,
+                onPreparationTransferUpdate = vm::onPreparationTransferUpdate,
                 onPreparationCancelled = vm::onPreparationCancelled,
                 onPreparationWatchdogTimeout = vm::onPreparationWatchdogTimeout,
                 onPrepared = vm::onPrepared,
@@ -373,7 +375,7 @@ fun SlideshowScreen(
 private fun PlayingContent(
     state: SlideshowUiState,
     imageLoader: ImageLoader,
-    resolveModel: suspend (DisplayPhoto, (String) -> Unit) -> PhotoModelResolution,
+    resolveModel: PhotoModelResolver,
     loadCollageCandidates: suspend (DisplayPhoto, Int) -> List<DisplayPhoto>,
     probeRemoteDimensions: suspend (DisplayPhoto) -> Pair<Int, Int>?,
     onDecodeFailure: (DecodeFailure) -> Unit,
@@ -392,6 +394,7 @@ private fun PlayingContent(
     onTransitionEvent: (TransitionEvent) -> Unit,
     onPresentationStage: (Long, String, Boolean) -> Unit,
     onPreparationSubstage: (Long, String) -> Unit,
+    onPreparationTransferUpdate: (Long, PreparationTransferUpdate) -> Unit,
     onPreparationCancelled: (Long) -> Unit,
     onPreparationWatchdogTimeout: (Long) -> Unit,
     onPrepared: suspend (Long, List<Long>, String?) -> Boolean,
@@ -530,6 +533,8 @@ private fun PlayingContent(
         photo: DisplayPhoto,
         fastManual: Boolean = false,
         onPreparationSubstage: ((String) -> Unit)? = null,
+        onTransferUpdate: ((PreparationTransferUpdate) -> Unit)? = null,
+        selectedTransferDeadlineMonotonicMs: Long? = null,
     ): PrepareSlideResult {
         suspend fun prepare(): PrepareSlideResult {
         // Two independent scales: a static one that keeps a small-memory frame from ever
@@ -600,7 +605,16 @@ private fun PlayingContent(
                 onCollageCandidateFailure(failure)
             },
             onCollageEvent = onCollageEvent,
+            modelResolutionRequest = ModelResolutionRequest(
+                priority = if (onTransferUpdate != null) {
+                    ModelResolutionPriority.SELECTED_PRESENTATION
+                } else {
+                    ModelResolutionPriority.BACKGROUND_PRELOAD
+                },
+                selectedTransferDeadlineMonotonicMs = selectedTransferDeadlineMonotonicMs,
+            ),
             onPreparationSubstage = { stage -> onPreparationSubstage?.invoke(stage) },
+            onPreparationTransferUpdate = { update -> onTransferUpdate?.invoke(update) },
         )
         }
 
@@ -633,6 +647,8 @@ private fun PlayingContent(
     ) {
         var uncommittedHandle: PreparedSlideHandle? = null
         val photo = selected ?: return@LaunchedEffect
+        val selectedTransferDeadlineMonotonicMs = presentationMonotonicNowMs() +
+            MediaTransferPolicy.SELECTED_PRESENTATION_DEADLINE_MS
         try {
             val fastManual = manualNavigationActive && committedHandle != null
             val lifecycleToken = hostPlaybackToken() ?: return@LaunchedEffect
@@ -655,6 +671,8 @@ private fun PlayingContent(
                 photo,
                 fastManual = fastManual,
                 onPreparationSubstage = { stage -> onPreparationSubstage(photo.id, stage) },
+                onTransferUpdate = { update -> onPreparationTransferUpdate(photo.id, update) },
+                selectedTransferDeadlineMonotonicMs = selectedTransferDeadlineMonotonicMs,
             )) {
                 is PrepareSlideResult.Ready -> {
                     // Some Android 5/network decode calls are not cooperatively cancellable.

@@ -287,6 +287,7 @@ copy data/source/WebDavPhotoSource.kt
 copy data/source/SynologyApi.kt
 copy data/source/SynologyFileStationSource.kt
 copy data/cache/CancellableStreamCopy.kt
+copy data/cache/MediaTransferPolicy.kt
 copy data/cache/MediaCache.kt
 copy data/cache/LocalThumbnailCache.kt
 copy data/index/CanonicalPhotoPath.kt

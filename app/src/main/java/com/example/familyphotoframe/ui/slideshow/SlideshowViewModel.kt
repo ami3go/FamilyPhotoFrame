@@ -2601,7 +2601,11 @@ class SlideshowViewModel(
      */
     suspend fun resolveModel(
         display: DisplayPhoto,
+        request: ModelResolutionRequest = ModelResolutionRequest(
+            ModelResolutionPriority.BACKGROUND_PRELOAD,
+        ),
         onPreparationSubstage: (String) -> Unit = {},
+        onPreparationTransferUpdate: (PreparationTransferUpdate) -> Unit = {},
     ): PhotoModelResolution {
         val extension = ImageFormatSupport.extension(display.fileName)
         if (!ImageFormatSupport.isPlatformDecodable(
@@ -2646,6 +2650,32 @@ class SlideshowViewModel(
         val onMediaCacheStage: (MediaCache.ResolveStage) -> Unit = { stage ->
             onPreparationSubstage("MEDIA_CACHE_${stage.name}")
         }
+        val onMediaCacheTransfer: (MediaCache.TransferTelemetry) -> Unit = { telemetry ->
+            onPreparationTransferUpdate(
+                PreparationTransferUpdate(
+                    state = when (telemetry.state) {
+                        MediaCache.TransferTelemetryState.STARTED -> PreparationTransferState.STARTED
+                        MediaCache.TransferTelemetryState.PROGRESS -> PreparationTransferState.PROGRESS
+                        MediaCache.TransferTelemetryState.SELECTED_DEADLINE ->
+                            PreparationTransferState.SELECTED_DEADLINE
+                        MediaCache.TransferTelemetryState.STREAM_CLOSE_REQUESTED ->
+                            PreparationTransferState.STREAM_CLOSE_REQUESTED
+                        MediaCache.TransferTelemetryState.TRANSFER_SLOT_RELEASED ->
+                            PreparationTransferState.TRANSFER_SLOT_RELEASED
+                    },
+                    copiedBytes = telemetry.copiedBytes,
+                    expectedBytes = telemetry.expectedBytes,
+                    deadlineMs = telemetry.deadlineMs,
+                    streamCloseSucceeded = telemetry.streamCloseSucceeded,
+                )
+            )
+        }
+        val mediaTransferPriority = when (request.priority) {
+            ModelResolutionPriority.SELECTED_PRESENTATION ->
+                com.example.familyphotoframe.data.cache.MediaTransferPriority.SELECTED_PRESENTATION
+            ModelResolutionPriority.BACKGROUND_PRELOAD ->
+                com.example.familyphotoframe.data.cache.MediaTransferPriority.BACKGROUND_PRELOAD
+        }
         val cacheResult = if (remotePrimaryCachedOnly && display.sourceId == remotePrimarySourceId) {
             services.mediaCache.resolveIfCached(item, onMediaCacheStage)
         } else {
@@ -2664,7 +2694,15 @@ class SlideshowViewModel(
                 _state.value.engine.current?.stableId,
                 _state.value.engine.next?.stableId,
             ).filter { it.isNotEmpty() }.toSet()
-            services.mediaCache.resolve(item, src, protectedKeys, onMediaCacheStage)
+            services.mediaCache.resolve(
+                item = item,
+                source = src,
+                protectedKeys = protectedKeys,
+                priority = mediaTransferPriority,
+                transferDeadlineMonotonicMs = request.selectedTransferDeadlineMonotonicMs,
+                onStage = onMediaCacheStage,
+                onTransferTelemetry = onMediaCacheTransfer,
+            )
         }
 
         return when (cacheResult) {
@@ -5223,6 +5261,18 @@ class SlideshowViewModel(
 
     fun onPreparationSubstage(anchorId: Long, substage: String) {
         engine.reportPreparationSubstage(anchorId, substage)
+    }
+
+    /** Forward only the current selected presentation's bounded cache-transfer trace. */
+    fun onPreparationTransferUpdate(anchorId: Long, update: PreparationTransferUpdate) {
+        engine.reportPreparationTransfer(
+            anchorId = anchorId,
+            state = update.state.name,
+            copiedBytes = update.copiedBytes,
+            expectedBytes = update.expectedBytes,
+            deadlineMs = update.deadlineMs,
+            streamCloseSucceeded = update.streamCloseSucceeded,
+        )
     }
 
     /**

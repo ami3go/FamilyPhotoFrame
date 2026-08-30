@@ -133,7 +133,10 @@ object DiagnosticEventCatalog {
         "incomingPresentationToken", "transitionGeneration", "hostGeneration",
         "cancellationInitiator", "selectionAgeMs", "lastPresentationStage", "stageAgeMs",
         "selectionGeneration", "preparationSubstage", "preparationSubstageAgeMs",
-        "watchdogTimeoutMs",
+        "watchdogTimeoutMs", "mediaTransferState", "mediaTransferCopiedBytes",
+        "mediaTransferExpectedBytes", "mediaTransferAgeMs", "mediaTransferProgressAgeMs",
+        "mediaTransferDeadlineMs", "mediaTransferStreamCloseRequested",
+        "mediaTransferStreamCloseSucceeded", "mediaTransferSlotReleased",
     )
 
     private val sourceFields = setOf(

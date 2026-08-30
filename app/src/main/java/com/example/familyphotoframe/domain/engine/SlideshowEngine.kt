@@ -637,17 +637,20 @@ class SlideshowEngine(
             diagnostics.log(
                 DiagnosticsLog.Category.ENGINE,
                 "PREPARATION_CANCELLED_RECOVERED",
-                "photoToken" to diagnosticToken(current.stableId.ifBlank { current.id.toString() }, "photo"),
-                "reason" to "CURRENT_PREPARATION_CANCELLED",
-                "lastPresentationStage" to trace.lastStage,
-                "preparationSubstage" to trace.preparationSubstage,
-                "selectionAgeMs" to trace.selectionAgeMs().toString(),
-                "stageAgeMs" to trace.stageAgeMs().toString(),
-                "preparationSubstageAgeMs" to trace.preparationSubstageAgeMs().toString(),
-                "selectionGeneration" to trace.generation.toString(),
-                "selectionMode" to selectionMode.name,
-                "cancellationInitiator" to "UI_PREPARATION_CANCELLED",
-                "active" to hostActive.toString(),
+                "",
+                mapOf(
+                    "photoToken" to diagnosticToken(current.stableId.ifBlank { current.id.toString() }, "photo"),
+                    "reason" to "CURRENT_PREPARATION_CANCELLED",
+                    "lastPresentationStage" to trace.lastStage,
+                    "preparationSubstage" to trace.preparationSubstage,
+                    "selectionAgeMs" to trace.selectionAgeMs().toString(),
+                    "stageAgeMs" to trace.stageAgeMs().toString(),
+                    "preparationSubstageAgeMs" to trace.preparationSubstageAgeMs().toString(),
+                    "selectionGeneration" to trace.generation.toString(),
+                    "selectionMode" to selectionMode.name,
+                    "cancellationInitiator" to "UI_PREPARATION_CANCELLED",
+                    "active" to hostActive.toString(),
+                ) + trace.transferDiagnosticFields(),
             )
             commands.trySend(Command.Next)
         }
@@ -667,6 +670,35 @@ class SlideshowEngine(
             renderAckTrace = renderAckTrace.updatePreparation(
                 anchorId,
                 safeDiagnosticCode(substage),
+            )
+        }
+    }
+
+    /**
+     * Keeps selected cache-transfer progress in the same bounded trace as presentation
+     * stages.  Progress is never logged per chunk; only a watchdog/cancellation/final
+     * timeout serializes this snapshot into diagnostics.
+     */
+    fun reportPreparationTransfer(
+        anchorId: Long,
+        state: String,
+        copiedBytes: Long,
+        expectedBytes: Long,
+        deadlineMs: Long,
+        streamCloseSucceeded: Boolean?,
+    ) {
+        loopScope?.launch {
+            val current = _ui.value.current ?: return@launch
+            if (current.id != anchorId || renderedCurrentId == anchorId || failedCurrentId == anchorId) {
+                return@launch
+            }
+            renderAckTrace = renderAckTrace.updateTransfer(
+                anchorId = anchorId,
+                state = safeDiagnosticCode(state),
+                copiedBytes = copiedBytes,
+                expectedBytes = expectedBytes,
+                deadlineMs = deadlineMs,
+                streamCloseSucceeded = streamCloseSucceeded,
             )
         }
     }
@@ -692,17 +724,20 @@ class SlideshowEngine(
             diagnostics.log(
                 DiagnosticsLog.Category.ENGINE,
                 "PREPARATION_WATCHDOG_TIMEOUT",
-                "photoToken" to diagnosticToken(current.stableId.ifBlank { current.id.toString() }, "photo"),
-                "reason" to RenderAckTimeoutPolicy.reasonFor(trace.lastStage),
-                "lastPresentationStage" to trace.lastStage,
-                "preparationSubstage" to trace.preparationSubstage,
-                "selectionAgeMs" to trace.selectionAgeMs().toString(),
-                "stageAgeMs" to trace.stageAgeMs().toString(),
-                "preparationSubstageAgeMs" to trace.preparationSubstageAgeMs().toString(),
-                "watchdogTimeoutMs" to RenderAckTimeoutPolicy.PREPARATION_WATCHDOG_TIMEOUT_MS.toString(),
-                "selectionGeneration" to trace.generation.toString(),
-                "selectionMode" to selectionMode.name,
-                "active" to hostActive.toString(),
+                "",
+                mapOf(
+                    "photoToken" to diagnosticToken(current.stableId.ifBlank { current.id.toString() }, "photo"),
+                    "reason" to RenderAckTimeoutPolicy.reasonFor(trace.lastStage),
+                    "lastPresentationStage" to trace.lastStage,
+                    "preparationSubstage" to trace.preparationSubstage,
+                    "selectionAgeMs" to trace.selectionAgeMs().toString(),
+                    "stageAgeMs" to trace.stageAgeMs().toString(),
+                    "preparationSubstageAgeMs" to trace.preparationSubstageAgeMs().toString(),
+                    "watchdogTimeoutMs" to RenderAckTimeoutPolicy.PREPARATION_WATCHDOG_TIMEOUT_MS.toString(),
+                    "selectionGeneration" to trace.generation.toString(),
+                    "selectionMode" to selectionMode.name,
+                    "active" to hostActive.toString(),
+                ) + trace.transferDiagnosticFields(),
             )
             commands.trySend(Command.Next)
         }
@@ -855,16 +890,19 @@ class SlideshowEngine(
                             diagnostics.log(
                                 DiagnosticsLog.Category.ENGINE,
                                 "RENDER_ACK_TIMEOUT",
-                                "photoToken" to diagnosticToken(it.stableId.ifBlank { it.id.toString() }, "photo"),
-                                "reason" to RenderAckTimeoutPolicy.reasonFor(trace.lastStage),
-                                "lastPresentationStage" to trace.lastStage,
-                                "preparationSubstage" to trace.preparationSubstage,
-                                "selectionAgeMs" to trace.selectionAgeMs().toString(),
-                                "stageAgeMs" to trace.stageAgeMs().toString(),
-                                "preparationSubstageAgeMs" to trace.preparationSubstageAgeMs().toString(),
-                                "selectionGeneration" to trace.generation.toString(),
-                                "selectionMode" to selectionMode.name,
-                                "active" to hostActive.toString(),
+                                "",
+                                mapOf(
+                                    "photoToken" to diagnosticToken(it.stableId.ifBlank { it.id.toString() }, "photo"),
+                                    "reason" to RenderAckTimeoutPolicy.reasonFor(trace.lastStage),
+                                    "lastPresentationStage" to trace.lastStage,
+                                    "preparationSubstage" to trace.preparationSubstage,
+                                    "selectionAgeMs" to trace.selectionAgeMs().toString(),
+                                    "stageAgeMs" to trace.stageAgeMs().toString(),
+                                    "preparationSubstageAgeMs" to trace.preparationSubstageAgeMs().toString(),
+                                    "selectionGeneration" to trace.generation.toString(),
+                                    "selectionMode" to selectionMode.name,
+                                    "active" to hostActive.toString(),
+                                ) + trace.transferDiagnosticFields(),
                             )
                         }
                         onRenderAckTimeout()
@@ -1295,6 +1333,15 @@ class SlideshowEngine(
         val stageAtElapsedMs: Long = 0L,
         val preparationSubstage: String = "NOT_STARTED",
         val preparationSubstageAtElapsedMs: Long = 0L,
+        val mediaTransferState: String = "NOT_STARTED",
+        val mediaTransferCopiedBytes: Long = 0L,
+        val mediaTransferExpectedBytes: Long = 0L,
+        val mediaTransferStartedAtElapsedMs: Long = 0L,
+        val mediaTransferProgressAtElapsedMs: Long = 0L,
+        val mediaTransferDeadlineMs: Long = 0L,
+        val mediaTransferStreamCloseRequested: Boolean = false,
+        val mediaTransferStreamCloseSucceeded: Boolean? = null,
+        val mediaTransferSlotReleased: Boolean = false,
     ) {
         fun update(anchorId: Long, stage: String, now: Long = elapsedNowMs()): RenderAckTrace =
             if (photoId == anchorId) copy(lastStage = stage, stageAtElapsedMs = now) else this
@@ -1305,6 +1352,43 @@ class SlideshowEngine(
             } else {
                 this
             }
+
+        fun updateTransfer(
+            anchorId: Long,
+            state: String,
+            copiedBytes: Long,
+            expectedBytes: Long,
+            deadlineMs: Long,
+            streamCloseSucceeded: Boolean?,
+            now: Long = elapsedNowMs(),
+        ): RenderAckTrace {
+            if (photoId != anchorId) return this
+            // A cancelled selected transfer must retain its terminal deadline state even
+            // if a late close/release callback arrives after the engine has queued Next.
+            val terminalDeadline = mediaTransferState == "SELECTED_DEADLINE"
+            val nextState = if (terminalDeadline && state != "SELECTED_DEADLINE") {
+                mediaTransferState
+            } else {
+                state
+            }
+            val startedAt = if (mediaTransferStartedAtElapsedMs == 0L) now else mediaTransferStartedAtElapsedMs
+            val progressAt = when (state) {
+                "STARTED", "PROGRESS" -> now
+                else -> mediaTransferProgressAtElapsedMs.takeIf { it > 0L } ?: startedAt
+            }
+            return copy(
+                mediaTransferState = nextState,
+                mediaTransferCopiedBytes = maxOf(mediaTransferCopiedBytes, copiedBytes.coerceAtLeast(0L)),
+                mediaTransferExpectedBytes = maxOf(mediaTransferExpectedBytes, expectedBytes.coerceAtLeast(0L)),
+                mediaTransferStartedAtElapsedMs = startedAt,
+                mediaTransferProgressAtElapsedMs = progressAt,
+                mediaTransferDeadlineMs = maxOf(mediaTransferDeadlineMs, deadlineMs.coerceAtLeast(0L)),
+                mediaTransferStreamCloseRequested = mediaTransferStreamCloseRequested ||
+                    state == "STREAM_CLOSE_REQUESTED",
+                mediaTransferStreamCloseSucceeded = streamCloseSucceeded ?: mediaTransferStreamCloseSucceeded,
+                mediaTransferSlotReleased = mediaTransferSlotReleased || state == "TRANSFER_SLOT_RELEASED",
+            )
+        }
 
         fun forPhoto(anchorId: Long): RenderAckTrace =
             takeIf { photoId == anchorId } ?: RenderAckTrace(
@@ -1320,6 +1404,30 @@ class SlideshowEngine(
 
         fun preparationSubstageAgeMs(now: Long = elapsedNowMs()): Long =
             (now - preparationSubstageAtElapsedMs).coerceAtLeast(0L)
+
+        fun transferDiagnosticFields(now: Long = elapsedNowMs()): Map<String, String> {
+            val transferActive = mediaTransferStartedAtElapsedMs > 0L
+            return mapOf(
+                "mediaTransferState" to mediaTransferState,
+                "mediaTransferCopiedBytes" to mediaTransferCopiedBytes.toString(),
+                "mediaTransferExpectedBytes" to mediaTransferExpectedBytes.toString(),
+                "mediaTransferAgeMs" to if (transferActive) {
+                    (now - mediaTransferStartedAtElapsedMs).coerceAtLeast(0L).toString()
+                } else {
+                    "0"
+                },
+                "mediaTransferProgressAgeMs" to if (transferActive) {
+                    (now - mediaTransferProgressAtElapsedMs).coerceAtLeast(0L).toString()
+                } else {
+                    "0"
+                },
+                "mediaTransferDeadlineMs" to mediaTransferDeadlineMs.toString(),
+                "mediaTransferStreamCloseRequested" to mediaTransferStreamCloseRequested.toString(),
+                "mediaTransferStreamCloseSucceeded" to
+                    (mediaTransferStreamCloseSucceeded?.toString() ?: "UNKNOWN"),
+                "mediaTransferSlotReleased" to mediaTransferSlotReleased.toString(),
+            )
+        }
 
         companion object {
             fun selected(photoId: Long, generation: Long, now: Long = elapsedNowMs()): RenderAckTrace =
