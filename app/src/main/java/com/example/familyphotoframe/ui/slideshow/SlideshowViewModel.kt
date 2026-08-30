@@ -2599,7 +2599,7 @@ class SlideshowViewModel(
      * verified local file, so Coil never sees a network URL or NAS-relative token.
      * Returns either a ready model or a structured failure; the UI records the failure and advances.
      */
-    suspend fun resolveModel(
+    internal suspend fun resolveModel(
         display: DisplayPhoto,
         request: ModelResolutionRequest = ModelResolutionRequest(
             ModelResolutionPriority.BACKGROUND_PRELOAD,
@@ -5264,7 +5264,7 @@ class SlideshowViewModel(
     }
 
     /** Forward only the current selected presentation's bounded cache-transfer trace. */
-    fun onPreparationTransferUpdate(anchorId: Long, update: PreparationTransferUpdate) {
+    internal fun onPreparationTransferUpdate(anchorId: Long, update: PreparationTransferUpdate) {
         engine.reportPreparationTransfer(
             anchorId = anchorId,
             state = update.state.name,
