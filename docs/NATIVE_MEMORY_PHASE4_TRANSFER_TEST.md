@@ -1,12 +1,12 @@
 # Phase 4 selected-transfer test
 
-Build `26.56.1` adds a bounded cache-transfer path for the currently selected
+Build `26.57.1` adds a bounded cache-transfer path for the currently selected
 presentation. It does not change the native-memory allocation strategy; the Phase 2B
 HIL matrix is still required to identify that owner.
 
 ## Device run
 
-1. Install build `26.56.1` / version code `56`.
+1. Install build `26.57.1` / version code `57`.
 2. Use normal playback with the real SMB source for 2–4 hours.
 3. Export diagnostics after the run. If a selected cache transfer stalls, keep the
    device running long enough to observe the next presentation recover.
@@ -15,9 +15,10 @@ HIL matrix is still required to identify that owner.
 
 A selected cache operation shares one 58-second budget from presentation selection,
 including any cache-key or transfer-slot wait. Background preload retains the existing
-two-minute budget. The selected deadline is intentionally two seconds earlier than the
-60-second preparation watchdog, so the current slide advances without waiting for the
-broader 70-second render-ack fallback.
+two-minute budget. A freshly transferred selected anchor is rendered as a single frame rather
+than spending its remaining budget on optional collage probes and companion downloads. The
+70-second preparation watchdog leaves 12 seconds for anchor decode and transition after the
+transfer ceiling, and remains below the broader 80-second render-ack fallback.
 
 Routine progress is kept only in the bounded in-memory presentation trace. It will not
 rotate the bulk diagnostic log.
@@ -85,3 +86,16 @@ Build `26.56.1` therefore keeps the 64 KiB buffer and gives a selected transfer 
 the preparation watchdog at 60 seconds and the final render-ack fallback at 70 seconds. All three
 bounds remain below the existing two-minute background ceiling. Validation must show successful
 rendering on both devices without overdue streams, timeout loops, or unbounded resource growth.
+
+## Fourth hardware cycle finding
+
+The first `26.56.1` phone run completed a 3,344,324-byte selected transfer, but only 2.5 seconds
+remained when optional collage candidate lookup began. The 60-second preparation watchdog then
+advanced the selection. A cached retry eventually rendered, but it took another 43 seconds while
+collage probes and companion work ran, reproducing a visible blank/retry cycle.
+
+Build `26.57.1` renders a freshly transferred selected anchor as an immediate single-photo frame.
+Cached and background-preloaded anchors may still build collages. The selected transfer remains
+bounded at 58 seconds, while the preparation and final render-ack guards move to 70 and 80 seconds
+to leave a measured 12-second decode/transition margin. Validation must show that a successful
+fresh transfer reaches `SLIDE_RENDERED` without an intervening preparation watchdog.

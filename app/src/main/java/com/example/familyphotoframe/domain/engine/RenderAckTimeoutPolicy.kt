@@ -11,13 +11,13 @@ internal object RenderAckTimeoutPolicy {
 
     /**
      * Keep this above the selected cache-transfer budget and below the engine's final
-     * render-ack recovery. Slow but advancing SMB2 reads get a usable bounded window,
-     * while a wedged preparation is still abandoned after one minute.
+     * render-ack recovery. The post-transfer margin covers the anchor decode and transition;
+     * optional collage enrichment is skipped when the selected anchor required a transfer.
      */
-    const val PREPARATION_WATCHDOG_TIMEOUT_MS = 60_000L
+    const val PREPARATION_WATCHDOG_TIMEOUT_MS = 70_000L
 
     /** Last-resort guard for the entire UI hand-off, including transition commit. */
-    const val FINAL_RENDER_ACK_TIMEOUT_MS = 70_000L
+    const val FINAL_RENDER_ACK_TIMEOUT_MS = 80_000L
 
     fun shouldRecoverPreparation(lastStage: String?, preparationSubstage: String? = null): Boolean = when (lastStage) {
         null, SELECTED -> true

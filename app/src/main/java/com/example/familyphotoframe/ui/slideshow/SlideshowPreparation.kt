@@ -110,7 +110,7 @@ internal enum class ModelResolutionPriority {
 /**
  * Per-preparation resolution constraints.  A selected deadline is absolute in
  * monotonic milliseconds, so each anchor/collage cache request consumes
- * only the time remaining before the selected presentation's 20-second watchdog.
+ * only the time remaining before the selected presentation's bounded watchdog.
  */
 internal data class ModelResolutionRequest(
     val priority: ModelResolutionPriority,
@@ -643,13 +643,21 @@ internal suspend fun prepareSlide(
             return PrepareSlideResult.Ready(prepared)
         }
 
+        var anchorTransferObserved = false
         onPreparationSubstage("MODEL_RESOLUTION")
         val resolvedAnchor = when (val resolved = resolvePhoto(
             photo,
             resolveModel,
             modelResolutionRequest,
             onPreparationSubstage,
-            onPreparationTransferUpdate,
+            { update ->
+                if (update.state == PreparationTransferState.STARTED ||
+                    update.state == PreparationTransferState.PROGRESS
+                ) {
+                    anchorTransferObserved = true
+                }
+                onPreparationTransferUpdate(update)
+            },
         )) {
             is ResolvePhotoResult.Ready -> resolved.photo
             is ResolvePhotoResult.Failed -> return PrepareSlideResult.Failed(resolved.failure)
@@ -695,6 +703,17 @@ internal suspend fun prepareSlide(
         } else requestedFallback
 
         if (collageMode == PortraitCollageMode.OFF) return prepareSingle()
+        if (SelectedAnchorPresentationPolicy.shouldPreferSingle(
+                modelResolutionRequest.priority,
+                anchorTransferObserved,
+            )
+        ) {
+            return prepareSingle(
+                forcedAspect = if (photo.metadataOrientation() == PhotoOrientation.PORTRAIT) allowedFallback else null,
+                eventReason = "selected_anchor_transfer",
+                allowTransitionBlur = false,
+            )
+        }
         if (maxCollagePhotos < 2) {
             return prepareSingle(
                 forcedAspect = if (photo.metadataOrientation() == PhotoOrientation.PORTRAIT) allowedFallback else null,
