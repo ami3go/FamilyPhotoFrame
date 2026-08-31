@@ -1,5 +1,6 @@
 package com.example.familyphotoframe.ui.slideshow.transition
 
+import androidx.compose.ui.graphics.CompositingStrategy
 import com.example.familyphotoframe.data.settings.TransitionMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -48,6 +49,25 @@ class TransitionModelTest {
             }
         }
     }
+
+    @Test
+    fun crossfadeUsesModulatedAlphaInsteadOfOffscreenBuffers() {
+        val middle = transitionFrame(TransitionMode.CROSSFADE, 0.5f)
+
+        assertEquals(
+            CompositingStrategy.ModulateAlpha,
+            presentationCompositingStrategy(middle.outgoing),
+        )
+        assertEquals(
+            CompositingStrategy.ModulateAlpha,
+            presentationCompositingStrategy(middle.incoming),
+        )
+        assertEquals(
+            CompositingStrategy.Auto,
+            presentationCompositingStrategy(LayerTransform(alpha = 1f)),
+        )
+    }
+
     @Test
     fun softFocusLayersNeverExposeTheApplicationBackground() {
         for (step in 0..100) {

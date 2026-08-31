@@ -142,11 +142,24 @@ internal fun softFocusFrame(rawProgress: Float): SoftFocusFrame {
 private fun Modifier.presentationTransform(transform: LayerTransform): Modifier =
     graphicsLayer {
         alpha = transform.alpha.coerceIn(0f, 1f)
+        // Auto alpha creates a full-viewport offscreen buffer on the API 22 frame.
+        // Crossfade HIL showed those native buffers accumulating even though bitmap,
+        // decode, transition, FD, and thread ownership all balanced. Modulating alpha
+        // into this simple presentation subtree preserves the fade without allocating
+        // an offscreen layer for every outgoing and incoming frame.
+        compositingStrategy = presentationCompositingStrategy(transform)
         scaleX = transform.scale
         scaleY = transform.scale
         translationX = transform.translationXFraction * size.width
         translationY = transform.translationYFraction * size.height
         clip = true
+    }
+
+internal fun presentationCompositingStrategy(transform: LayerTransform): CompositingStrategy =
+    if (transform.alpha.coerceIn(0f, 1f) < 1f) {
+        CompositingStrategy.ModulateAlpha
+    } else {
+        CompositingStrategy.Auto
     }
 
 /**

@@ -32,6 +32,17 @@ completed; FDs fell by one, threads fell by three, and decode/transition ownersh
 balanced apart from the in-flight final decode. This passes Single instant; continue with
 a fresh-process `SINGLE_PHOTO_CROSSFADE` run.
 
+The build 26.58.1 Single crossfade run completed 2.01 hours with 298 selections and
+296 renders and no crash, ANR, or render-ack timeout. Unlike Single instant, native PSS
+grew 9.28 MiB across the 1.51-hour post-warm-up window (6.63 MiB/hour regression) while
+decode, transition, bitmap, SMB, FD, and thread ownership stayed balanced and total PSS
+fell 9.48 MiB. The differentiator is the animated renderer's two translucent full-screen
+`graphicsLayer` subtrees. Compose's automatic alpha compositing can allocate an offscreen
+viewport buffer for each layer on API 22. Build 26.59.1 explicitly uses
+`CompositingStrategy.ModulateAlpha` for translucent presentation transforms, preserving
+the crossfade while avoiding those offscreen buffers. Repeat Single crossfade with a
+fresh process before returning to Normal.
+
 Build `26.46.1` adds aggregate native-allocation attribution and four explicit test modes.
 The counters retain no image, path, or photo identifier. They are intended to determine whether
 the observed native-PSS slope comes from source/decode work, generated bitmaps, or rendering.
