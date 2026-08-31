@@ -17,6 +17,13 @@ batching, or database semantics. Repeat `HOLD_COMMITTED_FRAME` with a fresh proc
 resuming the normal Phase 4 gate; native PSS must remain flat while `CONTENT_HASH` stream
 count and indexed bytes continue to advance.
 
+The post-fix Hold run completed 2.48 hours without a crash or ANR. After the 30-minute
+warm-up, native PSS rose 2.25 MiB and then remained byte-for-byte flat for the final
+1.47 hours while 620 additional SMB content-hash streams completed. FDs stayed at 42,
+threads ended two below the warm-up edge, and all SMB streams remained balanced and
+non-overdue. This passes the Hold isolation step; continue with a fresh-process
+`SINGLE_PHOTO_INSTANT` run before returning to Normal.
+
 Build `26.46.1` adds aggregate native-allocation attribution and four explicit test modes.
 The counters retain no image, path, or photo identifier. They are intended to determine whether
 the observed native-PSS slope comes from source/decode work, generated bitmaps, or rendering.
