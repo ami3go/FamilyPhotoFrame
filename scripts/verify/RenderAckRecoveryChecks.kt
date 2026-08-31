@@ -11,6 +11,16 @@ fun runRenderAckRecoveryChecks() {
         RenderAckRecoveryPolicy.isCurrentAttempt(13L, 13L),
     )
     check(
+        "selected transfer deadline releases the slow anchor",
+        true,
+        RenderAckRecoveryPolicy.shouldReleaseCancelledAnchor("SELECTED_DEADLINE"),
+    )
+    check(
+        "ordinary preparation cancellation preserves anchor eligibility",
+        false,
+        RenderAckRecoveryPolicy.shouldReleaseCancelledAnchor("TRANSFER_SLOT_RELEASED"),
+    )
+    check(
         "visible same-photo re-selection bypasses an unobservable acknowledgement",
         true,
         RenderAckRecoveryPolicy.reusesVisiblePresentation(41L, 41L, 41L),

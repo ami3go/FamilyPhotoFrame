@@ -1,12 +1,12 @@
 # Phase 4 selected-transfer test
 
-Build `26.53.1` adds a bounded cache-transfer path for the currently selected
+Build `26.54.1` adds a bounded cache-transfer path for the currently selected
 presentation. It does not change the native-memory allocation strategy; the Phase 2B
 HIL matrix is still required to identify that owner.
 
 ## Device run
 
-1. Install build `26.53.1` / version code `53`.
+1. Install build `26.54.1` / version code `54`.
 2. Use normal playback with the real SMB source for 2–4 hours.
 3. Export diagnostics after the run. If a selected cache transfer stalls, keep the
    device running long enough to observe the next presentation recover.
@@ -53,3 +53,18 @@ selected preparation and its watchdog by that generation, and rejects stage, tra
 cancellation, and watchdog callbacks from an older attempt. The new hardware cycle must show that
 a selected deadline is followed by a real new attempt or a different selected photo, without a
 same-token `PREPARATION_NOT_STARTED` timeout loop.
+
+## Second hardware cycle finding
+
+The three-hour `26.53.1` V80 run remained crash-free and eliminated the unobservable
+acknowledgement timeout, but exposed a second recovery gap. One 11.6 MB SMB photo exceeded the
+18-second selected-transfer budget and was immediately reserved again 45 times in about 14
+minutes. Every attempt continued making progress, released its transfer slot, and recovered, but
+the repeated same-anchor reservation stalled slideshow progress and created avoidable transfer
+and native-memory pressure.
+
+Build `26.54.1` treats `SELECTED_DEADLINE` as an anchor failure in the active folder-balanced
+shuffle cycle. The failed anchor is removed from that cycle before advancing, while ordinary UI
+preparation cancellation still releases its reservation without penalizing the photo. The reset
+hardware cycle must show a different photo after a selected deadline and must not reproduce a
+same-anchor deadline retry storm.

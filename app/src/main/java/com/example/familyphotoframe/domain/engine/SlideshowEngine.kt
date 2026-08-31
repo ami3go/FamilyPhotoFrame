@@ -649,6 +649,18 @@ class SlideshowEngine(
 
             cancellationRecoveryCurrentId = anchorId
             renderAckTrace = trace.update(anchorId, "PREPARE_CANCELLED")
+            if (RenderAckRecoveryPolicy.shouldReleaseCancelledAnchor(trace.mediaTransferState)) {
+                activeReservation?.takeIf { it.anchorPhotoId == anchorId }?.let { reservation ->
+                    folderBalancedShuffle.releaseAnchorFailure(
+                        reservation.scopeKey,
+                        reservation.reservationId,
+                        anchorId,
+                        "selected_transfer_deadline",
+                    )
+                    activeReservation = null
+                    _ui.value = _ui.value.copy(reservedCandidateIds = emptyList())
+                }
+            }
             diagnostics.log(
                 DiagnosticsLog.Category.ENGINE,
                 "PREPARATION_CANCELLED_RECOVERED",
