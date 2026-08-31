@@ -117,6 +117,37 @@ class ExifInterface(input: InputStream) {
 }
 EOF
 
+cat > "$TC/stubs/AndroidCache.kt" <<'EOF'
+package android.content
+
+import java.io.File
+
+open class Context {
+    open val filesDir: File = File(System.getProperty("java.io.tmpdir"))
+}
+EOF
+
+cat > "$TC/stubs/Bitmap.kt" <<'EOF'
+package android.graphics
+
+import java.io.OutputStream
+
+open class Bitmap {
+    open val isRecycled: Boolean = false
+    open fun compress(format: CompressFormat, quality: Int, stream: OutputStream): Boolean = true
+    enum class CompressFormat { JPEG }
+}
+
+object BitmapFactory {
+    class Options {
+        var inJustDecodeBounds: Boolean = false
+        var outWidth: Int = 1
+        var outHeight: Int = 1
+    }
+    fun decodeFile(path: String, options: Options): Bitmap? = null
+}
+EOF
+
 # kotlinx-serialization ships only its *compiler plugin* in the Kotlin distribution, not
 # its runtime, so the settings layer needs stubs. These cover exactly the surface used:
 # the annotations, and Json encode/decode. Enough to type-check the settings data model
@@ -187,6 +218,11 @@ copy() { mkdir -p "$TC/src/$(dirname "$1")"; cp "$SRC/$1" "$TC/src/$1"; }
 copy data/db/PhotoItemEntity.kt
 copy data/db/FolderSummary.kt
 copy data/db/PhotoDao.kt
+copy data/db/FolderSelectionSql.kt
+copy data/db/Phase1Entities.kt
+copy data/db/Phase1Daos.kt
+copy data/db/LocalThumbnailCacheEntity.kt
+copy data/db/LocalThumbnailCacheDao.kt
 copy data/db/ShufflePhotoRow.kt
 copy data/db/ShuffleEntities.kt
 copy data/db/ShuffleDao.kt
@@ -200,20 +236,24 @@ copy data/diagnostics/DiagnosticPrivacyPolicy.kt
 copy data/diagnostics/DiagnosticRateController.kt
 copy data/diagnostics/DiagnosticsHealthSnapshot.kt
 copy data/diagnostics/DiagnosticRuntimeState.kt
+copy data/diagnostics/NativeAllocationStageTracker.kt
 copy data/diagnostics/DiagnosticsBundle.kt
 copy data/diagnostics/CrashEnvelopeStore.kt
 copy data/diagnostics/MainThreadStallDetector.kt
 copy data/diagnostics/ProcessExitReasonMapper.kt
+copy data/diagnostics/RuntimeResourceTracker.kt
 copy data/source/BuiltInSourceIds.kt
-copy domain/randomize/LeastRecentRandom.kt
 copy domain/randomize/PlaybackQueue.kt
-copy domain/randomize/FolderCycleQueue.kt
-copy domain/randomize/FolderBalancedPlaybackQueue.kt
 copy domain/engine/EngineState.kt
 copy domain/engine/DecodeFailure.kt
+copy domain/engine/DecodeSuppressionPolicy.kt
 copy domain/engine/RecoveryPolicy.kt
 copy domain/engine/PlaybackMemoryPolicy.kt
 copy domain/engine/PlaybackMemoryGuard.kt
+copy domain/engine/PlaybackPoolCachePolicy.kt
+copy domain/engine/RenderAckRecoveryPolicy.kt
+copy domain/engine/RenderAckTimeoutPolicy.kt
+copy domain/engine/OnThisDayPlaybackPolicy.kt
 copy domain/engine/SourcePoolPolicy.kt
 copy domain/engine/SlideshowEngine.kt
 copy slideshow/shuffle/ShuffleModels.kt
@@ -239,10 +279,17 @@ EOF
 # deliberately absent: it needs the kotlinx-serialization *runtime*, and the Kotlin
 # distribution ships only the compiler plugin.
 copy data/source/PhotoSource.kt
+copy data/source/DeadlineInputStream.kt
+copy data/source/DeferredCloseResource.kt
 copy data/source/WebDavApi.kt
 copy data/source/CertPinning.kt
 copy data/source/WebDavPhotoSource.kt
 copy data/source/SynologyApi.kt
+copy data/source/SynologyFileStationSource.kt
+copy data/cache/CancellableStreamCopy.kt
+copy data/cache/MediaTransferPolicy.kt
+copy data/cache/MediaCache.kt
+copy data/cache/LocalThumbnailCache.kt
 copy data/index/CanonicalPhotoPath.kt
 copy data/index/Indexer.kt
 copy data/index/ScanCompletionPolicy.kt
@@ -256,12 +303,15 @@ copy util/ImageFormatSupport.kt
 copy util/Hex.kt
 copy data/weather/Weather.kt
 copy data/settings/AppSettings.kt
+copy data/settings/AppSettingsCanonicalizer.kt
 copy data/settings/PlaybackInterval.kt
 copy data/settings/CredentialPolicy.kt
+mkdir -p "$TC/src/data/source"
+cp scripts/typecheck/SourceLifecycleChecks.kt "$TC/src/data/source/SourceLifecycleChecks.kt"
 
 # The offline compiler bundle can lag the Gradle toolchain. Patch only the temporary
 # copies so its older stdlib/coroutines API can type-check the same production logic.
-for file in PlaybackQueue.kt FolderCycleQueue.kt; do
+for file in PlaybackQueue.kt; do
   sed -i '/^package com.example.familyphotoframe.domain.randomize/a import java.util.ArrayDeque'     "$TC/src/domain/randomize/$file"
 done
 sed -i '/^package com.example.familyphotoframe.domain.engine/a import java.util.ArrayDeque'   "$TC/src/domain/engine/SlideshowEngine.kt"
@@ -287,5 +337,7 @@ if grep -q "error:" "$TC/log"; then
   exit 1
 fi
 echo "    no type errors"
+"$(dirname "$KOTLINC")/kotlin" -classpath "$TC/out:$COROUTINES" \
+  com.example.familyphotoframe.data.source.SourceLifecycleChecksKt
 echo
 echo "ALL TYPE CHECKS PASSED"

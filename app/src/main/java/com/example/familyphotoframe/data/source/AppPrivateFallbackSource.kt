@@ -8,8 +8,11 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
 import kotlin.coroutines.coroutineContext
 
@@ -28,18 +31,33 @@ class AppPrivateFallbackSource(
     override val type: SourceType = SourceType.APP_PRIVATE_BUILTIN
 
     private val dir: File get() = File(context.filesDir, "fallback")
+    private val materializeLock = Mutex()
 
     /** Copy bundled assets into app-private storage if not present. Idempotent. */
     suspend fun ensureMaterialized() = withContext(io) {
-        if (!dir.exists()) dir.mkdirs()
-        val assets = context.assets.list("fallback").orEmpty()
-        for (asset in assets) {
-            val target = File(dir, asset)
-            if (target.exists() && target.length() > 0) continue
-            context.assets.open("fallback/$asset").use { input ->
-                val tmp = File(dir, "$asset.part")
-                tmp.outputStream().use { input.copyTo(it) }
-                tmp.renameTo(target) // atomic-ish publish
+        materializeLock.withLock {
+            if (!dir.isDirectory && !dir.mkdirs()) {
+                throw java.io.IOException("fallback_directory_create_failed")
+            }
+            val assets = context.assets.list("fallback").orEmpty()
+            for (asset in assets) {
+                val target = File(dir, asset)
+                if (target.isFile && target.length() > 0) continue
+                context.assets.open("fallback/$asset").use { input ->
+                    val tmp = File(dir, "$asset.part")
+                    FileOutputStream(tmp).use { output ->
+                        input.copyTo(output)
+                        output.fd.sync()
+                    }
+                    if (target.exists() && !target.delete()) {
+                        tmp.delete()
+                        throw java.io.IOException("fallback_asset_replace_failed")
+                    }
+                    if (!tmp.renameTo(target)) {
+                        tmp.delete()
+                        throw java.io.IOException("fallback_asset_publish_failed")
+                    }
+                }
             }
         }
     }

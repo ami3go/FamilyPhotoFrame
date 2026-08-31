@@ -36,6 +36,7 @@ import com.example.familyphotoframe.data.settings.PlaylistScheduleRule
 import com.example.familyphotoframe.domain.schedule.RescanSchedule
 import com.example.familyphotoframe.domain.schedule.SleepSchedule
 import com.example.familyphotoframe.domain.schedule.PlaylistSchedule
+import com.example.familyphotoframe.domain.schedule.PlaylistOverrideWakePolicy
 import com.example.familyphotoframe.domain.schedule.BrightnessPolicy
 import com.example.familyphotoframe.domain.schedule.OnThisDaySchedule
 import com.example.familyphotoframe.domain.onthisday.OnThisDaySelection
@@ -107,6 +108,7 @@ import com.example.familyphotoframe.domain.engine.SourcePoolPolicy
 import com.example.familyphotoframe.domain.engine.SourceStatusPolicy
 import com.example.familyphotoframe.util.ImageFormatSupport
 import com.example.familyphotoframe.web.WebServerController
+import com.example.familyphotoframe.web.WebPreviewCaptureRequest
 import com.example.familyphotoframe.web.WebPreviewFrame
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -123,6 +125,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
@@ -134,6 +137,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.yield
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -163,16 +167,23 @@ class SlideshowViewModel(
     private val _state = MutableStateFlow(SlideshowUiState())
     val state: StateFlow<SlideshowUiState> = _state.asStateFlow()
     val memoryProtection = services.playbackMemoryGuard.state
+    val webPreviewCaptureRequest: StateFlow<WebPreviewCaptureRequest?> =
+        services.webServer.previewCaptureRequest
+    internal val bitmapLifecycleTracker = services.bitmapLifecycleTracker
+    internal val nativeAllocationStageTracker = services.nativeAllocationStageTracker
     private val _hostActive = MutableStateFlow(false)
     val hostActive: StateFlow<Boolean> = _hostActive.asStateFlow()
     private val _hostGeneration = MutableStateFlow(0L)
     val hostGeneration: StateFlow<Long> = _hostGeneration.asStateFlow()
     private val hostLifecycleGate = HostLifecycleGate()
     private val webPinRegenerationInFlight = AtomicBoolean(false)
+    private var engineOwnerToken: Long = 0L
+    private var webControlsOwnerToken: Long = 0L
 
     fun onHostStarted() {
         _hostGeneration.value = hostLifecycleGate.start()
         _hostActive.value = true
+        engine.setHostActive(engineOwnerToken, true)
     }
 
     fun onHostStopped() {
@@ -180,6 +191,7 @@ class SlideshowViewModel(
         // ignores cancellation can therefore never race onStop and commit a stale result.
         _hostGeneration.value = hostLifecycleGate.stop()
         _hostActive.value = false
+        engine.setHostActive(engineOwnerToken, false)
     }
 
     fun hostPlaybackToken(): Long? = hostLifecycleGate.tokenIfActive()
@@ -349,7 +361,7 @@ class SlideshowViewModel(
                 .distinctUntilChangedBy { it.signature to it.refreshToken }
                 .collectLatest(::applySourceRequest)
         }
-        engine.start(viewModelScope)
+        engineOwnerToken = engine.start(viewModelScope)
         healthJob = viewModelScope.launch {
             while (isActive) {
                 refreshHealth()
@@ -385,11 +397,12 @@ class SlideshowViewModel(
         frameStatsJob?.cancel()
         // onCleared cannot suspend, so this can only request cancellation, not await it.
         cancelSourceConsumingJobs()
+        engine.stop(engineOwnerToken)
         // Remote sessions outlive the ViewModel unless released here: on a configuration
         // change the replacement instance builds its own, and the old transports would
         // stay registered with nothing left to close them.
         releaseResolvedSources()
-        services.webServer.controls = null
+        services.webServer.clearControls(webControlsOwnerToken)
         super.onCleared()
     }
 
@@ -421,7 +434,7 @@ class SlideshowViewModel(
                             src, "SMB", 8_000, DiagnosticOrigin.WEB_UI, configRevision,
                         )))
                     } finally {
-                        runCatching { src.close() }
+                        runCatching { src.shutdown() }
                     }
                 }
                 ActiveSourceKind.SYNOLOGY -> {
@@ -437,9 +450,13 @@ class SlideshowViewModel(
                         ),
                         SynologyCredentials(syn.user, password),
                     )
-                    appContext.getString(synologyHealthMessageRes(sourceTestWithDiagnostics(
-                        src, "SYNOLOGY", 10_000, DiagnosticOrigin.WEB_UI, configRevision,
-                    )))
+                    try {
+                        appContext.getString(synologyHealthMessageRes(sourceTestWithDiagnostics(
+                            src, "SYNOLOGY", 10_000, DiagnosticOrigin.WEB_UI, configRevision,
+                        )))
+                    } finally {
+                        runCatching { src.shutdown() }
+                    }
                 }
                 ActiveSourceKind.LOCAL_SAF -> {
                     val uri = s.source.treeUri ?: return appContext.getString(R.string.msg_folder_missing)
@@ -521,14 +538,14 @@ class SlideshowViewModel(
                     services.factoryResetCoordinator.reset()
                     // Keep this request alive long enough to deliver its terminal success;
                     // the process restart then destroys all in-memory web sessions.
-                    services.webServer.controls = null
+                    services.webServer.clearControls(webControlsOwnerToken)
                     scheduleApplicationRestart()
                     null
                 } catch (error: Exception) {
                     // The ViewModel has already been quiesced, and DataStore/cache work
                     // cannot share Room's transaction. Restart into the persisted state
                     // instead of attempting to resume a potentially partial runtime.
-                    services.webServer.controls = null
+                    services.webServer.clearControls(webControlsOwnerToken)
                     scheduleApplicationRestart()
                     "Factory reset failed at a protected boundary: " +
                         error.javaClass.simpleName.ifBlank { "UNKNOWN" } +
@@ -606,10 +623,11 @@ class SlideshowViewModel(
     // Declared after [webControls] so the property is initialized before it is read
     // (Kotlin runs init blocks and property initializers in declaration order).
     init {
-        services.webServer.controls = webControls
+        webControlsOwnerToken = services.webServer.installControls(webControls)
     }
 
     private suspend fun onSettings(s: AppSettings) {
+        val previousSettings = lastSettings
         if (playlistScheduleConfig(lastSettings?.playlists) != playlistScheduleConfig(s.playlists)) {
             restartPlaylistScheduleWatcher()
         }
@@ -656,6 +674,7 @@ class SlideshowViewModel(
                 decodeColorDepth = s.decodeColorDepth,
                 cachePlaybackPool = s.cachePlaybackPool,
                 decodeResolution = s.decodeResolution,
+                nativeMemoryHilMode = s.nativeMemoryHilMode,
                 memoryTier = services.memoryTier,
                 autoStartOnBoot = s.autoStartOnBoot,
                 web = s.web,
@@ -686,6 +705,16 @@ class SlideshowViewModel(
             )
         }
         publishDiagnosticPlayback(_state.value, transitionOverride = effectiveTransition.name)
+        services.setNativeMemoryHilMode(s.nativeMemoryHilMode)
+        engine.setDiagnosticHold(s.nativeMemoryHilMode.holdPlayback)
+        if (previousSettings?.nativeMemoryHilMode != s.nativeMemoryHilMode) {
+            diagnostics.log(
+                DiagnosticsLog.Category.MEMORY,
+                "NATIVE_HIL_MODE_CHANGED",
+                "mode" to s.nativeMemoryHilMode.name,
+                "previousMode" to (previousSettings?.nativeMemoryHilMode?.name ?: "UNKNOWN"),
+            )
+        }
         engine.setCachePlaybackPool(s.cachePlaybackPool)
         engine.setTiming(effectiveInterval, s.temporarilySuppressAfterDecodeFailures)
         // Applied without a reselect: the pools are unchanged, so the photo on screen
@@ -2570,7 +2599,14 @@ class SlideshowViewModel(
      * verified local file, so Coil never sees a network URL or NAS-relative token.
      * Returns either a ready model or a structured failure; the UI records the failure and advances.
      */
-    suspend fun resolveModel(display: DisplayPhoto): PhotoModelResolution {
+    internal suspend fun resolveModel(
+        display: DisplayPhoto,
+        request: ModelResolutionRequest = ModelResolutionRequest(
+            ModelResolutionPriority.BACKGROUND_PRELOAD,
+        ),
+        onPreparationSubstage: (String) -> Unit = {},
+        onPreparationTransferUpdate: (PreparationTransferUpdate) -> Unit = {},
+    ): PhotoModelResolution {
         val extension = ImageFormatSupport.extension(display.fileName)
         if (!ImageFormatSupport.isPlatformDecodable(
                 display.fileName, display.mimeType, Build.VERSION.SDK_INT,
@@ -2607,8 +2643,41 @@ class SlideshowViewModel(
             fileModifiedEpochMs = display.fileModifiedEpochMs,
             openToken = display.openToken,
         )
+        // Do not persist these routine markers.  The selected presentation's bounded
+        // in-memory trace retains the last one, so a watchdog event can distinguish a
+        // cache lock, stream open, transfer, verification, or commit without rotating
+        // the diagnostic bundle during a normal soak.
+        val onMediaCacheStage: (MediaCache.ResolveStage) -> Unit = { stage ->
+            onPreparationSubstage("MEDIA_CACHE_${stage.name}")
+        }
+        val onMediaCacheTransfer: (MediaCache.TransferTelemetry) -> Unit = { telemetry ->
+            onPreparationTransferUpdate(
+                PreparationTransferUpdate(
+                    state = when (telemetry.state) {
+                        MediaCache.TransferTelemetryState.STARTED -> PreparationTransferState.STARTED
+                        MediaCache.TransferTelemetryState.PROGRESS -> PreparationTransferState.PROGRESS
+                        MediaCache.TransferTelemetryState.SELECTED_DEADLINE ->
+                            PreparationTransferState.SELECTED_DEADLINE
+                        MediaCache.TransferTelemetryState.STREAM_CLOSE_REQUESTED ->
+                            PreparationTransferState.STREAM_CLOSE_REQUESTED
+                        MediaCache.TransferTelemetryState.TRANSFER_SLOT_RELEASED ->
+                            PreparationTransferState.TRANSFER_SLOT_RELEASED
+                    },
+                    copiedBytes = telemetry.copiedBytes,
+                    expectedBytes = telemetry.expectedBytes,
+                    deadlineMs = telemetry.deadlineMs,
+                    streamCloseSucceeded = telemetry.streamCloseSucceeded,
+                )
+            )
+        }
+        val mediaTransferPriority = when (request.priority) {
+            ModelResolutionPriority.SELECTED_PRESENTATION ->
+                com.example.familyphotoframe.data.cache.MediaTransferPriority.SELECTED_PRESENTATION
+            ModelResolutionPriority.BACKGROUND_PRELOAD ->
+                com.example.familyphotoframe.data.cache.MediaTransferPriority.BACKGROUND_PRELOAD
+        }
         val cacheResult = if (remotePrimaryCachedOnly && display.sourceId == remotePrimarySourceId) {
-            services.mediaCache.resolveIfCached(item)
+            services.mediaCache.resolveIfCached(item, onMediaCacheStage)
         } else {
             val src = remoteSources.active(display.sourceId)
                 ?: return PhotoModelResolution.Failed(
@@ -2625,7 +2694,15 @@ class SlideshowViewModel(
                 _state.value.engine.current?.stableId,
                 _state.value.engine.next?.stableId,
             ).filter { it.isNotEmpty() }.toSet()
-            services.mediaCache.resolve(item, src, protectedKeys)
+            services.mediaCache.resolve(
+                item = item,
+                source = src,
+                protectedKeys = protectedKeys,
+                priority = mediaTransferPriority,
+                transferDeadlineMonotonicMs = request.selectedTransferDeadlineMonotonicMs,
+                onStage = onMediaCacheStage,
+                onTransferTelemetry = onMediaCacheTransfer,
+            )
         }
 
         return when (cacheResult) {
@@ -2684,15 +2761,49 @@ class SlideshowViewModel(
             return valid
         }
 
+        suspend fun trackedProbe(block: suspend () -> Pair<Int, Int>?): Pair<Int, Int>? {
+            val operation = nativeAllocationStageTracker.start(
+                com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Stage.BOUNDS_PROBE
+            )
+            return try {
+                block().also { dimensions ->
+                    operation.finish(
+                        if (dimensions != null) {
+                            com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Outcome.COMPLETED
+                        } else {
+                            com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Outcome.FAILED
+                        }
+                    )
+                }
+            } catch (timeout: TimeoutCancellationException) {
+                operation.finish(
+                    com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Outcome.TIMED_OUT
+                )
+                null
+            } catch (cancelled: CancellationException) {
+                operation.finish(
+                    com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Outcome.CANCELLED
+                )
+                throw cancelled
+            } catch (error: Throwable) {
+                operation.finish(
+                    com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Outcome.FAILED
+                )
+                throw error
+            }
+        }
+
         when (val cached = services.mediaCache.resolveIfCached(item)) {
             is MediaCache.ResolveResult.Ready -> {
-                val dimensions = withContext(Dispatchers.IO) {
-                    try {
-                        RemoteImageBoundsProbe.decode(cached.file.inputStream())
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Exception) {
-                        null
+                val dimensions = trackedProbe {
+                    withContext(Dispatchers.IO) {
+                        try {
+                            RemoteImageBoundsProbe.decode(cached.file.inputStream())
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            null
+                        }
                     }
                 }
                 return persist(dimensions)
@@ -2701,21 +2812,24 @@ class SlideshowViewModel(
         }
 
         val source = remoteSources.active(display.sourceId) ?: return null
-        val dimensions = withTimeoutOrNull(REMOTE_COLLAGE_PROBE_TIMEOUT_MS) {
-            withContext(Dispatchers.IO) {
-                try {
-                    val stream = source.openStream(
-                        item,
-                        OpenOptions(
-                            timeoutMs = REMOTE_COLLAGE_PROBE_TIMEOUT_MS,
-                            preferOriginal = false,
-                        ),
-                    )
-                    RemoteImageBoundsProbe.decode(stream)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    null
+        val dimensions = trackedProbe {
+            withTimeout(REMOTE_COLLAGE_PROBE_TIMEOUT_MS) {
+                withContext(Dispatchers.IO) {
+                    try {
+                        val stream = source.openStream(
+                            item,
+                            OpenOptions(
+                                timeoutMs = REMOTE_COLLAGE_PROBE_TIMEOUT_MS,
+                                preferOriginal = false,
+                                purpose = com.example.familyphotoframe.data.source.OpenPurpose.COLLAGE_BOUNDS,
+                            ),
+                        )
+                        RemoteImageBoundsProbe.decode(stream)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        null
+                    }
                 }
             }
         }
@@ -2882,7 +2996,7 @@ class SlideshowViewModel(
                     diagnosticToken(draft.toString(), "config"),
                 ))
             } finally {
-                runCatching { src.close() }
+                runCatching { src.shutdown() }
             }
             _state.update { it.copy(smbTestResult = appContext.getString(res)) }
         }
@@ -2987,13 +3101,17 @@ class SlideshowViewModel(
                 SynologyConnection(baseUrl = draft.baseUrl, folderPath = draft.folderPath),
                 SynologyCredentials(draft.user, effectivePassword, otpCode.trim().ifBlank { null }),
             )
-            val res = synologyHealthMessageRes(sourceTestWithDiagnostics(
-                src,
-                "SYNOLOGY",
-                10_000,
-                DiagnosticOrigin.ANDROID_UI,
-                diagnosticToken(draft.toString(), "config"),
-            ))
+            val res = try {
+                synologyHealthMessageRes(sourceTestWithDiagnostics(
+                    src,
+                    "SYNOLOGY",
+                    10_000,
+                    DiagnosticOrigin.ANDROID_UI,
+                    diagnosticToken(draft.toString(), "config"),
+                ))
+            } finally {
+                runCatching { src.shutdown() }
+            }
             _state.update { it.copy(smbTestResult = appContext.getString(res)) }
         }
     }
@@ -3008,7 +3126,11 @@ class SlideshowViewModel(
                 SynologyConnection(baseUrl = SynologyApi.normalizeBaseUrl(baseUrl)),
                 SynologyCredentials("", ""),
             )
-            _state.update { it.copy(synologyCertFingerprint = src.probeCertificateFingerprint()) }
+            try {
+                _state.update { it.copy(synologyCertFingerprint = src.probeCertificateFingerprint()) }
+            } finally {
+                runCatching { src.shutdown() }
+            }
         }
     }
 
@@ -3494,6 +3616,9 @@ class SlideshowViewModel(
 
     fun setInteractionHold(held: Boolean) = engine.setInteractionHold(held)
 
+    fun setSurfaceObscured(obscured: Boolean) =
+        engine.setSurfaceObscured(engineOwnerToken, obscured)
+
     fun onVisiblePresentationChanged(photos: List<com.example.familyphotoframe.domain.engine.DisplayPhoto>) {
         _state.update { current ->
             if (current.visiblePresentationPhotos.map { it.id } == photos.map { it.id }) current
@@ -3780,8 +3905,19 @@ class SlideshowViewModel(
                 } else {
                     _state.update { it.copy(activePlaylistRuleName = null) }
                 }
-                val minutes = PlaylistSchedule.minutesUntilBoundary(config.scheduleRules, now)
-                delay(minutes.coerceIn(1, 15).toLong() * 60_000L)
+                val scheduleDelayMs = PlaylistSchedule.minutesUntilBoundary(config.scheduleRules, now)
+                    .coerceIn(1, 15).toLong() * 60_000L
+                // A timed manual override (notably On This Day) is also a schedule
+                // boundary. Without this, a five-minute interlude can remain active
+                // until the watcher's next fifteen-minute wake and repeatedly select
+                // its final image in the meantime.
+                delay(
+                    PlaylistOverrideWakePolicy.nextWakeDelayMs(
+                        nowEpochMs = now,
+                        scheduleDelayMs = scheduleDelayMs,
+                        overrideUntilEpochMs = config.manualOverrideUntilEpochMs,
+                    )
+                )
             }
         }
     }
@@ -4619,6 +4755,10 @@ class SlideshowViewModel(
         viewModelScope.launch { services.settings.update { it.copy(decodeResolution = resolution) } }
     }
 
+    fun setNativeMemoryHilMode(mode: com.example.familyphotoframe.data.settings.NativeMemoryHilMode) {
+        viewModelScope.launch { services.settings.update { it.copy(nativeMemoryHilMode = mode) } }
+    }
+
     fun setCachePlaybackPool(enabled: Boolean) {
         viewModelScope.launch { services.settings.update { it.copy(cachePlaybackPool = enabled) } }
     }
@@ -4786,7 +4926,7 @@ class SlideshowViewModel(
             val usage = services.localThumbnailCache.currentSizeBytes()
             val requested = services.settings.settings.first().localThumbnailCache.maxBytes
             val effectiveMax = com.example.familyphotoframe.data.cache.LocalThumbnailCache
-                .clampMaxBytes(requested, appContext)
+                .clampMaxBytes(requested, appContext, usage)
             _state.update {
                 it.copy(
                     localThumbnailCacheUsageBytes = usage,
@@ -5068,6 +5208,8 @@ class SlideshowViewModel(
                 appBitmapCount = inventory.appBitmapCount,
                 activeDecodedBytes = inventory.activeDecodedBytes,
                 pendingDisposals = inventory.pendingDisposals,
+                oldestPendingDisposalStartedElapsedMs =
+                    inventory.oldestPendingDisposalStartedElapsedMs,
                 memoryProtectionLevel = protection.level.name,
                 oomCount = protection.totalOomCount,
                 updatedAtEpochMs = System.currentTimeMillis(),
@@ -5092,7 +5234,90 @@ class SlideshowViewModel(
         anchorId: Long,
         memberIds: List<Long>,
         layout: String?,
-    ): Boolean = engine.commitPrepared(anchorId, memberIds, layout)
+    ): Boolean {
+        val committed = engine.commitPrepared(anchorId, memberIds, layout)
+        onPresentationStage(
+            anchorId,
+            if (committed) "ENGINE_COMMITTED" else "ENGINE_COMMIT_REJECTED",
+            committed,
+        )
+        return committed
+    }
+
+    fun onPresentationStage(anchorId: Long, stage: String, active: Boolean) {
+        val photo = _state.value.engine.current?.takeIf { it.id == anchorId }
+        engine.reportPresentationStage(anchorId, stage)
+        // Keep normal stage transitions in the bounded in-memory trace.  Persisting every
+        // intermediate stage rotated the bulk log during an otherwise healthy soak; timeout
+        // events now carry the current stage plus the exact preparation substage instead.
+        services.runtimeBreadcrumbs.record(
+            operation = "PRESENTATION",
+            stage = stage,
+            active = active,
+            presentationToken = diagnosticToken(anchorId.toString(), "presentation"),
+            sourceKind = photo?.sourceId?.let(::diagnosticSourceKind) ?: "NONE",
+        )
+    }
+
+    internal fun onPreparationAttemptStage(
+        anchorId: Long,
+        selectionGeneration: Long,
+        stage: String,
+        active: Boolean,
+    ) {
+        val photo = _state.value.engine.current?.takeIf { it.id == anchorId }
+        engine.reportPresentationStage(anchorId, stage, selectionGeneration)
+        services.runtimeBreadcrumbs.record(
+            operation = "PRESENTATION",
+            stage = stage,
+            active = active,
+            presentationToken = diagnosticToken(anchorId.toString(), "presentation"),
+            sourceKind = photo?.sourceId?.let(::diagnosticSourceKind) ?: "NONE",
+        )
+    }
+
+    fun onPreparationSubstage(anchorId: Long, selectionGeneration: Long, substage: String) {
+        engine.reportPreparationSubstage(anchorId, selectionGeneration, substage)
+    }
+
+    /** Forward only the current selected presentation's bounded cache-transfer trace. */
+    internal fun onPreparationTransferUpdate(
+        anchorId: Long,
+        selectionGeneration: Long,
+        update: PreparationTransferUpdate,
+    ) {
+        engine.reportPreparationTransfer(
+            anchorId = anchorId,
+            expectedSelectionGeneration = selectionGeneration,
+            state = update.state.name,
+            copiedBytes = update.copiedBytes,
+            expectedBytes = update.expectedBytes,
+            deadlineMs = update.deadlineMs,
+            streamCloseSucceeded = update.streamCloseSucceeded,
+        )
+    }
+
+    /**
+     * A selected preparation can be cancelled by a display configuration change while
+     * the engine still waits for its acknowledgement.  This is a recoverable UI hand-off
+     * abort, not a decode failure: keep the current file eligible and let the engine pick
+     * the next presentation immediately.
+     */
+    fun onPreparationCancelled(anchorId: Long, selectionGeneration: Long) {
+        val photo = _state.value.engine.current?.takeIf { it.id == anchorId }
+        engine.reportPreparationCancelled(anchorId, selectionGeneration)
+        services.runtimeBreadcrumbs.record(
+            operation = "PRESENTATION",
+            stage = "PREPARE_CANCELLED",
+            active = false,
+            presentationToken = diagnosticToken(anchorId.toString(), "presentation"),
+            sourceKind = photo?.sourceId?.let(::diagnosticSourceKind) ?: "NONE",
+        )
+    }
+
+    fun onPreparationWatchdogTimeout(anchorId: Long, selectionGeneration: Long) {
+        engine.reportPreparationWatchdogTimeout(anchorId, selectionGeneration)
+    }
 
     fun onRendered(
         anchorId: Long,
@@ -5107,12 +5332,15 @@ class SlideshowViewModel(
                 layout = layout ?: if (memberIds.size <= 1) "SINGLE" else "COLLAGE_${memberIds.size}",
             )
         }
+        onPresentationStage(anchorId, "RENDERED", false)
     }
 
-    fun shouldGenerateWebPreview(): Boolean = services.webServer.shouldGeneratePreview()
+    fun onWebPreviewReady(requestId: Long, frame: WebPreviewFrame) {
+        services.webServer.publishPreview(requestId, frame)
+    }
 
-    fun onWebPreviewReady(frame: WebPreviewFrame) {
-        services.webServer.publishPreview(frame)
+    fun onWebPreviewFailed(requestId: Long, reason: String) {
+        services.webServer.failPreview(requestId, reason)
     }
 
     fun onTransitionEvent(event: TransitionEvent) {
@@ -5124,8 +5352,11 @@ class SlideshowViewModel(
             "configuredMode" to event.configuredMode,
             "configuredEffect" to event.configuredEffect,
             "resolvedEffect" to event.resolvedEffect,
-            "outgoingId" to (event.outgoingId?.toString() ?: ""),
-            "incomingId" to event.incomingId.toString(),
+            "outgoingPresentationToken" to event.outgoingId?.let {
+                diagnosticToken(it.toString(), "presentation")
+            }.orEmpty(),
+            "incomingPresentationToken" to
+                diagnosticToken(event.incomingId.toString(), "presentation"),
             "durationMs" to event.durationMs.toString(),
             "actualDurationMs" to event.actualDurationMs?.toString().orEmpty(),
             "direction" to event.direction,
@@ -5137,7 +5368,16 @@ class SlideshowViewModel(
             "startLatencyMs" to event.startLatencyMs?.toString().orEmpty(),
             "preparedSlideCount" to event.preparedSlideCount?.toString().orEmpty(),
             "activeDecodedBytes" to event.activeDecodedBytes?.toString().orEmpty(),
+            "transitionGeneration" to event.transitionGeneration.toString(),
+            "hostGeneration" to event.hostGeneration.toString(),
+            "cancellationInitiator" to event.cancellationInitiator.orEmpty(),
         )
+        when (event.code) {
+            "TRANSITION_SELECTED", "TRANSITION_STARTED" ->
+                onPresentationStage(event.incomingId, event.code, true)
+            "TRANSITION_COMPLETED", "TRANSITION_CANCELLED" ->
+                onPresentationStage(event.incomingId, event.code, false)
+        }
     }
 
     private fun publishDiagnosticPlayback(

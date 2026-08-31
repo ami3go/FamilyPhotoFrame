@@ -35,7 +35,7 @@ rm -rf "$E2E"; mkdir -p "$E2E/src"
 # Real production sources, package line stripped so they share a default package.
 for f in DiagnosticEventSpec.kt DiagnosticOperationTracker.kt DiagnosticIdentityHasher.kt \
   DiagnosticPrivacyPolicy.kt DiagnosticRateController.kt DiagnosticsHealthSnapshot.kt \
-  DiagnosticRuntimeState.kt DiagnosticsBundle.kt DiagnosticsLog.kt DiagnosticsJsonl.kt \
+  NativeAllocationStageTracker.kt DiagnosticRuntimeState.kt DiagnosticsBundle.kt DiagnosticsLog.kt DiagnosticsJsonl.kt \
   FileDiagnosticsSink.kt; do
   sed 's/^package .*//' "$SRC/$f" > "$E2E/src/$f"
 done

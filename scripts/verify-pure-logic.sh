@@ -42,6 +42,15 @@ KOTLIN_HOME="$(cd "$(dirname "$KOTLINC")/.." && pwd)"
 echo "==> Static consistency checks (resources, callbacks, Room schema)"
 python3 scripts/check-consistency.py || exit 1
 
+echo "==> Crash-free runtime Phase 3 source contracts"
+python3 scripts/verify-crash-free-runtime-phase3.py || exit 1
+
+echo "==> Crash-free runtime Phase 4 source contracts"
+python3 scripts/verify-crash-free-runtime-phase4.py || exit 1
+
+echo "==> Crash-free runtime Phase 5 qualification contracts"
+python3 scripts/verify-crash-free-runtime-phase5.py || exit 1
+
 # Runs before the parse step below on purpose: it catches statements accidentally joined
 # onto the previous line, which parse cleanly and are only rejected by the type checker —
 # invisible here, where the Android/Compose compiler cannot run.
@@ -101,13 +110,9 @@ sed 's/^package .*//' \
   sed 's/^package .*//' \
     app/src/main/java/com/example/familyphotoframe/domain/randomize/PlaybackQueue.kt
 } > "$PURE/PlaybackQueue.kt"
-{ echo 'import java.util.ArrayDeque'
-  sed 's/^package .*//' \
-    app/src/main/java/com/example/familyphotoframe/domain/randomize/FolderCycleQueue.kt
-} > "$PURE/FolderCycleQueue.kt"
 sed 's/^package .*//' \
-  app/src/main/java/com/example/familyphotoframe/domain/randomize/FolderBalancedPlaybackQueue.kt \
-  > "$PURE/FolderBalancedPlaybackQueue.kt"
+  app/src/main/java/com/example/familyphotoframe/data/db/FolderSelectionSql.kt \
+  > "$PURE/FolderSelectionSql.kt"
 # Persistent folder-balanced shuffle domain/generator/backoff are pure Kotlin.
 sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/data/index/CanonicalPhotoPath.kt \
@@ -126,7 +131,7 @@ sed -e 's/^package .*//' \
 cat > "$PURE/SelectionModeStub.kt" <<'KT'
 enum class SelectionMode {
     SEQUENTIAL, LEAST_RECENT_RANDOM, SHUFFLE_NO_REPEAT, FOLDER_BALANCED_SHUFFLE,
-    DATE_TAKEN_NEWEST, DATE_TAKEN_OLDEST,
+    DATE_TAKEN_NEWEST, DATE_TAKEN_OLDEST, ON_THIS_DAY,
 }
 KT
 # WebDavApi is pure protocol logic (no Android/network); its tolerance of real-world
@@ -144,6 +149,15 @@ sed -n '/^data class ScanOptions/,/^}/p' \
 sed -n '/^data class FilterSettings/,/^}/p' \
   app/src/main/java/com/example/familyphotoframe/data/settings/AppSettings.kt \
   | sed 's/^@Serializable$//' > "$PURE/FilterSettings.kt"
+# Playlist normalization is a persistence/memory boundary. Compile the production
+# implementation with dependency-free type stubs so its aggregate bounds execute here.
+awk '
+  /^\/\*\* User-defined slideshow playlist/ { emit = 1 }
+  emit { print }
+  emit && /^data class PlaylistSettings/ { playlist_settings = 1 }
+  playlist_settings && /^}$/ { exit }
+' app/src/main/java/com/example/familyphotoframe/data/settings/AppSettings.kt \
+  | sed '/^@Serializable$/d' > "$PURE/PlaylistSettings.kt"
 sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/data/settings/SourceRuntimeSignature.kt \
   > "$PURE/SourceRuntimeSignature.kt"
@@ -159,11 +173,30 @@ sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/engine/HostLifecycleGate.kt \
   > "$PURE/HostLifecycleGate.kt"
 sed 's/^package .*//' \
+  app/src/main/java/com/example/familyphotoframe/domain/engine/RenderAckRecoveryPolicy.kt \
+  > "$PURE/RenderAckRecoveryPolicy.kt"
+sed 's/^package .*//' \
+  app/src/main/java/com/example/familyphotoframe/domain/engine/RenderAckTimeoutPolicy.kt \
+  > "$PURE/RenderAckTimeoutPolicy.kt"
+sed 's/^package .*//' \
+  app/src/main/java/com/example/familyphotoframe/data/cache/MediaTransferPolicy.kt \
+  > "$PURE/MediaTransferPolicy.kt"
+sed 's/^package .*//' \
+  app/src/main/java/com/example/familyphotoframe/domain/engine/OnThisDayPlaybackPolicy.kt \
+  > "$PURE/OnThisDayPlaybackPolicy.kt"
+sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/engine/PlaybackMemoryPolicy.kt \
   > "$PURE/PlaybackMemoryPolicy.kt"
 sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/engine/PlaybackMemoryGuard.kt \
   > "$PURE/PlaybackMemoryGuard.kt"
+sed -n '/^enum class DecodeColorDepth /p' \
+  app/src/main/java/com/example/familyphotoframe/data/settings/AppSettings.kt \
+  > "$PURE/DecodeColorDepth.kt"
+sed -e 's/^package .*//' \
+  -e '/^import com.example.familyphotoframe.data.settings.DecodeColorDepth$/d' \
+  app/src/main/java/com/example/familyphotoframe/domain/engine/DecodeColorPolicy.kt \
+  > "$PURE/DecodeColorPolicy.kt"
 sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/engine/MemorySelfRecoveryPolicy.kt \
   > "$PURE/MemorySelfRecoveryPolicy.kt"
@@ -175,6 +208,9 @@ sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/schedule/RescanSchedule.kt > "$PURE/RescanSchedule.kt"
 sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/schedule/SleepSchedule.kt > "$PURE/SleepSchedule.kt"
+sed 's/^package .*//' \
+  app/src/main/java/com/example/familyphotoframe/domain/schedule/PlaylistOverrideWakePolicy.kt \
+  > "$PURE/PlaylistOverrideWakePolicy.kt"
 sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/schedule/BrightnessTimeline.kt > "$PURE/BrightnessTimeline.kt"
 # Platform image-format capability policy is pure and protects old frames from
@@ -225,13 +261,17 @@ KT
 
 # WebSecurity is dependency-free and the remembered-session checks import its real package.
 cp app/src/main/java/com/example/familyphotoframe/web/WebSecurity.kt "$PURE/WebSecurity.kt"
+# The on-demand preview coordinator is pure JVM code; compile and execute its real state machine.
+cp app/src/main/java/com/example/familyphotoframe/web/WebPreview.kt "$PURE/WebPreview.kt"
 
 # Diagnostics is pure JVM code. Compile the real schema, catalog, operation registry,
 # identity primitive, bounded writer and privacy boundary together.
 for file in DiagnosticEventSpec.kt DiagnosticOperationTracker.kt DiagnosticIdentityHasher.kt \
   DiagnosticPrivacyPolicy.kt DiagnosticRateController.kt DiagnosticsHealthSnapshot.kt \
-  DiagnosticRuntimeState.kt DiagnosticsBundle.kt CrashEnvelopeStore.kt MainThreadStallDetector.kt \
-  ProcessExitReasonMapper.kt DiagnosticsLog.kt DiagnosticsJsonl.kt FileDiagnosticsSink.kt; do
+  NativeAllocationStageTracker.kt DiagnosticRuntimeState.kt DiagnosticsBundle.kt CrashEnvelopeStore.kt MainThreadStallDetector.kt \
+  ProcessExitReasonMapper.kt DiagnosticsLog.kt DiagnosticsJsonl.kt FileDiagnosticsSink.kt \
+  RuntimeResourceTracker.kt BitmapLifecycleTracker.kt ProcfsResourceSampler.kt \
+  PersistentRuntimeBreadcrumbs.kt; do
   sed 's/^package .*//' \
     "app/src/main/java/com/example/familyphotoframe/data/diagnostics/$file" > "$PURE/$file"
 done

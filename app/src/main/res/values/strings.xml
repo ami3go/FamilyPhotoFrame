@@ -159,6 +159,12 @@
     <string name="settings_color_depth_low_hint">Always use half-size pixels. Halves the memory each photo needs; smooth skies may show faint banding.</string>
     <string name="settings_lowmem_tier_low">This frame is treated as low-memory, so the automatic options economise.</string>
     <string name="settings_lowmem_tier_standard">This frame has memory to spare, so the automatic options keep full quality.</string>
+    <string name="settings_native_hil_mode">Native-memory HIL mode</string>
+    <string name="settings_native_hil_normal">Normal</string>
+    <string name="settings_native_hil_hold">Hold frame</string>
+    <string name="settings_native_hil_instant">Single instant</string>
+    <string name="settings_native_hil_crossfade">Single crossfade</string>
+    <string name="settings_native_hil_hint">Diagnostic modes persist across restarts. Hold frame stops all automatic advancement; the single-photo modes disable collage, preload, blur and motion so decode and transition costs can be compared.</string>
     <string name="settings_decode_resolution">Photo detail</string>
     <string name="settings_decode_resolution_full">Full panel</string>
     <string name="settings_decode_resolution_hint">How many pixels each photo is decoded at. Reducing it saves memory and is hard to see from normal viewing distance.</string>

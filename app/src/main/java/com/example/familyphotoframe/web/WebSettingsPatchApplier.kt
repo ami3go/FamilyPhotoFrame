@@ -12,6 +12,7 @@ import com.example.familyphotoframe.data.settings.CollageOrientationFilter
 import com.example.familyphotoframe.data.settings.CollageScaleMode
 import com.example.familyphotoframe.data.settings.DecodeColorDepth
 import com.example.familyphotoframe.data.settings.DecodeResolution
+import com.example.familyphotoframe.data.settings.FilterSettings
 import com.example.familyphotoframe.data.settings.CredentialPolicy
 import com.example.familyphotoframe.data.settings.MotionMode
 import com.example.familyphotoframe.data.settings.NightAction
@@ -29,6 +30,7 @@ import com.example.familyphotoframe.data.source.SynologyApi
 import com.example.familyphotoframe.domain.engine.SourceStatusPolicy
 import com.example.familyphotoframe.domain.schedule.RescanSchedule
 import com.example.familyphotoframe.domain.schedule.SleepSchedule
+import com.example.familyphotoframe.util.Glob
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -134,6 +136,16 @@ internal class WebSettingsPatchApplier(
             if (UnreachablePolicy.entries.none { it.name == v }) return "Unknown onUnreachable"
         }
         strings("includeGlobs")?.let { if (it.isEmpty()) return "includeGlobs cannot be empty" }
+        for (field in listOf("includeGlobs", "excludeGlobs", "excludeFolders")) {
+            strings(field)?.let { values ->
+                if (values.size > FilterSettings.MAX_FILTER_ENTRIES) {
+                    return "$field supports at most ${FilterSettings.MAX_FILTER_ENTRIES} entries"
+                }
+                if (values.any { it.length > Glob.MAX_PATTERN_LENGTH }) {
+                    return "$field entries must be at most ${Glob.MAX_PATTERN_LENGTH} characters"
+                }
+            }
+        }
         int("webPort")?.let { if (it !in 1024..65535) return "webPort must be 1024-65535" }
         int("webIdleTimeoutMinutes")?.let { if (it !in 1..1440) return "webIdleTimeoutMinutes must be 1-1440" }
         int("localThumbnailCacheMaxGiB")?.let { if (it < 1) return "localThumbnailCacheMaxGiB must be at least 1" }

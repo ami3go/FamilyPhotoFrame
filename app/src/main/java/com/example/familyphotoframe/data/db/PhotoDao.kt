@@ -157,7 +157,9 @@ interface PhotoDao {
             AND lower(COALESCE(mimeType, '')) NOT IN
               ('image/heic','image/heif','image/heic-sequence','image/heif-sequence')
           ))
-          AND (:allFolders = 1 OR (sourceId || char(31) || canonicalDirectory) IN (:folders) OR folderName IN (:folders))
+          AND (:allFolders = 1
+            OR instr(:folderSelection, char(30) || sourceId || char(31) || canonicalDirectory || char(30)) > 0
+            OR instr(:folderSelection, char(30) || folderName || char(30)) > 0)
         GROUP BY sourceId, canonicalDirectory
         ORDER BY sourceId ASC, canonicalDirectory COLLATE NOCASE ASC
         """
@@ -169,7 +171,7 @@ interface PhotoDao {
         cachedOnly: Int,
         allowHeif: Int,
         allFolders: Int,
-        folders: List<String>,
+        folderSelection: String,
     ): List<ShuffleFolderRow>
 
     /** Canonical member rows for one selected direct folder only. */
@@ -218,7 +220,9 @@ interface PhotoDao {
             AND lower(COALESCE(mimeType, '')) NOT IN
               ('image/heic','image/heif','image/heic-sequence','image/heif-sequence')
           ))
-          AND (:allFolders = 1 OR (sourceId || char(31) || canonicalDirectory) IN (:folders) OR folderName IN (:folders))
+          AND (:allFolders = 1
+            OR instr(:folderSelection, char(30) || sourceId || char(31) || canonicalDirectory || char(30)) > 0
+            OR instr(:folderSelection, char(30) || folderName || char(30)) > 0)
         ORDER BY id ASC
         """
     )
@@ -229,8 +233,35 @@ interface PhotoDao {
         cachedOnly: Int,
         allowHeif: Int,
         allFolders: Int,
-        folders: List<String>,
+        folderSelection: String,
     ): List<Long>
+
+    /** Cheap guard before materializing an explicit whole-library playback queue. */
+    @Query(
+        """
+        SELECT COUNT(*) FROM photos
+        WHERE sourceId IN (:sourceIds) AND isHidden = 0 AND decodeFailureCount < :maxFailures
+          AND (:favoritesOnly = 0 OR isFavorite = 1)
+          AND (:cachedOnly = 0 OR cacheKey IS NOT NULL)
+          AND (:allowHeif = 1 OR (
+            lower(fileName) NOT LIKE '%.heic' AND lower(fileName) NOT LIKE '%.heif'
+            AND lower(COALESCE(mimeType, '')) NOT IN
+              ('image/heic','image/heif','image/heic-sequence','image/heif-sequence')
+          ))
+          AND (:allFolders = 1
+            OR instr(:folderSelection, char(30) || sourceId || char(31) || canonicalDirectory || char(30)) > 0
+            OR instr(:folderSelection, char(30) || folderName || char(30)) > 0)
+        """
+    )
+    suspend fun displayableCount(
+        sourceIds: List<String>,
+        maxFailures: Int,
+        favoritesOnly: Int,
+        cachedOnly: Int,
+        allowHeif: Int,
+        allFolders: Int,
+        folderSelection: String,
+    ): Long
 
     /**
      * Displayable ids newest-first by EXIF date-taken. Photos with no date-taken sort
@@ -249,7 +280,9 @@ interface PhotoDao {
             AND lower(COALESCE(mimeType, '')) NOT IN
               ('image/heic','image/heif','image/heic-sequence','image/heif-sequence')
           ))
-          AND (:allFolders = 1 OR (sourceId || char(31) || canonicalDirectory) IN (:folders) OR folderName IN (:folders))
+          AND (:allFolders = 1
+            OR instr(:folderSelection, char(30) || sourceId || char(31) || canonicalDirectory || char(30)) > 0
+            OR instr(:folderSelection, char(30) || folderName || char(30)) > 0)
         ORDER BY (dateTakenEpochMs IS NULL) ASC, dateTakenEpochMs DESC, fileModifiedEpochMs DESC, id ASC
         """
     )
@@ -260,7 +293,7 @@ interface PhotoDao {
         cachedOnly: Int,
         allowHeif: Int,
         allFolders: Int,
-        folders: List<String>,
+        folderSelection: String,
     ): List<Long>
 
     /** Displayable ids oldest-first by EXIF date-taken; undated photos again sort last. */
@@ -275,7 +308,9 @@ interface PhotoDao {
             AND lower(COALESCE(mimeType, '')) NOT IN
               ('image/heic','image/heif','image/heic-sequence','image/heif-sequence')
           ))
-          AND (:allFolders = 1 OR (sourceId || char(31) || canonicalDirectory) IN (:folders) OR folderName IN (:folders))
+          AND (:allFolders = 1
+            OR instr(:folderSelection, char(30) || sourceId || char(31) || canonicalDirectory || char(30)) > 0
+            OR instr(:folderSelection, char(30) || folderName || char(30)) > 0)
         ORDER BY (dateTakenEpochMs IS NULL) ASC, dateTakenEpochMs ASC, fileModifiedEpochMs ASC, id ASC
         """
     )
@@ -286,7 +321,7 @@ interface PhotoDao {
         cachedOnly: Int,
         allowHeif: Int,
         allFolders: Int,
-        folders: List<String>,
+        folderSelection: String,
     ): List<Long>
 
     /** How many rows of these sources already have cached bytes (spec §9.3 gate). */
@@ -319,6 +354,53 @@ interface PhotoDao {
         """
     )
     suspend fun folderSummaries(sourceIds: List<String>): List<FolderSummary>
+
+    /** Bounded web/settings page; avoids serializing and rendering every folder at once. */
+    @Query(
+        """
+        SELECT sourceId, canonicalDirectory, MIN(folderName) AS name, COUNT(*) AS photoCount
+        FROM photos
+        WHERE sourceId IN (:sourceIds) AND isHidden = 0
+          AND (:search = '' OR canonicalDirectory LIKE '%' || :search || '%' COLLATE NOCASE
+            OR folderName LIKE '%' || :search || '%' COLLATE NOCASE)
+        GROUP BY sourceId, canonicalDirectory
+        ORDER BY sourceId COLLATE NOCASE ASC, canonicalDirectory COLLATE NOCASE ASC
+        LIMIT :limit OFFSET :offset
+        """
+    )
+    suspend fun folderSummariesPage(
+        sourceIds: List<String>,
+        search: String,
+        limit: Int,
+        offset: Int,
+    ): List<FolderSummary>
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM (
+          SELECT sourceId, canonicalDirectory
+          FROM photos
+          WHERE sourceId IN (:sourceIds) AND isHidden = 0
+            AND (:search = '' OR canonicalDirectory LIKE '%' || :search || '%' COLLATE NOCASE
+              OR folderName LIKE '%' || :search || '%' COLLATE NOCASE)
+          GROUP BY sourceId, canonicalDirectory
+        )
+        """
+    )
+    suspend fun folderSummaryCount(sourceIds: List<String>, search: String): Long
+
+    /** Constant-memory validation for web folder actions. */
+    @Query(
+        """
+        SELECT EXISTS(
+          SELECT 1 FROM photos
+          WHERE sourceId IN (:sourceIds) AND isHidden = 0
+            AND (sourceId || char(31) || canonicalDirectory) = :selectionKey
+          LIMIT 1
+        )
+        """
+    )
+    suspend fun folderSelectionExists(sourceIds: List<String>, selectionKey: String): Int
 
     /**
      * Bounded same-folder pool for portrait-collage planning. Orientation is checked

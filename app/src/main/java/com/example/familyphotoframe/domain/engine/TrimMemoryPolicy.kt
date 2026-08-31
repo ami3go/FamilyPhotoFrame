@@ -2,10 +2,10 @@ package com.example.familyphotoframe.domain.engine
 
 /** What an `onTrimMemory` level means for playback. */
 enum class TrimMemoryResponse {
-    /** The frame's own heap is nearly exhausted: open the circuit breaker. */
+    /** The frame's own heap is nearly exhausted: enter emergency protection. */
     SEVERE_PRESSURE,
 
-    /** The frame's own heap is tight: step playback down a level. */
+    /** The frame's own heap is tight: enter constrained protection. */
     RUNNING_PRESSURE,
 
     /**

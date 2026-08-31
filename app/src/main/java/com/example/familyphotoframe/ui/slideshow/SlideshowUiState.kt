@@ -116,6 +116,9 @@ data class SlideshowUiState(
     /** Decoded pixel count preference; see DeviceMemoryTierPolicy.decodeScaleFor. */
     val decodeResolution: com.example.familyphotoframe.data.settings.DecodeResolution =
         com.example.familyphotoframe.data.settings.DecodeResolution.AUTO,
+    /** Phase 2B test isolation; NORMAL preserves production behaviour. */
+    val nativeMemoryHilMode: com.example.familyphotoframe.data.settings.NativeMemoryHilMode =
+        com.example.familyphotoframe.data.settings.NativeMemoryHilMode.NORMAL,
     /** How much room this device has; decided once at startup. */
     val memoryTier: com.example.familyphotoframe.domain.engine.DeviceMemoryTier =
         com.example.familyphotoframe.domain.engine.DeviceMemoryTier.STANDARD,

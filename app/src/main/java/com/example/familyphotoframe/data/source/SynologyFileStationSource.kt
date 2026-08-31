@@ -5,20 +5,32 @@ import com.example.familyphotoframe.util.StableId
 import com.example.familyphotoframe.util.SupportedFormats
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.BufferedInputStream
+import java.io.ByteArrayInputStream
 import java.io.FilterInputStream
+import java.io.IOException
 import java.io.InputStream
 import java.io.InterruptedIOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.UnknownHostException
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.SSLHandshakeException
 import kotlin.coroutines.coroutineContext
 
@@ -56,6 +68,34 @@ data class SynologyCredentials(val user: String, val password: String, val otpCo
 /** A text response plus its HTTP status, so transport and API errors stay distinguishable. */
 data class HttpTextResponse(val status: Int, val body: String)
 
+/** Streaming response metadata must remain available so API JSON is never decoded as a photo. */
+data class HttpStreamResponse(
+    val status: Int,
+    val contentType: String?,
+    val contentLength: Long,
+    val body: InputStream,
+)
+
+private const val MAX_HTTP_TEXT_CHARS = 4 * 1024 * 1024
+
+/** A NAS response is untrusted input; never let an error page or API bug grow the heap. */
+private fun InputStream.readUtf8TextBounded(maxChars: Int = MAX_HTTP_TEXT_CHARS): String =
+    reader(Charsets.UTF_8).use { reader ->
+        val result = StringBuilder(minOf(maxChars, 64 * 1024))
+        val buffer = CharArray(8 * 1024)
+        while (true) {
+            val remaining = maxChars - result.length
+            if (remaining == 0) {
+                if (reader.read() != -1) throw IOException("synology_response_too_large")
+                break
+            }
+            val count = reader.read(buffer, 0, minOf(buffer.size, remaining))
+            if (count <= 0) break
+            result.append(buffer, 0, count)
+        }
+        result.toString()
+    }
+
 /**
  * The seam the roadmap asks for: "build a thin, mockable HTTP layer so the *mapping*
  * logic can be tested without a live NAS." Everything protocol-shaped lives in
@@ -63,7 +103,7 @@ data class HttpTextResponse(val status: Int, val body: String)
  */
 interface SynologyHttpClient {
     suspend fun getText(url: String, timeoutMs: Long): HttpTextResponse
-    suspend fun openStream(url: String, timeoutMs: Long): InputStream
+    suspend fun openStream(url: String, timeoutMs: Long): HttpStreamResponse
 }
 
 /** Default transport on the existing stack — no new third-party dependency. */
@@ -82,7 +122,10 @@ class UrlConnectionHttpClient(
         try {
             val status = conn.responseCode
             val stream = if (status in 200..299) conn.inputStream else conn.errorStream
-            HttpTextResponse(status, stream?.bufferedReader()?.use { it.readText() }.orEmpty())
+            HttpTextResponse(
+                status,
+                stream?.let { DeadlineInputStream(it, timeoutMs).readUtf8TextBounded() }.orEmpty(),
+            )
         } finally {
             conn.disconnect()
         }
@@ -92,7 +135,7 @@ class UrlConnectionHttpClient(
      * Caller-owned stream. Closing it also disconnects the underlying HTTP connection,
      * preventing a long-running frame from leaking sockets after repeated photo loads.
      */
-    override suspend fun openStream(url: String, timeoutMs: Long): InputStream = withContext(io) {
+    override suspend fun openStream(url: String, timeoutMs: Long): HttpStreamResponse = withContext(io) {
         val conn = open(url, timeoutMs)
         val status = try {
             conn.responseCode
@@ -100,17 +143,24 @@ class UrlConnectionHttpClient(
             conn.disconnect()
             throw t
         }
-        if (status !in 200..299) {
-            conn.disconnect()
-            throw java.io.IOException("HTTP $status")
-        }
-        val body = try {
-            conn.inputStream
+        val rawBody = try {
+            if (status in 200..299) conn.inputStream else conn.errorStream
         } catch (t: Throwable) {
             conn.disconnect()
             throw t
         }
-        object : FilterInputStream(body) {
+        if (rawBody == null) {
+            val contentType = conn.contentType
+            val contentLength = conn.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
+            conn.disconnect()
+            return@withContext HttpStreamResponse(
+                status = status,
+                contentType = contentType,
+                contentLength = contentLength,
+                body = ByteArrayInputStream(ByteArray(0)),
+            )
+        }
+        val body = object : FilterInputStream(rawBody) {
             override fun close() {
                 try {
                     super.close()
@@ -119,13 +169,20 @@ class UrlConnectionHttpClient(
                 }
             }
         }
+        HttpStreamResponse(
+            status = status,
+            contentType = conn.contentType,
+            // getContentLengthLong() is API 24; parsing the header keeps API 21–23 safe.
+            contentLength = conn.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L,
+            body = DeadlineInputStream(body, timeoutMs),
+        )
     }
 
     private fun open(url: String, timeoutMs: Long): HttpURLConnection =
         (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
-            connectTimeout = timeoutMs.toInt()
-            readTimeout = timeoutMs.toInt()
+            connectTimeout = timeoutMs.toSocketTimeoutMillis()
+            readTimeout = timeoutMs.toSocketTimeoutMillis()
             instanceFollowRedirects = true
             // Only applied to HTTPS, and only when the user approved a specific cert.
             // Hostname verification is left at the platform default deliberately.
@@ -147,7 +204,7 @@ class UrlConnectionHttpClient(
  * time-bounded; the scan streams [ScanEvent]s and never builds a List (Contract Rule 3);
  * traversal uses an explicit work-stack rather than recursion so deep trees are safe.
  *
- * Secrets: the password lives only in [credentials]; the session id is held in memory,
+ * Secrets: the password and one-use OTP live only in this source; the session id is held in memory,
  * never persisted, and never placed in an [PhotoItem.openToken] or a diagnostics string
  * — [PhotoItem.openToken] is the plain NAS-relative file path, and any URL that reaches
  * an error message is passed through [SynologyApi.redactSid] first.
@@ -155,33 +212,120 @@ class UrlConnectionHttpClient(
 class SynologyFileStationSource(
     override val id: SourceId,
     private val conn: SynologyConnection,
-    private val credentials: SynologyCredentials,
+    credentials: SynologyCredentials,
     private val io: CoroutineDispatcher,
     private val http: SynologyHttpClient = UrlConnectionHttpClient(io, conn.pinnedCertSha256),
 ) : PhotoSource {
 
     override val type: SourceType = SourceType.SYNOLOGY_FILE_STATION
 
+    private val user = credentials.user
+    private val password = credentials.password
+    private val pendingOtp = AtomicReference(credentials.otpCode)
     private val sidLock = Mutex()
-    @Volatile private var sid: String? = null
+    private val sid = AtomicReference<String?>(null)
+    private val closed = AtomicBoolean(false)
+    private val cleanupScope = CoroutineScope(SupervisorJob() + io)
+    private val logoutJobs = ConcurrentLinkedQueue<Job>()
+    @Volatile private var lastAuthError: SourceError = SourceError.AuthFailed
+    private val operationOwner = DeferredCloseResource(
+        factory = { Unit },
+        closer = { sid.getAndSet(null)?.let(::scheduleLogout) },
+    )
 
     // ---- session ---------------------------------------------------------------
 
     /** Logs in if there is no live session. Returns null when authentication fails. */
     private suspend fun ensureSession(): String? = sidLock.withLock {
-        sid ?: run {
-            val res = runCatchingCancellable {
-                http.getText(
-                    SynologyApi.buildAuthUrl(conn.baseUrl, credentials.user, credentials.password, credentials.otpCode),
-                    conn.connectionTimeoutMs,
-                )
-            }.getOrNull() ?: return null
-            SynologyApi.parseSid(res.body)?.also { sid = it }
+        if (closed.get()) return null
+        sid.get() ?: run {
+            // OTP values are one-use secrets. Clear the retained copy before network I/O
+            // so neither a successful session nor a later re-auth reuses the old code.
+            val otp = pendingOtp.getAndSet(null)
+            val res = try {
+                // DSM creates the session before returning its SID. Complete this one
+                // bounded request across caller cancellation so its SID is retained and
+                // can be logged out instead of becoming an untracked server session.
+                withContext(NonCancellable) {
+                    http.getText(
+                        SynologyApi.buildAuthUrl(conn.baseUrl, user, password, otp),
+                        conn.connectionTimeoutMs,
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                lastAuthError = transportError(t)
+                return null
+            }
+            if (res.status !in 200..299) {
+                lastAuthError = if (res.status == 401) SourceError.AuthFailed else mapHttpStatus(res.status)
+                return null
+            }
+            val parsed = SynologyApi.parseSid(res.body)
+            if (parsed == null) {
+                lastAuthError = SynologyApi.mapError(SynologyApi.errorCode(res.body))
+                return null
+            }
+            if (closed.get()) {
+                // The operation lease defers logout until this request returns/stream
+                // closes, avoiding source replacement invalidating in-flight bytes.
+                sid.set(parsed)
+                return null
+            }
+            lastAuthError = SourceError.Unknown
+            sid.set(parsed)
+            parsed
         }
     }
 
     /** Drops the cached session so the next call re-authenticates. */
-    private suspend fun invalidateSession() = sidLock.withLock { sid = null }
+    private suspend fun invalidateSession(expiredSid: String) = sidLock.withLock {
+        // Another request may already have replaced the expired session. Never erase
+        // that newer SID: doing so would create an untracked DSM session on every pair
+        // of concurrent expiry responses.
+        sid.compareAndSet(expiredSid, null)
+    }
+
+    /**
+     * Reject new work immediately, then perform the DSM logout on the source's I/O
+     * dispatcher. Registry retirement is synchronous, so [close] must not block its
+     * caller; one-shot tests and orderly teardown use [shutdown] to await completion.
+     */
+    override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        operationOwner.close()
+    }
+
+    override suspend fun shutdown() {
+        close()
+        val fullyClosed = operationOwner.awaitClosed(SHUTDOWN_WAIT_MS)
+        if (!fullyClosed) return
+        while (true) {
+            val pending = logoutJobs.filterNot { it.isCompleted }
+            if (pending.isEmpty()) break
+            pending.forEach { it.join() }
+        }
+        cleanupScope.cancel()
+    }
+
+    private fun scheduleLogout(sessionId: String) {
+        if (sessionId.isBlank()) return
+        val job = cleanupScope.launchCatchingLogout(sessionId)
+        logoutJobs += job
+    }
+
+    private fun CoroutineScope.launchCatchingLogout(sessionId: String): Job =
+        launch {
+            withTimeoutOrNull(LOGOUT_TIMEOUT_MS) {
+                runCatchingCancellable {
+                    http.getText(
+                        SynologyApi.buildLogoutUrl(conn.baseUrl, sessionId),
+                        LOGOUT_TIMEOUT_MS,
+                    )
+                }
+            }
+        }
 
     /**
      * Runs [block] with a live session, retrying once after a re-auth if the API reports
@@ -189,11 +333,12 @@ class SynologyFileStationSource(
      * NAS may be rebooted or time the session out while the slideshow is idle.
      */
     private suspend fun <T> withSession(block: suspend (String) -> Pair<T?, SourceError?>): Pair<T?, SourceError?> {
-        val first = ensureSession() ?: return null to SourceError.AuthFailed
+        val first = ensureSession() ?: return null to if (closed.get()) SourceError.Cancelled else lastAuthError
         val (value, error) = block(first)
         if (error != SourceError.SessionExpired) return value to error
-        invalidateSession()
-        val second = ensureSession() ?: return null to SourceError.AuthFailed
+        invalidateSession(first)
+        val second = ensureSession()
+            ?: return null to if (closed.get()) SourceError.Cancelled else lastAuthError
         return block(second)
     }
 
@@ -210,53 +355,50 @@ class SynologyFileStationSource(
      * login needs a one-time code that is no longer available.
      */
     override suspend fun healthCheck(timeoutMs: Long): SourceHealth = withContext(io) {
-        withTimeoutOrNull(timeoutMs) {
-            runCatchingCancellable {
-                val (health, error) = withSession { liveSid ->
-                    val list = runCatchingCancellable {
-                        http.getText(
-                            SynologyApi.buildListUrl(conn.baseUrl, liveSid, conn.folderPath, 0, 1),
-                            timeoutMs,
-                        )
-                    }.getOrElse { return@withSession null to transportError(it) }
+        val lease = operationOwner.acquire()
+        try {
+            withTimeoutOrNull(timeoutMs) {
+                runCatchingCancellable {
+                    val (health, error) = withSession { liveSid ->
+                        val list = runCatchingCancellable {
+                            http.getText(
+                                SynologyApi.buildListUrl(conn.baseUrl, liveSid, conn.folderPath, 0, 1),
+                                timeoutMs,
+                            )
+                        }.getOrElse { return@withSession null to transportError(it) }
 
-                    if (SynologyApi.isSuccess(list.body)) {
-                        SourceHealth.Ok to null
-                    } else {
-                        val mapped = SynologyApi.mapError(SynologyApi.errorCode(list.body))
-                        // Surfaced so withSession can re-auth and retry once.
-                        if (mapped == SourceError.SessionExpired) null to mapped
-                        else when (mapped) {
-                            SourceError.FileGone -> SourceHealth.Missing to null
-                            SourceError.PermissionDenied -> SourceHealth.NeedsPermission to null
-                            else -> SourceHealth.ProviderError("folder_unreadable") to null
+                        if (list.status !in 200..299) {
+                            null to mapHttpStatus(list.status)
+                        } else if (SynologyApi.isSuccess(list.body)) {
+                            SourceHealth.Ok to null
+                        } else {
+                            val mapped = SynologyApi.mapError(SynologyApi.errorCode(list.body))
+                            // Surfaced so withSession can re-auth and retry once.
+                            if (mapped == SourceError.SessionExpired) null to mapped
+                            else when (mapped) {
+                                SourceError.FileGone -> SourceHealth.Missing to null
+                                SourceError.PermissionDenied -> SourceHealth.NeedsPermission to null
+                                else -> SourceHealth.ProviderError("folder_unreadable") to null
+                            }
                         }
                     }
-                }
-                health ?: when (error) {
-                    SourceError.AuthFailed -> authFailureHealth()
-                    SourceError.CertUntrusted -> SourceHealth.ProviderError("CertUntrusted")
-                    SourceError.HostUnreachable -> SourceHealth.ProviderError("HostUnreachable")
-                    SourceError.Timeout -> SourceHealth.Unavailable
-                    else -> SourceHealth.ProviderError("api_error")
-                }
-            }.getOrElse { SourceHealth.ProviderError(transportError(it).name) }
-        } ?: SourceHealth.Unavailable
+                    health ?: when (error) {
+                        SourceError.AuthFailed -> authFailureHealth()
+                        SourceError.CertUntrusted -> SourceHealth.ProviderError("CertUntrusted")
+                        SourceError.HostUnreachable -> SourceHealth.ProviderError("HostUnreachable")
+                        SourceError.Timeout -> SourceHealth.Unavailable
+                        else -> SourceHealth.ProviderError("api_error")
+                    }
+                }.getOrElse { SourceHealth.ProviderError(transportError(it).name) }
+            } ?: SourceHealth.Unavailable
+        } finally {
+            lease.close()
+        }
     }
 
-    /**
-     * Distinguishes "wrong password" from "this account needs a 2FA code" by looking at
-     * the login response directly — [withSession] collapses both into a failed login,
-     * but the two need very different instructions on screen.
-     */
-    private suspend fun authFailureHealth(): SourceHealth {
-        val res = runCatchingCancellable {
-            http.getText(
-                SynologyApi.buildAuthUrl(conn.baseUrl, credentials.user, credentials.password, credentials.otpCode),
-                conn.connectionTimeoutMs,
-            )
-        }.getOrNull() ?: return SourceHealth.ProviderError("auth_failed")
-        return when (SynologyApi.mapError(SynologyApi.errorCode(res.body))) {
+    /** Maps the already-observed login failure without issuing a duplicate DSM login. */
+    private fun authFailureHealth(): SourceHealth {
+        return when (lastAuthError) {
             SourceError.TwoFactorRequired -> SourceHealth.ProviderError("two_factor_required")
             SourceError.PermissionDenied -> SourceHealth.NeedsPermission
             else -> SourceHealth.ProviderError("auth_failed")
@@ -266,75 +408,96 @@ class SynologyFileStationSource(
     // ---- scan ------------------------------------------------------------------
 
     override fun scan(previousCursor: ScanCursor?, options: ScanOptions): Flow<ScanEvent> = flow {
-        val root = conn.folderPath
-        // Explicit work-stack, not recursion: a deep NAS tree must not risk the JVM stack.
-        val pending = ArrayDeque<String>()
-        pending.addLast(root)
-        var scanned = 0L
+        val lease = operationOwner.acquire()
+        try {
+            val root = conn.folderPath
+            // Explicit work-stack, not recursion: a deep NAS tree must not risk the JVM stack.
+            val pending = ArrayDeque<String>()
+            pending.addLast(root)
+            var scanned = 0L
 
-        while (pending.isNotEmpty()) {
-            coroutineContext.ensureActive()
-            val folder = pending.removeLast()
-            var offset = 0
-
-            while (true) {
+            while (pending.isNotEmpty()) {
                 coroutineContext.ensureActive()
-                val (page, error) = withSession { liveSid ->
-                    val res = runCatchingCancellable {
-                        http.getText(
-                            SynologyApi.buildListUrl(conn.baseUrl, liveSid, folder, offset),
-                            conn.readTimeoutMs,
-                        )
-                    }.getOrElse { return@withSession null to transportError(it) }
-                    val parsed = SynologyApi.parseListPage(res.body)
-                    if (parsed == null) null to SynologyApi.mapError(SynologyApi.errorCode(res.body))
-                    else parsed to null
-                }
+                val folder = pending.removeLast()
+                var offset = 0
 
-                if (error != null || page == null) {
-                    emit(ScanEvent.Error(folder, error ?: SourceError.ProtocolError))
-                    break
-                }
-
-                for (entry in page.entries) {
+                while (true) {
                     coroutineContext.ensureActive()
-                    if (entry.isDir) {
-                        if (options.allowsFolder(entry.name)) {
-                            pending.addLast(entry.path)
+                    val (page, error) = withSession { liveSid ->
+                        val res = runCatchingCancellable {
+                            http.getText(
+                                SynologyApi.buildListUrl(conn.baseUrl, liveSid, folder, offset),
+                                conn.readTimeoutMs,
+                            )
+                        }.getOrElse { return@withSession null to transportError(it) }
+                        if (res.status !in 200..299) {
+                            null to mapHttpStatus(res.status)
+                        } else {
+                            val parsed = SynologyApi.parseListPage(res.body)
+                            if (parsed == null) {
+                                null to SynologyApi.mapError(SynologyApi.errorCode(res.body))
+                            } else {
+                                parsed to null
+                            }
                         }
-                        continue
                     }
-                    if (!options.allowsFile(entry.name)) continue
-                    if (!SupportedFormats.isSupported(entry.name, null)) continue
 
-                    val normalized = entry.path.removePrefix(root).trimStart('/')
-                    emit(
-                        ScanEvent.FileFound(
-                            PhotoItem(
-                                stableId = StableId.of(id.value, normalized, entry.sizeBytes, entry.modifiedEpochMs),
-                                sourceId = id,
-                                normalizedPath = normalized,
-                                folderName = entry.path.substringBeforeLast('/').substringAfterLast('/'),
-                                fileName = entry.name,
-                                mimeType = null,
-                                sizeBytes = entry.sizeBytes,
-                                fileModifiedEpochMs = entry.modifiedEpochMs,
-                                // No sid here: the token must stay secret-free and must
-                                // survive a session change (Contract Rule 5).
-                                openToken = entry.path,
+                    if (error != null || page == null) {
+                        emit(ScanEvent.Error(folder, error ?: SourceError.ProtocolError))
+                        break
+                    }
+
+                    for (entry in page.entries) {
+                        coroutineContext.ensureActive()
+                        if (entry.isDir) {
+                            if (options.allowsFolder(entry.name)) {
+                                pending.addLast(entry.path)
+                            }
+                            continue
+                        }
+                        if (!options.allowsFile(entry.name)) continue
+                        if (!SupportedFormats.isSupported(entry.name, null)) continue
+
+                        val normalized = entry.path.removePrefix(root).trimStart('/')
+                        emit(
+                            ScanEvent.FileFound(
+                                PhotoItem(
+                                    stableId = StableId.of(
+                                        id.value,
+                                        normalized,
+                                        entry.sizeBytes,
+                                        entry.modifiedEpochMs,
+                                    ),
+                                    sourceId = id,
+                                    normalizedPath = normalized,
+                                    folderName = entry.path.substringBeforeLast('/').substringAfterLast('/'),
+                                    fileName = entry.name,
+                                    mimeType = null,
+                                    sizeBytes = entry.sizeBytes,
+                                    fileModifiedEpochMs = entry.modifiedEpochMs,
+                                    // No sid here: the token must stay secret-free and must
+                                    // survive a session change (Contract Rule 5).
+                                    openToken = entry.path,
+                                ),
                             ),
-                        ),
-                    )
+                        )
+                    }
+
+                    scanned += page.entries.size
+                    emit(ScanEvent.DirectoryProgress(folder, scanned))
+
+                    if (offset > Int.MAX_VALUE - page.entries.size) {
+                        emit(ScanEvent.Error(folder, SourceError.ProtocolError))
+                        break
+                    }
+                    offset += page.entries.size
+                    if (page.entries.isEmpty() || offset >= page.total) break
                 }
-
-                scanned += page.entries.size
-                emit(ScanEvent.DirectoryProgress(folder, scanned))
-
-                offset += page.entries.size
-                if (page.entries.isEmpty() || offset >= page.total) break
             }
+            emit(ScanEvent.Finished(ScanCursor("")))
+        } finally {
+            lease.close()
         }
-        emit(ScanEvent.Finished(ScanCursor("")))
     }.flowOn(io)
 
     // ---- bytes -----------------------------------------------------------------
@@ -345,22 +508,123 @@ class SynologyFileStationSource(
      * the NAS has not generated one (common for a freshly copied folder).
      */
     override suspend fun openStream(item: PhotoItem, options: OpenOptions): InputStream {
-        val (stream, error) = withSession { liveSid ->
-            val urls = buildList {
-                if (conn.useThumbnails && !options.preferOriginal) {
-                    add(SynologyApi.buildThumbnailUrl(conn.baseUrl, liveSid, item.openToken, conn.thumbnailSize))
+        val lease = operationOwner.acquire()
+        try {
+            val (stream, error) = withSession { liveSid ->
+                val urls = buildList<Pair<String, Boolean>> {
+                    if (conn.useThumbnails && !options.preferOriginal) {
+                        add(
+                            SynologyApi.buildThumbnailUrl(
+                                conn.baseUrl,
+                                liveSid,
+                                item.openToken,
+                                conn.thumbnailSize,
+                            ) to true,
+                        )
+                    }
+                    add(SynologyApi.buildDownloadUrl(conn.baseUrl, liveSid, item.openToken) to false)
                 }
-                add(SynologyApi.buildDownloadUrl(conn.baseUrl, liveSid, item.openToken))
+                var lastError: SourceError? = null
+                for ((url, isThumbnail) in urls) {
+                    val (candidate, candidateError) = checkedStream(url, options.timeoutMs)
+                    candidate?.let { return@withSession it to null }
+                    lastError = candidateError ?: SourceError.ProtocolError
+                    // Let withSession re-authenticate before trying any URL with an expired
+                    // SID. Other thumbnail failures deliberately fall through to original.
+                    if (lastError == SourceError.SessionExpired) {
+                        return@withSession null to lastError
+                    }
+                    if (!isThumbnail) break
+                }
+                null to (lastError ?: SourceError.ProtocolError)
             }
-            var lastError: SourceError? = null
-            for (url in urls) {
-                val attempt = runCatchingCancellable { http.openStream(url, options.timeoutMs) }
-                attempt.getOrNull()?.let { return@withSession it to null }
-                lastError = transportError(attempt.exceptionOrNull() ?: Exception())
-            }
-            null to (lastError ?: SourceError.ProtocolError)
+            return stream?.let {
+                // The transport deadline closes the socket even while probing the response.
+                // This outer deadline additionally releases the operation lease if a caller
+                // abandons the returned stream without closing it.
+                DeadlineInputStream(LeaseReleasingInputStream(it, lease), options.timeoutMs)
+            } ?: throw IOException("synology_open_failed:${error?.name}")
+        } catch (error: Throwable) {
+            lease.close()
+            throw error
         }
-        return stream ?: throw java.io.IOException("synology_open_failed:${error?.name}")
+    }
+
+    private class LeaseReleasingInputStream(
+        input: InputStream,
+        private val lease: DeferredCloseResource.Lease<Unit>,
+    ) : FilterInputStream(input) {
+        private val closed = AtomicBoolean(false)
+
+        override fun close() {
+            if (!closed.compareAndSet(false, true)) return
+            try {
+                super.close()
+            } finally {
+                lease.close()
+            }
+        }
+    }
+
+    /**
+     * Validates both the HTTP envelope and File Station's JSON envelope. DSM reports
+     * many API failures with HTTP 200; those bytes must never enter the image cache.
+     */
+    private suspend fun checkedStream(url: String, timeoutMs: Long): Pair<InputStream?, SourceError?> {
+        val response = runCatchingCancellable { http.openStream(url, timeoutMs) }
+            .getOrElse { return null to transportError(it) }
+        val buffered = if (response.body is BufferedInputStream) {
+            response.body
+        } else {
+            BufferedInputStream(response.body, API_RESPONSE_PROBE_BYTES)
+        }
+        val apiError = runCatchingCancellable {
+            probeApiError(buffered, response.contentType)
+        }.getOrElse {
+            runCatching { buffered.close() }
+            return null to transportError(it)
+        }
+        if (response.status !in 200..299 || apiError != null) {
+            runCatching { buffered.close() }
+            return null to (apiError ?: mapHttpStatus(response.status))
+        }
+        return buffered to null
+    }
+
+    /** Reads and rewinds only a small prefix; valid image bytes remain untouched. */
+    private fun probeApiError(stream: BufferedInputStream, contentType: String?): SourceError? {
+        stream.mark(API_RESPONSE_PROBE_BYTES)
+        val prefix = ByteArray(API_RESPONSE_PROBE_BYTES)
+        var count = 0
+        while (count < prefix.size) {
+            val read = stream.read(prefix, count, prefix.size - count)
+            if (read <= 0) break
+            count += read
+        }
+        stream.reset()
+        if (count <= 0) return SourceError.ProtocolError
+
+        val explicitlyJson = contentType.orEmpty().lowercase().let { type ->
+            type.contains("json") || type.startsWith("text/")
+        }
+        val text = prefix.decodeToString(endIndex = count).trimStart()
+        val looksJson = text.firstOrNull()?.code == 123 // opening JSON object delimiter
+        if (!explicitlyJson && !looksJson) return null
+        if (!looksJson) return SourceError.ProtocolError
+        return if (SynologyApi.isSuccess(text)) {
+            // A successful JSON envelope is still metadata, never image bytes.
+            SourceError.ProtocolError
+        } else {
+            SynologyApi.mapError(SynologyApi.errorCode(text))
+        }
+    }
+
+    private fun mapHttpStatus(status: Int): SourceError = when (status) {
+        401 -> SourceError.SessionExpired
+        403 -> SourceError.PermissionDenied
+        404, 410 -> SourceError.FileGone
+        408, 504 -> SourceError.Timeout
+        else -> SourceError.ProtocolError
     }
 
     /** Maps transport-level exceptions onto the typed taxonomy (spec §8.2). */
@@ -382,30 +646,42 @@ class SynologyFileStationSource(
      */
     suspend fun probeCertificateFingerprint(timeoutMs: Long = conn.connectionTimeoutMs): String? =
         withContext(io) {
-            withTimeoutOrNull(timeoutMs) {
-                runCatchingCancellable {
-                    val base = SynologyApi.normalizeBaseUrl(conn.baseUrl)
-                    if (!base.startsWith("https://")) return@runCatchingCancellable null
-                    val capturer = CertPinning.CapturingTrustManager()
-                    val ctx = javax.net.ssl.SSLContext.getInstance("TLS")
-                        .apply { init(null, arrayOf<javax.net.ssl.TrustManager>(capturer), null) }
-                    val c = (URL(base).openConnection() as HttpURLConnection).apply {
-                        connectTimeout = timeoutMs.toInt()
-                        readTimeout = timeoutMs.toInt()
-                        if (this is javax.net.ssl.HttpsURLConnection) sslSocketFactory = ctx.socketFactory
+            val lease = operationOwner.acquire()
+            try {
+                withTimeoutOrNull(timeoutMs) {
+                    runCatchingCancellable {
+                        val base = SynologyApi.normalizeBaseUrl(conn.baseUrl)
+                        if (!base.startsWith("https://")) return@runCatchingCancellable null
+                        val capturer = CertPinning.CapturingTrustManager()
+                        val ctx = javax.net.ssl.SSLContext.getInstance("TLS")
+                            .apply { init(null, arrayOf<javax.net.ssl.TrustManager>(capturer), null) }
+                        val c = (URL(base).openConnection() as HttpURLConnection).apply {
+                            connectTimeout = timeoutMs.toSocketTimeoutMillis()
+                            readTimeout = timeoutMs.toSocketTimeoutMillis()
+                            if (this is javax.net.ssl.HttpsURLConnection) sslSocketFactory = ctx.socketFactory
+                        }
+                        try {
+                            // Expected to throw: CapturingTrustManager rejects every chain.
+                            c.connect()
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            // ignored — the certificate is captured on the way past
+                        } finally {
+                            c.disconnect()
+                        }
+                        capturer.captured?.let { CertPinning.fingerprintOf(it) }
                     }
-                    try {
-                        // Expected to throw: CapturingTrustManager rejects every chain.
-                        c.connect()
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        // ignored — the certificate is captured on the way past
-                    } finally {
-                        c.disconnect()
-                    }
-                    capturer.captured?.let { CertPinning.fingerprintOf(it) }
-                }.getOrNull()
+                        .getOrNull()
+                }
+            } finally {
+                lease.close()
             }
         }
+
+    private companion object {
+        private const val API_RESPONSE_PROBE_BYTES = 8 * 1024
+        private const val LOGOUT_TIMEOUT_MS = 3_000L
+        private const val SHUTDOWN_WAIT_MS = 5_000L
+    }
 }

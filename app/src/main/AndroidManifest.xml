@@ -25,21 +25,12 @@
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
     <!--
-        A photo frame is a single-purpose foreground app: nothing else on the device is
-        competing for the heap, and decoded photos are the only thing that consumes it.
-        On the 2 GB tablets this targets, the default growth limit is often 96 MB, which
-        four live slide graphs come uncomfortably close to filling.
-
-        Two limits on what this buys. The platform ignores it entirely on builds that set
-        ro.config.low_ram — some of the target hardware — so it cannot be relied on, and
-        the in-app measures (DecodeColorPolicy, PlaybackMemoryPolicy) remain the real
-        protection. And a larger heap means longer GC pauses, which on a frame show up as
-        dropped frames mid-crossfade: validate with the frame-timing overlay against
-        PERFORMANCE_BUDGET.md before assuming this is free.
+      Use the ordinary application heap. LOW-tier playback now starts with RGB_565, reduced
+      decode dimensions, no speculative next-slide bitmap, and a three-entry registry; asking
+      Android for a larger growth limit only concealed whole-process pressure on the API-22 frame.
     -->
     <application
         android:name=".App"
-        android:largeHeap="true"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"

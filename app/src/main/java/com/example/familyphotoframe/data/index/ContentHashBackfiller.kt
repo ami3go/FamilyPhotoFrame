@@ -2,6 +2,7 @@ package com.example.familyphotoframe.data.index
 
 import com.example.familyphotoframe.data.db.PhotoDao
 import com.example.familyphotoframe.data.db.PhotoItemEntity
+import com.example.familyphotoframe.data.cache.MediaTransferPolicy
 import com.example.familyphotoframe.data.diagnostics.DiagnosticsLog
 import com.example.familyphotoframe.data.diagnostics.diagnosticToken
 import com.example.familyphotoframe.data.source.OpenOptions
@@ -17,6 +18,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import com.example.familyphotoframe.util.toHexString
+import java.io.InputStream
 import java.security.MessageDigest
 import kotlin.coroutines.coroutineContext
 
@@ -101,23 +103,18 @@ class ContentHashBackfiller(
                 withContext(io) {
                     val md = MessageDigest.getInstance("SHA-256")
                     val item = row.toPhotoItem()
-                    var bytesRead = 0L
-                    source.openStream(
+                    val result = source.openStream(
                         item,
-                        OpenOptions(timeoutMs = timeoutMs, preferOriginal = true),
+                        OpenOptions(
+                            timeoutMs = timeoutMs,
+                            preferOriginal = true,
+                            purpose = com.example.familyphotoframe.data.source.OpenPurpose.CONTENT_HASH,
+                        ),
                     ).use { input ->
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        while (true) {
-                            coroutineContext.ensureActive()
-                            val read = input.read(buffer)
-                            if (read < 0) break
-                            if (read == 0) continue
-                            md.update(buffer, 0, read)
-                            bytesRead += read
-                        }
+                        digestContentStream(input, md)
                     }
-                    if (row.sizeBytes > 0L && bytesRead != row.sizeBytes) null
-                    else md.digest().toHexString()
+                    if (row.sizeBytes > 0L && result.bytesRead != row.sizeBytes) null
+                    else result.sha256
                 }
             }
             if (digest == null) {
@@ -146,4 +143,30 @@ class ContentHashBackfiller(
         fileModifiedEpochMs = fileModifiedEpochMs,
         openToken = openToken,
     )
+}
+
+internal data class ContentDigestResult(val sha256: String, val bytesRead: Long)
+
+/**
+ * Use one practical SMB2 read per 64 KiB instead of Kotlin's generic 8 KiB stream
+ * buffer. On API 22, a multi-hour remote hash pass otherwise creates roughly eight
+ * times as many short-lived jCIFS request/response objects and associated allocator
+ * pressure as the cache-transfer path for the same bytes.
+ */
+internal suspend fun digestContentStream(
+    input: InputStream,
+    digest: MessageDigest,
+    bufferSize: Int = MediaTransferPolicy.REMOTE_COPY_BUFFER_BYTES,
+): ContentDigestResult {
+    val buffer = ByteArray(bufferSize)
+    var bytesRead = 0L
+    while (true) {
+        coroutineContext.ensureActive()
+        val read = input.read(buffer)
+        if (read < 0) break
+        if (read == 0) continue
+        digest.update(buffer, 0, read)
+        bytesRead += read
+    }
+    return ContentDigestResult(digest.digest().toHexString(), bytesRead)
 }

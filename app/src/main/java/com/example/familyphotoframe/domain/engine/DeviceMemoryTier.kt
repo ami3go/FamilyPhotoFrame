@@ -14,11 +14,10 @@ enum class DeviceMemoryTier {
  * Classifies the device once, so the frame can *start* economical rather than discover
  * it should have been.
  *
- * Everything else in this package reacts: [PlaybackMemoryPolicy] steps playback down
- * after pressure appears, [DecodeColorPolicy] halves pixels once the heap is known to be
- * small. Those only ever fire after the frame is already in difficulty. The signals here
- * are all available before the first photo is decoded, which is the only point at which
- * a smaller baseline can be chosen for free.
+ * [PlaybackMemoryPolicy] uses this tier to start with a smaller ownership/decode profile,
+ * while [DecodeColorPolicy] can halve pixels before the first slide is prepared. Reactive
+ * pressure levels then step down further if Java heap, process PSS, or system headroom
+ * crosses a runtime boundary.
  *
  * Pure and total: the caller reads the three Android values, this decides what they mean.
  */

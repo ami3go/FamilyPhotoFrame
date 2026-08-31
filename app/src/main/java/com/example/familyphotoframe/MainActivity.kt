@@ -227,6 +227,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private fun openSettings() {
         settingsPage = SettingsPage.ROOT
         screen = Screen.SETTINGS
+        vm.setSurfaceObscured(true)
         latestUiState?.let { activityDiagnostics.recordUiState(it, true, "OPEN_SETTINGS") }
         immersiveMode.recover("OPEN_SETTINGS")
     }
@@ -235,6 +236,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private fun openPhotoSources() {
         settingsPage = SettingsPage.PHOTOS
         screen = Screen.SETTINGS
+        vm.setSurfaceObscured(true)
         latestUiState?.let { activityDiagnostics.recordUiState(it, true, "OPEN_PHOTO_SOURCES") }
         immersiveMode.recover("OPEN_PHOTO_SOURCES")
     }
@@ -242,6 +244,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private fun returnToSlideshow() {
         settingsPage = SettingsPage.ROOT
         screen = Screen.SLIDESHOW
+        vm.setSurfaceObscured(false)
         latestUiState?.let { activityDiagnostics.recordUiState(it, false, "RETURN_TO_SLIDESHOW") }
         immersiveMode.recover("RETURN_TO_SLIDESHOW")
     }

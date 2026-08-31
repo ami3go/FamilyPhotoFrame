@@ -129,7 +129,10 @@ with tempfile.TemporaryDirectory(prefix="fpf-transition-log-") as td:
                       "configuredMode": "fixed", "configuredEffect": effect, "resolvedEffect": effect,
                       "durationMs": "900", "frameCount": "55", "slowFrameCount": "1",
                       "maximumFrameMs": "24", "startLatencyMs": "8", "preparedSlideCount": "2",
-                      "activeDecodedBytes": "16777216", "fallbackUsed": "false"})
+                      "activeDecodedBytes": "16777216", "fallbackUsed": "false",
+                      "transitionGeneration": str(i + 1), "hostGeneration": "1"})
+        lines.append({"t": t - 1, "sid": "test", "cat": "ENGINE", "code": "TRANSITION_STARTED",
+                      "transitionGeneration": str(i + 1), "hostGeneration": "1"})
         if i % 10 == 0:
             lines.append({"t": t, "sid": "test", "cat": "MEMORY", "code": "HEAP_SAMPLE",
                           "heapUsedKb": str(50000 + i * 2), "heapMaxKb": "262144"})

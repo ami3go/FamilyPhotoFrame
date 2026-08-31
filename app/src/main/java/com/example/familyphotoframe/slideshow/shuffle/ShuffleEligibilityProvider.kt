@@ -1,6 +1,7 @@
 package com.example.familyphotoframe.slideshow.shuffle
 
 import com.example.familyphotoframe.data.db.PhotoDao
+import com.example.familyphotoframe.data.db.FolderSelectionSql
 import com.example.familyphotoframe.data.db.ShufflePhotoRow
 import java.util.concurrent.atomic.AtomicLong
 
@@ -46,7 +47,7 @@ class ShuffleEligibilityProvider(
             ).also { snapshot -> cacheIfCurrent(generation, query, snapshot) }
         }
         val allFolders = if (query.selectedFolders.isEmpty()) 1 else 0
-        val folderArg = if (query.selectedFolders.isEmpty()) listOf("\u0000") else query.selectedFolders
+        val folderSelection = FolderSelectionSql.encode(query.selectedFolders)
         val folders = photoDao.shuffleEligibleFolders(
             sourceIds = query.sourceIds,
             maxFailures = query.maxFailures,
@@ -54,7 +55,7 @@ class ShuffleEligibilityProvider(
             cachedOnly = if (query.cachedOnly) 1 else 0,
             allowHeif = if (allowHeif) 1 else 0,
             allFolders = allFolders,
-            folders = folderArg,
+            folderSelection = folderSelection,
         ).map { row ->
             EligibleFolder(
                 key = FolderKey.fromIndexedDirectory(row.sourceId, row.canonicalDirectory),

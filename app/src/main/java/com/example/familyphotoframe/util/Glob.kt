@@ -1,7 +1,6 @@
 package com.example.familyphotoframe.util
 
 import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Minimal, allocation-light glob matcher for include/exclude rules in the config
@@ -15,7 +14,8 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object Glob {
 
-    private val cache = ConcurrentHashMap<String, Regex>()
+    private val cache = object : LinkedHashMap<String, Regex>(CACHE_CAPACITY, 0.75f, true) {}
+    private val neverMatches = Regex("(?!)")
 
     fun matches(pattern: String, name: String): Boolean =
         regexFor(pattern).matches(name.lowercase(Locale.ROOT))
@@ -28,7 +28,15 @@ object Glob {
         return excludeGlobs.none { regexFor(it).matches(lower) }
     }
 
-    private fun regexFor(pattern: String): Regex = cache.getOrPut(pattern) { compile(pattern) }
+    private fun regexFor(pattern: String): Regex {
+        if (pattern.length > MAX_PATTERN_LENGTH) return neverMatches
+        return synchronized(cache) {
+            cache[pattern] ?: compile(pattern).also { compiled ->
+                cache[pattern] = compiled
+                while (cache.size > CACHE_CAPACITY) cache.remove(cache.keys.first())
+            }
+        }
+    }
 
     private fun compile(pattern: String): Regex {
         val p = pattern.lowercase(Locale.ROOT)
@@ -54,4 +62,7 @@ object Glob {
         sb.append('$')
         return Regex(sb.toString())
     }
+
+    private const val CACHE_CAPACITY = 128
+    const val MAX_PATTERN_LENGTH = 256
 }

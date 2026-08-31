@@ -2,9 +2,12 @@ package com.example.familyphotoframe.data.source
 
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.runBlocking
 
 class DeferredCloseResourceTest {
     @Test fun closeWaitsForEveryOutstandingLease() {
@@ -46,5 +49,16 @@ class DeferredCloseResourceTest {
         assertEquals(0, createCount.get())
         assertEquals(0, closeCount.get())
         assertThrows(IllegalStateException::class.java) { owner.acquire() }
+    }
+
+    @Test fun awaitClosedTracksTheFinalOutstandingLease() = runBlocking {
+        val owner = DeferredCloseResource(factory = { Any() }) { }
+        val lease = owner.acquire()
+
+        owner.close()
+        assertFalse(owner.awaitClosed(1))
+        lease.close()
+
+        assertTrue(owner.awaitClosed(100))
     }
 }

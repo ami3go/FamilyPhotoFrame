@@ -65,6 +65,17 @@ interface CacheIndexDao {
     @Query("SELECT * FROM cache_index WHERE cacheKey = :key")
     suspend fun get(key: String): CacheIndexEntity?
 
+    /** Keyset page used for bounded startup reconciliation with private files. */
+    @Query(
+        """
+        SELECT * FROM cache_index
+        WHERE cacheKey > :afterKey
+        ORDER BY cacheKey ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun reconciliationPage(afterKey: String, limit: Int): List<CacheIndexEntity>
+
     @Query("UPDATE cache_index SET lastAccessedAtEpochMs = :ts WHERE cacheKey = :key")
     suspend fun touch(key: String, ts: Long)
 

@@ -68,6 +68,7 @@ import com.example.familyphotoframe.data.weather.TemperatureUnits
 import com.example.familyphotoframe.domain.schedule.RescanSchedule
 import com.example.familyphotoframe.data.settings.DecodeColorDepth
 import com.example.familyphotoframe.data.settings.DecodeResolution
+import com.example.familyphotoframe.data.settings.NativeMemoryHilMode
 import com.example.familyphotoframe.ui.slideshow.SlideshowUiState
 import com.example.familyphotoframe.ui.slideshow.SlideshowViewModel
 import com.example.familyphotoframe.web.QrCodes
@@ -187,6 +188,39 @@ internal fun LowMemorySettings(state: SlideshowUiState, vm: SlideshowViewModel) 
         )
         Text(
             stringResource(R.string.settings_pool_cache_hint),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            fontSize = 14.sp,
+        )
+
+        Text(stringResource(R.string.settings_native_hil_mode))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilterChip(
+                    state.nativeMemoryHilMode == NativeMemoryHilMode.NORMAL,
+                    { vm.setNativeMemoryHilMode(NativeMemoryHilMode.NORMAL) },
+                    { Text(stringResource(R.string.settings_native_hil_normal)) },
+                )
+                FilterChip(
+                    state.nativeMemoryHilMode == NativeMemoryHilMode.HOLD_COMMITTED_FRAME,
+                    { vm.setNativeMemoryHilMode(NativeMemoryHilMode.HOLD_COMMITTED_FRAME) },
+                    { Text(stringResource(R.string.settings_native_hil_hold)) },
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilterChip(
+                    state.nativeMemoryHilMode == NativeMemoryHilMode.SINGLE_PHOTO_INSTANT,
+                    { vm.setNativeMemoryHilMode(NativeMemoryHilMode.SINGLE_PHOTO_INSTANT) },
+                    { Text(stringResource(R.string.settings_native_hil_instant)) },
+                )
+                FilterChip(
+                    state.nativeMemoryHilMode == NativeMemoryHilMode.SINGLE_PHOTO_CROSSFADE,
+                    { vm.setNativeMemoryHilMode(NativeMemoryHilMode.SINGLE_PHOTO_CROSSFADE) },
+                    { Text(stringResource(R.string.settings_native_hil_crossfade)) },
+                )
+            }
+        }
+        Text(
+            stringResource(R.string.settings_native_hil_hint),
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             fontSize = 14.sp,
         )

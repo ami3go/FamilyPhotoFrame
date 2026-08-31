@@ -56,6 +56,10 @@ captures/
 # Log Files
 *.hprof
 
+# Python verifier/analyzer bytecode
+__pycache__/
+*.py[cod]
+
 # Freeline
 freeline.py
 freeline/

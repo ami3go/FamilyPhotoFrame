@@ -15,6 +15,9 @@ import com.example.familyphotoframe.data.source.SourceHealth
 import com.example.familyphotoframe.data.source.SourceId
 import com.example.familyphotoframe.data.source.SourceType
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
@@ -29,6 +32,7 @@ import org.junit.runner.RunWith
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 class MediaCacheTest {
@@ -45,6 +49,19 @@ class MediaCacheTest {
             flowOf(ScanEvent.Finished(ScanCursor("x")))
         override suspend fun openStream(item: PhotoItem, options: OpenOptions): InputStream =
             ByteArrayInputStream(pngBytes)
+    }
+
+    private inner class CountingSource : PhotoSource {
+        override val id = SourceId("counting")
+        override val type = SourceType.SMB_SOURCE
+        val opens = AtomicInteger(0)
+        override suspend fun healthCheck(timeoutMs: Long): SourceHealth = SourceHealth.Ok
+        override fun scan(previousCursor: ScanCursor?, options: ScanOptions): Flow<ScanEvent> =
+            flowOf(ScanEvent.Finished(ScanCursor("x")))
+        override suspend fun openStream(item: PhotoItem, options: OpenOptions): InputStream {
+            opens.incrementAndGet()
+            return ByteArrayInputStream(pngBytes)
+        }
     }
 
     private fun item(key: String) = PhotoItem(
@@ -84,11 +101,44 @@ class MediaCacheTest {
         assertNotNull(db.cacheIndexDao().get("keep"))
     }
 
+    @Test fun evictionStopsAsSoonAsTheCacheFits() = runBlocking {
+        val cache = cache(pngBytes.size.toLong() * 2L)
+        cache.get(item("first"), FakeSource(), emptySet())
+        cache.get(item("second"), FakeSource(), emptySet())
+        cache.get(item("third"), FakeSource(), emptySet())
+
+        val remaining = listOf("first", "second", "third")
+            .count { db.cacheIndexDao().get(it) != null }
+        assertEquals(2, remaining)
+    }
+
     @Test fun clearEmptiesCache() = runBlocking {
         val cache = cache(10L * 1024 * 1024)
         cache.get(item("k1"), FakeSource(), emptySet())
         cache.clear()
         assertNull(db.cacheIndexDao().get("k1"))
         assertEquals(0L, db.cacheIndexDao().totalSizeBytes())
+    }
+
+    @Test fun concurrentSameKeyMissesShareOneDownload() = runBlocking {
+        val cache = cache(10L * 1024 * 1024)
+        val source = CountingSource()
+        val results = coroutineScope {
+            (1..8).map { async(Dispatchers.IO) { cache.get(item("single-flight"), source, emptySet()) } }
+                .awaitAll()
+        }
+        assertTrue(results.all { it?.exists() == true })
+        assertEquals(1, source.opens.get())
+    }
+
+    @Test fun firstAccessRemovesCrashLeftoverPartFiles() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val orphan = java.io.File(context.filesDir, "mediacache/orphan.1.part")
+        orphan.parentFile?.mkdirs()
+        orphan.writeBytes(byteArrayOf(1, 2, 3))
+
+        cache(10L * 1024 * 1024).get(item("reconcile"), FakeSource(), emptySet())
+
+        assertTrue(!orphan.exists())
     }
 }

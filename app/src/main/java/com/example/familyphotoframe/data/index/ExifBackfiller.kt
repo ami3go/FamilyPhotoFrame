@@ -66,7 +66,13 @@ class ExifBackfiller(
                 )
 
                 val exif = withTimeoutOrNull(timeoutMs) {
-                    source.openStream(item, OpenOptions(timeoutMs = timeoutMs)).use { ExifExtractor.extract(it) }
+                    source.openStream(
+                        item,
+                        OpenOptions(
+                            timeoutMs = timeoutMs,
+                            purpose = com.example.familyphotoframe.data.source.OpenPurpose.EXIF_METADATA,
+                        ),
+                    ).use { ExifExtractor.extract(it) }
                 }
 
                 val now = System.currentTimeMillis()

@@ -34,15 +34,19 @@ object DecodeColorPolicy {
      *   roomy so an unreadable value never silently degrades a capable device.
      * @param level current guard level; anything past NORMAL means the frame is already
      *   economising and full colour is no longer the priority.
+     * @param lowMemoryTier static startup classification; unlike heap size, this catches a
+     *   2 GiB device whose optional large heap masks the ordinary memory constraint.
      */
     fun choose(
         preference: DecodeColorDepth,
         heapMaxBytes: Long,
         level: PlaybackMemoryLevel,
+        lowMemoryTier: Boolean = false,
     ): DecodeColorChoice = when (preference) {
         DecodeColorDepth.FULL -> DecodeColorChoice.ARGB_8888
         DecodeColorDepth.LOW_MEMORY -> DecodeColorChoice.RGB_565
         DecodeColorDepth.AUTO -> when {
+            lowMemoryTier -> DecodeColorChoice.RGB_565
             heapMaxBytes in 1L..PlaybackMemoryPolicy.LOW_HEAP_MAX_BYTES -> DecodeColorChoice.RGB_565
             level != PlaybackMemoryLevel.NORMAL -> DecodeColorChoice.RGB_565
             else -> DecodeColorChoice.ARGB_8888

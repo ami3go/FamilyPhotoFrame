@@ -1,6 +1,7 @@
 package com.example.familyphotoframe.data.settings
 
 import com.example.familyphotoframe.util.SupportedFormats
+import com.example.familyphotoframe.util.Glob
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.descriptors.PrimitiveKind
@@ -253,9 +254,8 @@ enum class MotionMode { NONE, KEN_BURNS }
 /**
  * Colour depth used when decoding a photo for display.
  *
- * [AUTO] follows the heap: full colour where there is room, half-size RGB_565 pixels on
- * the small heaps old tablets provide and whenever the memory guard has already stepped
- * playback down.
+ * [AUTO] follows the device and guard: full colour where there is room, half-size RGB_565
+ * pixels on LOW-tier/small-heap frames and whenever runtime protection has stepped down.
  */
 enum class DecodeColorDepth { AUTO, FULL, LOW_MEMORY }
 
@@ -267,6 +267,22 @@ enum class DecodeColorDepth { AUTO, FULL, LOW_MEMORY }
  * nobody sees from across a room.
  */
 enum class DecodeResolution { AUTO, FULL_PANEL, REDUCED }
+
+/**
+ * Controlled Phase 2B playback variants used to isolate native allocation stages on HIL.
+ * They are persisted so a device restart does not silently change the experiment.
+ */
+enum class NativeMemoryHilMode {
+    NORMAL,
+    HOLD_COMMITTED_FRAME,
+    SINGLE_PHOTO_INSTANT,
+    SINGLE_PHOTO_CROSSFADE,
+    ;
+
+    val holdPlayback: Boolean get() = this == HOLD_COMMITTED_FRAME
+    val forceSinglePhoto: Boolean get() = this != NORMAL && this != HOLD_COMMITTED_FRAME
+    val disablePreload: Boolean get() = this != NORMAL
+}
 
 /** How portrait photos are grouped on a landscape frame. */
 enum class PortraitCollageMode { OFF, AUTOMATIC, ALWAYS_TWO, PREFER_THREE }
@@ -525,17 +541,34 @@ data class FilterSettings(
      * photo indexing automatically.
      */
     fun withCurrentDefaultFormats(): FilterSettings {
-        val normalized = cleanIncludes.map { it.lowercase() }.toSet()
-        return if (normalized == LEGACY_DEFAULT_INCLUDE_GLOBS.toSet()) {
-            copy(includeGlobs = SupportedFormats.defaultIncludeGlobs)
+        val safe = normalized()
+        val normalizedIncludes = safe.includeGlobs.map { it.lowercase() }.toSet()
+        return if (normalizedIncludes == LEGACY_DEFAULT_INCLUDE_GLOBS.toSet()) {
+            safe.copy(includeGlobs = SupportedFormats.defaultIncludeGlobs)
         } else {
-            this
+            safe
         }
     }
+
+    /** One canonical bound for UI, web, imports, and old persisted configurations. */
+    fun normalized(): FilterSettings = copy(
+        includeGlobs = bounded(includeGlobs).ifEmpty { SupportedFormats.defaultIncludeGlobs },
+        excludeGlobs = bounded(excludeGlobs),
+        excludeFolders = bounded(excludeFolders),
+    )
+
+    private fun bounded(values: List<String>): List<String> = values.asSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .filter { it.length <= Glob.MAX_PATTERN_LENGTH }
+        .distinct()
+        .take(MAX_FILTER_ENTRIES)
+        .toList()
 
     companion object {
         private val LEGACY_DEFAULT_INCLUDE_GLOBS =
             listOf("*.jpg", "*.jpeg", "*.png", "*.webp")
+        const val MAX_FILTER_ENTRIES = 64
     }
 }
 
@@ -564,12 +597,42 @@ data class SlideshowPlaylist(
     fun normalized(): SlideshowPlaylist = copy(
         id = id.trim().take(80),
         name = name.trim().take(80),
-        sourceIds = sourceIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet(),
-        folderNames = folderNames.map { it.trim() }.filter { it.isNotEmpty() }.toSet(),
+        sourceIds = sourceIds.asSequence()
+            .map { it.trim().take(80) }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .take(MAX_PLAYLIST_SOURCE_IDS)
+            .toSet(),
+        folderNames = normalizeFolderSelection(folderNames),
         intervalSeconds = intervalSeconds?.let(PlaybackInterval::clamp),
         transition = transition,
     )
 }
+
+/**
+ * Bounds the persisted folder predicate by both cardinality and aggregate text size.
+ * A per-item limit alone still permits a tens-of-megabytes DataStore/SQLite parameter
+ * on a low-heap frame when thousands of unusually long network paths are selected.
+ */
+internal fun normalizeFolderSelection(values: Iterable<String>): Set<String> {
+    val normalized = LinkedHashSet<String>()
+    var totalChars = 0
+    for (raw in values) {
+        if (normalized.size >= MAX_SELECTED_FOLDERS) break
+        val value = raw.trim()
+        if (value.isEmpty() || value.length > MAX_FOLDER_KEY_LENGTH || '\u001e' in value) continue
+        if (value in normalized) continue
+        if (totalChars > MAX_SELECTED_FOLDER_CHARS - value.length) break
+        normalized += value
+        totalChars += value.length
+    }
+    return normalized
+}
+
+private const val MAX_SELECTED_FOLDERS = 20_000
+private const val MAX_FOLDER_KEY_LENGTH = 2_048
+private const val MAX_SELECTED_FOLDER_CHARS = 2_000_000
+private const val MAX_PLAYLIST_SOURCE_IDS = 16
 
 /** Local-time rule that activates one playlist. ISO weekday 1 = Monday. */
 @Serializable
@@ -592,7 +655,11 @@ data class PlaylistScheduleRule(
         name = name.trim().take(80),
         playlistId = playlistId.trim().take(80),
         daysOfWeek = daysOfWeek.filter { it in 1..7 }.toSet(),
+        startTime = startTime.trim().take(5),
+        endTime = endTime.trim().take(5),
         priority = priority.coerceIn(-1000, 1000),
+        startDateIso = startDateIso?.trim()?.take(10),
+        endDateIso = endDateIso?.trim()?.take(10),
     )
 }
 
@@ -609,9 +676,20 @@ data class PlaylistSettings(
     fun withCurrentDefaults(): PlaylistSettings {
         val byId = LinkedHashMap<String, SlideshowPlaylist>()
         builtInPlaylists().forEach { byId[it.id] = it }
-        playlists.map(SlideshowPlaylist::normalized)
-            .filter { it.id.isNotBlank() && it.name.isNotBlank() }
-            .forEach { if (it.id !in BUILT_IN_IDS) byId[it.id] = it }
+        var userPlaylistCount = 0
+        var totalFolderChars = 0L
+        for (raw in playlists) {
+            if (userPlaylistCount >= MAX_USER_PLAYLISTS) break
+            val playlist = raw.normalized()
+            if (playlist.id.isBlank() || playlist.name.isBlank() ||
+                playlist.id in BUILT_IN_IDS || playlist.id in byId
+            ) continue
+            val folderChars = playlist.folderNames.sumOf { it.length.toLong() }
+            if (folderChars > MAX_TOTAL_PLAYLIST_FOLDER_CHARS - totalFolderChars) continue
+            byId[playlist.id] = playlist
+            userPlaylistCount += 1
+            totalFolderChars += folderChars
+        }
         val all = byId.values.toList()
         val active = activePlaylistId.takeIf { id -> all.any { it.id == id } } ?: PLAYLIST_ALL
         val default = defaultPlaylistId.takeIf { id -> all.any { it.id == id } } ?: PLAYLIST_ALL
@@ -619,8 +697,12 @@ data class PlaylistSettings(
             playlists = all,
             activePlaylistId = active,
             defaultPlaylistId = default,
-            scheduleRules = scheduleRules.map(PlaylistScheduleRule::normalized)
-                .filter { it.id.isNotBlank() && it.playlistId.isNotBlank() },
+            scheduleRules = scheduleRules.asSequence()
+                .map(PlaylistScheduleRule::normalized)
+                .filter { it.id.isNotBlank() && it.playlistId.isNotBlank() }
+                .distinctBy { it.id }
+                .take(MAX_SCHEDULE_RULES)
+                .toList(),
         )
     }
 
@@ -640,6 +722,10 @@ data class PlaylistSettings(
          */
         const val PLAYLIST_ON_THIS_DAY = "builtin_on_this_day"
         val BUILT_IN_IDS = setOf(PLAYLIST_ALL, PLAYLIST_FAVORITES, PLAYLIST_RECENT_UPLOADS, PLAYLIST_ON_THIS_DAY)
+        const val MAX_USER_PLAYLISTS = 32
+        const val MAX_SCHEDULE_RULES = 128
+        /** Aggregate bound prevents playlist duplication from multiplying a large folder set. */
+        const val MAX_TOTAL_PLAYLIST_FOLDER_CHARS = 4_000_000L
 
         fun builtInPlaylists(): List<SlideshowPlaylist> = listOf(
             SlideshowPlaylist(PLAYLIST_ALL, "All photos"),
@@ -833,6 +919,8 @@ data class AppSettings(
     val decodeColorDepth: DecodeColorDepth = DecodeColorDepth.AUTO,
     /** Decoded pixel count per slide; see [DecodeResolution]. */
     val decodeResolution: DecodeResolution = DecodeResolution.AUTO,
+    /** Explicit native-memory HIL variant. Never enabled by default. */
+    val nativeMemoryHilMode: NativeMemoryHilMode = NativeMemoryHilMode.NORMAL,
     /**
      * Reuse the playback id list between slides instead of re-reading the whole photo
      * index on every advance (spec §9.6 pools). Off restores the previous behaviour.

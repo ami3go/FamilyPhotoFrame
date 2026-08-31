@@ -59,6 +59,7 @@ internal object AppSettingsCanonicalizer {
             brightnessAutomationMigrationVersion = BRIGHTNESS_AUTOMATION_MIGRATION_V1,
             schedule = migratedSchedule,
             filters = settings.filters.withCurrentDefaultFormats(),
+            selectedFolders = normalizeFolderSelection(settings.selectedFolders),
             playlists = settings.playlists.withCurrentDefaults(),
             brightnessAutomation = migratedBrightness,
             web = settings.web.copy(

@@ -81,4 +81,10 @@ data class TransitionEvent(
     val preparedSlideCount: Int? = null,
     /** Approximate decoded bytes used by outgoing + incoming prepared content. */
     val activeDecodedBytes: Long? = null,
+    /** Monotonic within one PlayingContent lifetime; joins selected/start/terminal events. */
+    val transitionGeneration: Long = 0L,
+    /** Activity playback generation used to reject stale lifecycle work. */
+    val hostGeneration: Long = 0L,
+    /** Categorical owner of cancellation, populated only for cancellation events. */
+    val cancellationInitiator: String? = null,
 )

@@ -1,6 +1,8 @@
 package com.example.familyphotoframe.data.source
 
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Lazily owns a closeable resource whose destruction must not race an in-flight user.
@@ -17,6 +19,7 @@ internal class DeferredCloseResource<T : Any>(
     private var resource: T? = null
     private var activeLeases = 0
     private var closeRequested = false
+    private val fullyClosed = CompletableDeferred<Unit>()
 
     internal class Lease<T : Any>(
         val value: T,
@@ -38,21 +41,40 @@ internal class DeferredCloseResource<T : Any>(
     }
 
     override fun close() {
-        val resourceToClose = synchronized(lock) {
+        val closeResult = synchronized(lock) {
             if (closeRequested) return
             closeRequested = true
-            takeResourceIfUnused()
+            takeResourceIfUnused().let { it to (activeLeases == 0) }
         }
-        resourceToClose?.let(closer)
+        try {
+            closeResult.first?.let(closer)
+        } finally {
+            if (closeResult.second) fullyClosed.complete(Unit)
+        }
+    }
+
+    /** Waits without blocking a dispatcher thread for every lease and the closer. */
+    suspend fun awaitClosed(timeoutMs: Long): Boolean {
+        if (fullyClosed.isCompleted) return true
+        if (timeoutMs <= 0L) return false
+        return withTimeoutOrNull(timeoutMs) {
+            fullyClosed.await()
+            true
+        } ?: false
     }
 
     private fun releaseLease() {
-        val resourceToClose = synchronized(lock) {
+        val closeResult = synchronized(lock) {
             check(activeLeases > 0) { "Released more resource leases than were acquired" }
             activeLeases--
-            if (closeRequested) takeResourceIfUnused() else null
+            val resource = if (closeRequested) takeResourceIfUnused() else null
+            resource to (closeRequested && activeLeases == 0)
         }
-        resourceToClose?.let(closer)
+        try {
+            closeResult.first?.let(closer)
+        } finally {
+            if (closeResult.second) fullyClosed.complete(Unit)
+        }
     }
 
     /** Must be called under [lock]. */

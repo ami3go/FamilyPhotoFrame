@@ -30,6 +30,40 @@ The event catalog in `DiagnosticEventSpec.kt` owns category, severity, standard/
 - `operationId` follows rebuild, source apply/test/health, recovery, and scan work across coroutine boundaries.
 - `parentOperationId` connects child health/scan operations to their source refresh.
 - Terminal outcomes distinguish completion, failure, cancellation, coalescing, supersession, incomplete scans, and reconciliation decisions.
+- Transition events carry `hostGeneration` plus `transitionGeneration`, allowing every selected/start/terminal record to be joined without relying on timestamps.
+- Transition cancellation records carry a categorical `cancellationInitiator`; outgoing and incoming presentation identities remain installation-specific tokens.
+
+## Runtime observability
+
+Each one-minute `HEAP_SAMPLE` retains both managed and process/system evidence:
+
+- Java heap, native allocator bytes, and total process PSS;
+- Dalvik, native, and other PSS categories from `Debug.MemoryInfo`;
+- available system memory, low-memory threshold, and Android's low-memory flag;
+- `/proc/self/fd` and `/proc/self/task` counts when procfs is available;
+- active, peak, cumulative-open/close, and oldest-age values for SMB streams;
+- active, peak, cumulative-start/finish, and oldest-age values for media-cache transfers;
+- explicit saturation flags if the bounded active-resource timestamp registry reaches its limit.
+
+Phase 3 also records the policy interpretation: `processMemoryBudgetKb`,
+`processPressurePercent`, `systemHeadroomPercent`, `memoryPressureSource`,
+`economyBaseline`, and the remaining external critical/guarded holds. `pressurePercent` remains
+the Java-heap percentage for backward compatibility. The policy compares total PSS with the
+ordinary Android memory class and system availability with Android's low-memory threshold.
+
+Phase 4 adds bounded trend/operational evidence: `nativeGrowthKb`,
+`nativeGrowthRateKbPerMin`, `nativeGrowthStreak`, `renderTimeoutWindowCount`, and
+`renderTimeoutTotal`. `memoryPressureSource` can additionally report `NATIVE_PSS_GROWTH`,
+`RENDER_ACK_TIMEOUTS`, or `OVERDUE_TRANSFER`. Raw photo identity is never retained by these
+counters. Transfer age/count comes from the existing bounded resource tracker; stale one-minute
+samples remain visible but cannot refresh a protection hold.
+
+The same latest process-resource values are copied into the streamed `runtimeSnapshot` bundle
+record. Fresh PSS, native PSS, system-memory, and media-transfer readings drive the bounded
+playback policy; stale readings are retained for evidence but do not refresh a pressure hold.
+SMB/FD/thread counts remain diagnostic evidence only.
+
+One app-private `PersistentRuntimeBreadcrumbs` record retains the latest presentation stage. Normal updates use an asynchronous preferences write; the one-minute process marker, severe memory callbacks, and Java crash capture synchronously flush the current value. The next process emits `PREVIOUS_RUNTIME_BREADCRUMB`, including whether the previous stage was still active. Presentation and session identities are privacy-filtered tokens.
 
 ## Privacy boundary
 
@@ -60,4 +94,4 @@ The support export is JSON Lines and is streamed without constructing the full r
 - The web API uses stable cursors and server-side severity, category, session, code, trigger, operation, origin, and text filters.
 - The on-device screen shows bounded structured recent evidence and exports the same full stream.
 - `scripts/analyze-diagnostics.py` and `scripts/analyze-transition-diagnostics.py` accept v1, v2, and mixed bundles, emit Markdown and JSON reports, reconstruct operations, scan privacy, and fail release gates for invalid or incomplete critical evidence.
-
+- Transition analysis treats absent timing/generation fields as `NO DATA`; it never substitutes zero and reports a false frame-budget pass.

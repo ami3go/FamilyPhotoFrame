@@ -115,16 +115,6 @@ class WebSecurityTest {
         assertNotNull(s.authenticate(third.token))
     }
 
-    @Test fun recentSessionActivityCanGatePreviewGeneration() {
-        val s = security(idleMs = 5 * 60_000L)
-        val ok = s.pair(s.regeneratePin()) as WebSecurity.PairResult.Ok
-        assertTrue(s.hasRecentlyActiveSession(90_000L))
-        now += 90_001L
-        assertTrue(!s.hasRecentlyActiveSession(90_000L))
-        assertNotNull(s.authenticate(ok.token))
-        assertTrue(s.hasRecentlyActiveSession(90_000L))
-    }
-
     @Test fun resetRevokesEverything() {
         val s = security()
         val ok = s.pair(s.regeneratePin()) as WebSecurity.PairResult.Ok

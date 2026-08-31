@@ -79,7 +79,7 @@ object DiagnosticEventCatalog {
         "sinkStatus", "errorClass", "errorCode", "outcome", "reason", "trigger",
         "durationMs", "count", "hits", "misses", "stream", "sessionToken", "browserToken", "photoToken",
         "playlistToken", "policy", "expiry",
-        "port", "bindCategory", "revision", "format", "sizeBytes", "status",
+        "port", "bindCategory", "revision", "format", "sizeBytes", "status", "type",
         "exceptionClass", "rootCauseClass", "threadName", "mainThread", "crashOrigin",
         "previousSessionId", "lastSequence", "checksumValid", "crashAtEpochMs",
         "crashElapsedRealtimeMs", "exitReasonCode", "exitTimestampMs", "descriptionCode",
@@ -96,7 +96,10 @@ object DiagnosticEventCatalog {
         "oomCount", "workerLimit", "queueLimit", "uploadedPhotosPreserved",
         "processStartKind", "currentElapsedRealtimeMs", "previousElapsedRealtimeMs",
         "estimatedBootEpochMs", "previousEstimatedBootEpochMs", "bootEpochDeltaMs",
-        "previousMarkerAgeMs",
+        "previousMarkerAgeMs", "breadcrumbSequence", "breadcrumbSessionToken",
+        "breadcrumbOperation", "breadcrumbStage", "breadcrumbActive",
+        "breadcrumbPresentationToken", "breadcrumbSourceKind",
+        "breadcrumbUpdatedEpochMs", "breadcrumbElapsedRealtimeMs", "breadcrumbAgeMs",
     )
 
     private val engineFields = setOf(
@@ -104,7 +107,7 @@ object DiagnosticEventCatalog {
         "folderToken", "presentationToken", "playlistToken", "photoToken", "anchorToken",
         "layout", "transitionCode", "selectionMode", "poolSize", "primaryCount",
         "fallbackCount", "count", "found", "active", "paused", "asleep", "favorite",
-        "cachedOnly", "failures", "stage", "durationMs", "elapsedMs", "decodeMs",
+        "cachedOnly", "renderAck", "failures", "stage", "durationMs", "elapsedMs", "decodeMs",
         "renderMs", "intervalMs", "members", "candidateCount", "reducedMotion",
         "performanceClass", "frameCount", "slowFrames", "frozenFrames", "p50Ms",
         "p95Ms", "p99Ms", "maxMs", "cycle", "remaining", "eligible", "inserted",
@@ -124,7 +127,16 @@ object DiagnosticEventCatalog {
         "metadataCandidateCount", "localProbeCount", "localProbeBudgetSkippedCount",
         "remoteProbeCount", "remoteProbeSuccessCount", "remoteProbeFailureCount",
         "remoteProbeBudgetSkippedCount", "remoteProbeByteLimit", "remoteUnknownSkippedCount",
-        "probeBudgetSkippedCount",
+        "probeBudgetSkippedCount", "configuredMode", "configuredEffect", "resolvedEffect",
+        "direction", "fallbackUsed", "slowFrameCount", "maximumFrameMs", "startLatencyMs",
+        "preparedSlideCount", "activeDecodedBytes", "outgoingPresentationToken",
+        "incomingPresentationToken", "transitionGeneration", "hostGeneration",
+        "cancellationInitiator", "selectionAgeMs", "lastPresentationStage", "stageAgeMs",
+        "selectionGeneration", "preparationSubstage", "preparationSubstageAgeMs",
+        "watchdogTimeoutMs", "mediaTransferState", "mediaTransferCopiedBytes",
+        "mediaTransferExpectedBytes", "mediaTransferAgeMs", "mediaTransferProgressAgeMs",
+        "mediaTransferDeadlineMs", "mediaTransferStreamCloseRequested",
+        "mediaTransferStreamCloseSucceeded", "mediaTransferSlotReleased",
     )
 
     private val sourceFields = setOf(
@@ -145,21 +157,58 @@ object DiagnosticEventCatalog {
         "progressBucket", "includeSubfolders",
     )
 
+    private val nativeStageFields = buildSet {
+        val prefixes = listOf(
+            "nativeDecode",
+            "nativeBoundsProbe",
+            "nativeCacheVerify",
+            "nativeGenerated",
+            "nativeTransition",
+        )
+        val suffixes = listOf(
+            "Started", "Completed", "Failed", "Cancelled", "TimedOut", "Active",
+            "PeakActive", "OldestAgeMs", "MaxDurationMs", "NetDeltaKb",
+            "PositiveDeltaKb", "NegativeDeltaKb", "TrackingSaturated",
+        )
+        prefixes.forEach { prefix -> suffixes.forEach { suffix -> add(prefix + suffix) } }
+    }
+
     private val memoryFields = setOf(
         "trigger", "reason", "level", "response", "previousLevel", "memoryProtectionLevel",
+        "mode", "previousMode", "nativeHilMode",
         "heapUsedKb", "heapMaxKb", "heapBeforeKb", "heapAfterKb", "freedKb",
-        "nativeHeapKb", "pssKb",
+        "nativeHeapKb", "pssKb", "dalvikPssKb", "nativePssKb", "otherPssKb",
         "rssKb", "imageCacheKb", "imageCacheMaxKb", "imageCacheBeforeKb", "beforeKb",
         "webPreviewCleared", "uptimeSec", "pressurePercent", "surface", "engineState",
         "presentationToken", "sourceKind", "layout", "transitionCode", "circuitOpenMs",
         "oomCount", "preloadAllowed", "maxCollagePhotos", "targetScalePercent",
+        "processMemoryBudgetKb", "processPressurePercent", "systemHeadroomPercent",
+        "memoryPressureSource", "economyBaseline", "externalCriticalRemainingMs",
+        "externalGuardedRemainingMs", "nativeGrowthKb", "nativeGrowthRateKbPerMin",
+        "nativeGrowthStreak", "nativeCriticalLatched", "nativeCriticalAgeMs",
+        "nativeStableWindowStreak", "renderTimeoutWindowCount", "renderTimeoutTotal",
         "preparedSlideCount", "renderedSlideCount", "decodedBitmapCount", "appBitmapCount",
-        "activeDecodedBytes", "pendingDisposals", "gcRequested",
+        "activeDecodedBytes", "pendingDisposals", "oldestPendingDisposalAgeMs", "gcRequested",
         "durationMs", "errorClass", "outcome",
         "batteryTelemetryStatus", "batteryLevelPct", "batteryStatus", "powerSource",
         "batteryPresent", "batteryHealth", "batteryVoltageMv", "batteryTempDeciC",
         "batteryCurrentUa", "batteryChargeCounterUah",
-    )
+        "systemAvailMemKb", "systemThresholdKb", "systemLowMemory", "openFdCount",
+        "threadCount", "smbActiveContexts", "smbPeakContexts", "smbContextsCreated",
+        "smbContextsClosed", "smbOldestContextAgeMs", "smbContextTrackingSaturated",
+        "smbActiveStreams", "smbPeakStreams", "smbStreamsOpened",
+        "smbStreamsClosed", "smbOldestStreamAgeMs", "smbOldestStreamPurpose",
+        "smbOldestStreamDeadlineMs", "smbOverdueStreams", "smbStreamDeadlineExpirations",
+        "smbTrackingSaturated", "mediaActiveTransfers",
+        "mediaPeakTransfers", "mediaTransfersStarted", "mediaTransfersFinished",
+        "mediaOldestTransferAgeMs", "mediaTrackingSaturated",
+        "bitmapTrackedAllocations", "bitmapTrackedReleases", "bitmapTrackedAllocatedBytes",
+        "bitmapTrackedReleasedBytes", "bitmapTrackedActiveCount", "bitmapTrackedActiveBytes",
+        "bitmapTrackedPeakCount", "bitmapTrackedPeakBytes", "bitmapDecodedAllocations",
+        "bitmapDecodedActiveCount", "bitmapDecodedActiveBytes", "bitmapGeneratedAllocations",
+        "bitmapGeneratedActiveCount", "bitmapGeneratedActiveBytes", "bitmapTemporaryAllocations",
+        "bitmapTemporaryActiveCount", "bitmapTemporaryActiveBytes", "bitmapReleaseUnderflowCount",
+    ) + nativeStageFields
 
     private val lifecycleFields = setOf(
         "activityToken", "activityState", "surface", "previousSurface", "engineState",
@@ -213,6 +262,7 @@ object DiagnosticEventCatalog {
         "DIAGNOSTICS_UNKNOWN_EVENT", "UNCAUGHT_EXCEPTION", "PREVIOUS_UNCAUGHT_EXCEPTION",
         "PREVIOUS_CRASH_EVIDENCE", "MAIN_THREAD_STALL_STARTED", "MAIN_THREAD_STALL_ESCALATED",
         "MAIN_THREAD_STALL_RECOVERED", "PREVIOUS_ANR_EVIDENCE", "PROCESS_EXIT_RECORDED",
+        "PREVIOUS_RUNTIME_BREADCRUMB",
         "REMEMBERED_BROWSERS_KEPT_AFTER_PIN_RESET", "REMEMBERED_BROWSER_CLOCK_ROLLBACK",
         "REMEMBERED_BROWSER_CREATED", "REMEMBERED_BROWSER_EXPIRED", "REMEMBERED_BROWSER_KEY_LOST",
         "REMEMBERED_BROWSER_POLICY_CHANGED", "REMEMBERED_BROWSER_REVOKED",
@@ -231,7 +281,7 @@ object DiagnosticEventCatalog {
         "WEB_CONTROL", "WEB_ERROR", "WEB_MAINTENANCE_ACTION", "WEB_PAIRED",
         "WEB_PAIR_LOCKED", "WEB_PAIR_REJECTED", "REMEMBERED_BROWSER_SESSION_CREATED",
         "CONFIG_EXPORTED", "CONFIG_EXPORT_FAILED", "CONFIG_IMPORT_READ_FAILED",
-        "CONFIG_IMPORT_TOO_LARGE",
+        "CONFIG_IMPORT_TOO_LARGE", "WEB_PREVIEW_REQUEST_RESULT",
         "PREVIEW_HIT_SUMMARY",
     )
 
@@ -260,9 +310,12 @@ object DiagnosticEventCatalog {
         "FAVORITE_ADD", "FAVORITE_REMOVE",
         "FOLDER_RETRY", "PAUSE", "RESUME", "SLEEP_ENTER", "SLEEP_EXIT",
         "SLIDESHOW_CONTROLS_HOLD", "SLIDESHOW_CONTROLS_RELEASE",
+        "NATIVE_HIL_HOLD_STARTED", "NATIVE_HIL_HOLD_RELEASED",
         "PHOTO_FAVORITE_ADDED", "PHOTO_FAVORITE_REMOVED",
         "TRANSITION_LOW_PERFORMANCE_ENTERED", "TRANSITION_LOW_PERFORMANCE_EXITED",
-        "ON_THIS_DAY_SKIPPED_EMPTY", "ON_THIS_DAY_TRIGGERED", "RENDER_ACK_TIMEOUT",
+        "ON_THIS_DAY_SKIPPED_EMPTY", "ON_THIS_DAY_TRIGGERED", "ON_THIS_DAY_POOL_EXHAUSTED",
+        "RENDER_ACK_TIMEOUT", "PREPARATION_WATCHDOG_TIMEOUT", "PREPARATION_CANCELLED_RECOVERED",
+        "PRESENTATION_STAGE",
     )
 
     private val legacySourceCodes = setOf(
@@ -285,6 +338,7 @@ object DiagnosticEventCatalog {
         "MEMORY_SELF_RECOVERY_GC", "MEMORY_PROCESS_RESTART_SCHEDULED",
         "MEMORY_PROCESS_RESTART_SUPPRESSED", "MEMORY_PROCESS_RESTART_FAILED",
         "MEMORY_PROCESS_RECOVERY_COMPLETED",
+        "NATIVE_HIL_MODE_CHANGED",
     )
 
     private val cacheCodes = setOf("WEB_CACHE_CLEARED")
@@ -302,7 +356,7 @@ object DiagnosticEventCatalog {
         "FOLDER_PRESENTED", "PRESENTATION_COMMITTED", "PRESENTATION_RELEASED",
         "PRESENTATION_PREPARED_COMMIT", "PANEL_MOTION", "COLLAGE_PRELOAD_STARTED",
         "COLLAGE_READY", "COLLAGE_RENDERED", "COLLAGE_SELECTION_EVALUATED",
-        "COLLAGE_DOWNGRADED", "COLLAGE_FALLBACK_SINGLE",
+        "COLLAGE_DOWNGRADED", "COLLAGE_FALLBACK_SINGLE", "PRESENTATION_STAGE",
     )
 
     private val errorCodes = setOf(
@@ -326,6 +380,7 @@ object DiagnosticEventCatalog {
         "SOURCE_UNAVAILABLE", "SOURCE_BACKOFF", "SOURCE_BACKOFF_EXHAUSTED",
         "SYNOLOGY_UNAVAILABLE", "WEBDAV_UNAVAILABLE", "SMB_UNAVAILABLE",
         "SOURCE_RECOVERY_PROMOTION_ABORTED", "TRANSITION_PERFORMANCE_WARNING",
+        "PREPARATION_WATCHDOG_TIMEOUT", "PREPARATION_CANCELLED_RECOVERED",
         "WEB_CONNECTION_REJECTED", "MEMORY_PROCESS_RESTART_SCHEDULED",
         "MEMORY_PROCESS_RESTART_SUPPRESSED",
     )

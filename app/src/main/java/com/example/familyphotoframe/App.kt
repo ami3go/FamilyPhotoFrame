@@ -30,6 +30,7 @@ import com.example.familyphotoframe.domain.engine.PlaybackMemoryState
 import com.example.familyphotoframe.domain.engine.MemorySelfRecoveryAction
 import com.example.familyphotoframe.domain.engine.MemorySelfRecoveryPolicy
 import com.example.familyphotoframe.domain.engine.MemorySelfRecoveryState
+import com.example.familyphotoframe.domain.engine.MemorySelfRecoveryTrigger
 import com.example.familyphotoframe.domain.engine.TrimMemoryPolicy
 import com.example.familyphotoframe.domain.engine.TrimMemoryResponse
 import kotlinx.coroutines.SupervisorJob
@@ -61,6 +62,7 @@ class App : Application() {
         DiagnosticIdentityHasher.install(DiagnosticIdentityKeyStore(this).loadOrCreate())
         if (BuildConfig.DEBUG) installStrictMode()
         services = ServiceLocator(this)
+        val previousRuntimeBreadcrumb = services.runtimeBreadcrumbs.persisted()
         seedRuntimeSnapshot()
 
         // Attach durable logging before anything else is recorded. A new session id per
@@ -70,6 +72,7 @@ class App : Application() {
         // Durable event identity uses (sessionId, sequence); retain the full 128-bit UUID
         // so fleet-scale or long-running restart history cannot collide on a 32-bit prefix.
         processSessionId = java.util.UUID.randomUUID().toString()
+        services.runtimeBreadcrumbs.attachSession(processSessionId)
         crashEnvelopeStore = createCrashEnvelopeStore()
         val previousEnvelope = crashEnvelopeStore.read()
         services.diagnostics.attachSink(
@@ -131,6 +134,30 @@ class App : Application() {
             ),
             DiagnosticContext(origin = DiagnosticOrigin.APP),
         )
+        previousRuntimeBreadcrumb?.let { breadcrumb ->
+            services.diagnostics.logEvent(
+                "PREVIOUS_RUNTIME_BREADCRUMB",
+                mapOf(
+                    "breadcrumbSequence" to breadcrumb.sequence.toString(),
+                    "breadcrumbSessionToken" to breadcrumb.sessionId,
+                    "breadcrumbOperation" to breadcrumb.operation,
+                    "breadcrumbStage" to breadcrumb.stage,
+                    "breadcrumbActive" to breadcrumb.active.toString(),
+                    "breadcrumbPresentationToken" to breadcrumb.presentationToken,
+                    "breadcrumbSourceKind" to breadcrumb.sourceKind,
+                    "breadcrumbUpdatedEpochMs" to breadcrumb.updatedAtEpochMs.toString(),
+                    "breadcrumbElapsedRealtimeMs" to breadcrumb.updatedElapsedRealtimeMs.toString(),
+                    "breadcrumbAgeMs" to
+                        (currentWallClockMs - breadcrumb.updatedAtEpochMs).coerceAtLeast(0L).toString(),
+                ),
+                DiagnosticContext(origin = DiagnosticOrigin.SYSTEM),
+            )
+        }
+        services.runtimeBreadcrumbs.record(
+            operation = "APP_PROCESS",
+            stage = "SESSION_STARTED",
+            active = false,
+        )
         persistProcessRuntimeMarker(currentWallClockMs, currentElapsedRealtimeMs)
         services.diagnostics.logEvent(
             "APP_CREATE",
@@ -152,10 +179,10 @@ class App : Application() {
             var lastSampleAtMs = Long.MIN_VALUE
             while (isActive) {
                 val elapsedMs = android.os.SystemClock.elapsedRealtime()
-                val reading = if (
+                val fullSampleDue =
                     lastSampleAtMs == Long.MIN_VALUE ||
                     elapsedMs - lastSampleAtMs >= RuntimeSampler.DEFAULT_INTERVAL_MS
-                ) {
+                val reading = if (fullSampleDue) {
                     lastSampleAtMs = elapsedMs
                     persistProcessRuntimeMarker(System.currentTimeMillis(), elapsedMs)
                     services.runtimeSampler.sample()
@@ -166,13 +193,39 @@ class App : Application() {
                     reading.usedBytes.toDouble() / reading.maxBytes.toDouble()
                 } else 0.0
                 val previousProtection = services.playbackMemoryGuard.snapshot()
-                val protection = services.playbackMemoryGuard.recordHeap(
-                    heapUsedBytes = reading.usedBytes,
-                    heapMaxBytes = reading.maxBytes,
-                    nowElapsedMs = elapsedMs,
-                )
-                if (protection.level != previousProtection.level) {
-                    onMemoryProtectionChanged(previousProtection, protection, "heap_sample")
+                val sampledMemory = services.diagnosticRuntimeState.snapshot().memory
+                val sampleAgeMs = System.currentTimeMillis() - sampledMemory.sampledAtEpochMs
+                val protection = if (
+                    fullSampleDue && sampledMemory.sampledAtEpochMs > 0L &&
+                    sampleAgeMs in 0L..FULL_MEMORY_SAMPLE_FRESHNESS_MS
+                ) {
+                    services.playbackMemoryGuard.recordMemory(
+                        heapUsedBytes = reading.usedBytes,
+                        heapMaxBytes = reading.maxBytes,
+                        processPssBytes = sampledMemory.pssKb * 1024L,
+                        systemAvailBytes = sampledMemory.systemAvailMemKb * 1024L,
+                        systemThresholdBytes = sampledMemory.systemThresholdKb * 1024L,
+                        systemLowMemory = sampledMemory.systemLowMemory,
+                        nowElapsedMs = elapsedMs,
+                        nativePssBytes = sampledMemory.nativePssKb
+                            .takeIf { it > 0L }
+                            ?.times(1024L),
+                        activeMediaTransfers = sampledMemory.activeMediaTransfers,
+                        oldestMediaTransferAgeMs = sampledMemory.oldestMediaTransferAgeMs,
+                    )
+                } else {
+                    services.playbackMemoryGuard.recordHeap(
+                        heapUsedBytes = reading.usedBytes,
+                        heapMaxBytes = reading.maxBytes,
+                        nowElapsedMs = elapsedMs,
+                    )
+                }
+                if (protection.decisionVersion != previousProtection.decisionVersion) {
+                    onMemoryProtectionChanged(
+                        previousProtection,
+                        protection,
+                        if (fullSampleDue) "runtime_sample" else "heap_sample",
+                    )
                 }
                 evaluateMemorySelfRecovery(protection, elapsedMs)
                 val now = System.currentTimeMillis()
@@ -195,6 +248,7 @@ class App : Application() {
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
                 runCatching {
+                    services.runtimeBreadcrumbs.flush()
                     val context = crashCaptureContext()
                     val envelope = CrashEnvelopeFactory.crash(
                         throwable = throwable,
@@ -413,6 +467,7 @@ class App : Application() {
             .putLong(KEY_LAST_ESTIMATED_BOOT_EPOCH_MS, wallClockMs - elapsedRealtimeMs.coerceAtLeast(0L))
             .putLong(KEY_LAST_MARKER_WALL_CLOCK_MS, wallClockMs)
             .apply()
+        services.runtimeBreadcrumbs.flush()
     }
 
     private fun flushSucceeded(): Boolean =
@@ -434,6 +489,11 @@ class App : Application() {
             "level" to level.toString(),
             "response" to response.name,
         )
+        if (response == TrimMemoryResponse.SEVERE_PRESSURE ||
+            response == TrimMemoryResponse.RUNNING_PRESSURE
+        ) {
+            services.runtimeBreadcrumbs.flush()
+        }
         if (TrimMemoryPolicy.shouldClearImageCache(level)) {
             clearImageMemoryCache("trim_$level")
         }
@@ -447,13 +507,14 @@ class App : Application() {
             nowElapsedMs = SystemClock.elapsedRealtime(),
             severe = severe,
         )
-        if (current.level != previous.level) {
+        if (current.decisionVersion != previous.decisionVersion) {
             onMemoryProtectionChanged(previous, current, "trim_$level", clearCaches = false)
         }
     }
 
     override fun onLowMemory() {
         super.onLowMemory()
+        services.runtimeBreadcrumbs.flush()
         services.diagnostics.log(DiagnosticsLog.Category.MEMORY, "LOW_MEMORY")
         clearImageMemoryCache("low_memory")
         val previous = services.playbackMemoryGuard.snapshot()
@@ -461,7 +522,7 @@ class App : Application() {
             nowElapsedMs = SystemClock.elapsedRealtime(),
             severe = true,
         )
-        if (current.level != previous.level) {
+        if (current.decisionVersion != previous.decisionVersion) {
             onMemoryProtectionChanged(previous, current, "low_memory", clearCaches = false)
         }
     }
@@ -492,6 +553,29 @@ class App : Application() {
             "previousLevel" to previous.level.name,
             "memoryProtectionLevel" to current.level.name,
             "pressurePercent" to current.pressurePercent.toString(),
+            "processPressurePercent" to current.processPressurePercent.toString(),
+            "processMemoryBudgetKb" to (current.processMemoryBudgetBytes / 1024L).toString(),
+            "systemHeadroomPercent" to current.systemHeadroomPercent.toString(),
+            "systemLowMemory" to current.systemLowMemory.toString(),
+            "memoryPressureSource" to current.pressureSource.name,
+            "economyBaseline" to current.lowMemoryTier.toString(),
+            "nativeGrowthKb" to (current.nativeGrowthBytes / 1024L).toString(),
+            "nativeGrowthRateKbPerMin" to current.nativeGrowthRateKbPerMin.toString(),
+            "nativeGrowthStreak" to current.nativeGrowthStreak.toString(),
+            "nativeCriticalLatched" to current.nativeCriticalLatched.toString(),
+            "nativeCriticalAgeMs" to current.nativeCriticalSinceElapsedMs
+                .takeIf { current.nativeCriticalLatched && it > 0L }
+                ?.let { (SystemClock.elapsedRealtime() - it).coerceAtLeast(0L).toString() }
+                .orEmpty().ifEmpty { "0" },
+            "nativeStableWindowStreak" to current.nativeStableWindowStreak.toString(),
+            "renderTimeoutWindowCount" to current.renderTimeoutWindowCount.toString(),
+            "renderTimeoutTotal" to current.totalRenderTimeoutCount.toString(),
+            "mediaActiveTransfers" to current.activeMediaTransfers.toString(),
+            "mediaOldestTransferAgeMs" to current.oldestMediaTransferAgeMs.toString(),
+            "externalCriticalRemainingMs" to
+                current.externalCriticalRemainingMs(SystemClock.elapsedRealtime()).toString(),
+            "externalGuardedRemainingMs" to
+                current.externalGuardedRemainingMs(SystemClock.elapsedRealtime()).toString(),
             "preloadAllowed" to current.allowNextPreload.toString(),
             "maxCollagePhotos" to current.maxCollagePhotos.toString(),
             "targetScalePercent" to (current.decodeScale * 100f).toInt().toString(),
@@ -532,6 +616,9 @@ class App : Application() {
             lastOomElapsedMs = protection.lastOomElapsedMs,
             pressurePercent = protection.pressurePercent,
             nowElapsedMs = elapsedMs,
+            processPressurePercent = protection.processPressurePercent,
+            nativeGrowthStreak = protection.nativeGrowthStreak,
+            nativeCriticalLatched = protection.nativeCriticalLatched,
         )
         memorySelfRecoveryState = decision.state
         when (decision.action) {
@@ -541,30 +628,42 @@ class App : Application() {
                 services.diagnostics.logEvent(
                     "MEMORY_SELF_RECOVERY_GC",
                     memoryRecoveryFields(protection) + mapOf(
-                        "trigger" to "sustained_decode_oom_pressure",
+                        "trigger" to decision.trigger.name.lowercase(),
                         "gcRequested" to "true",
                     ),
                     DiagnosticContext(origin = DiagnosticOrigin.RECOVERY),
                 )
                 Runtime.getRuntime().gc()
             }
-            MemorySelfRecoveryAction.RESTART_PROCESS -> restartAfterPinnedHeap(protection)
+            MemorySelfRecoveryAction.RESTART_PROCESS ->
+                restartAfterPinnedMemory(protection, decision.trigger)
         }
     }
 
-    private suspend fun restartAfterPinnedHeap(protection: PlaybackMemoryState) {
+    private suspend fun restartAfterPinnedMemory(
+        protection: PlaybackMemoryState,
+        trigger: MemorySelfRecoveryTrigger,
+    ) {
         val preferences = getSharedPreferences(MEMORY_RECOVERY_PREFS, MODE_PRIVATE)
         val nowEpochMs = System.currentTimeMillis()
         val lastRestartEpochMs = preferences.getLong(KEY_LAST_MEMORY_RESTART_EPOCH_MS, 0L)
         val sinceLastRestartMs = nowEpochMs - lastRestartEpochMs
+        val restartMinIntervalMs = if (
+            trigger == MemorySelfRecoveryTrigger.SUSTAINED_NATIVE_PROCESS_PRESSURE
+        ) {
+            NATIVE_MEMORY_RESTART_MIN_INTERVAL_MS
+        } else {
+            MEMORY_RESTART_MIN_INTERVAL_MS
+        }
         if (lastRestartEpochMs > 0L &&
-            sinceLastRestartMs >= 0L && sinceLastRestartMs < MEMORY_RESTART_MIN_INTERVAL_MS
+            sinceLastRestartMs >= 0L && sinceLastRestartMs < restartMinIntervalMs
         ) {
             services.diagnostics.logEvent(
                 "MEMORY_PROCESS_RESTART_SUPPRESSED",
                 memoryRecoveryFields(protection) + mapOf(
                     "reason" to "restart_rate_limit",
-                    "durationMs" to (MEMORY_RESTART_MIN_INTERVAL_MS - sinceLastRestartMs).toString(),
+                    "durationMs" to (restartMinIntervalMs - sinceLastRestartMs).toString(),
+                    "trigger" to trigger.name.lowercase(),
                 ),
                 DiagnosticContext(origin = DiagnosticOrigin.RECOVERY),
             )
@@ -579,6 +678,9 @@ class App : Application() {
             .putLong(KEY_MEMORY_RESTART_HEAP_USED_KB, protection.heapUsedBytes / 1024L)
             .putLong(KEY_MEMORY_RESTART_HEAP_MAX_KB, protection.heapMaxBytes / 1024L)
             .putLong(KEY_MEMORY_RESTART_OOM_COUNT, protection.totalOomCount)
+            .putString(KEY_MEMORY_RESTART_TRIGGER, trigger.name)
+            .putInt(KEY_MEMORY_RESTART_PROCESS_PRESSURE_PERCENT, protection.processPressurePercent)
+            .putLong(KEY_MEMORY_RESTART_NATIVE_PSS_KB, protection.nativePssBytes / 1024L)
             .commit()
         if (!persisted) {
             services.diagnostics.logEvent(
@@ -615,7 +717,14 @@ class App : Application() {
         services.diagnostics.logEvent(
             "MEMORY_PROCESS_RESTART_SCHEDULED",
             memoryRecoveryFields(protection) + mapOf(
-                "reason" to "legacy_heap_pinned_after_decode_oom",
+                "reason" to when (trigger) {
+                    MemorySelfRecoveryTrigger.SUSTAINED_NATIVE_PROCESS_PRESSURE ->
+                        "legacy_native_process_pressure"
+                    MemorySelfRecoveryTrigger.DECODE_OOM_JAVA_HEAP ->
+                        "legacy_heap_pinned_after_decode_oom"
+                    MemorySelfRecoveryTrigger.NONE -> "legacy_memory_pressure"
+                },
+                "trigger" to trigger.name.lowercase(),
             ),
             DiagnosticContext(origin = DiagnosticOrigin.RECOVERY),
         )
@@ -657,6 +766,15 @@ class App : Application() {
                 "heapUsedKb" to preferences.getLong(KEY_MEMORY_RESTART_HEAP_USED_KB, 0L).toString(),
                 "heapMaxKb" to preferences.getLong(KEY_MEMORY_RESTART_HEAP_MAX_KB, 0L).toString(),
                 "oomCount" to preferences.getLong(KEY_MEMORY_RESTART_OOM_COUNT, 0L).toString(),
+                "trigger" to preferences.getString(
+                    KEY_MEMORY_RESTART_TRIGGER,
+                    MemorySelfRecoveryTrigger.NONE.name,
+                ).orEmpty().lowercase(),
+                "processPressurePercent" to preferences.getInt(
+                    KEY_MEMORY_RESTART_PROCESS_PRESSURE_PERCENT,
+                    0,
+                ).toString(),
+                "nativePssKb" to preferences.getLong(KEY_MEMORY_RESTART_NATIVE_PSS_KB, 0L).toString(),
             ),
             DiagnosticContext(origin = DiagnosticOrigin.RECOVERY),
         )
@@ -666,6 +784,9 @@ class App : Application() {
             .remove(KEY_MEMORY_RESTART_HEAP_USED_KB)
             .remove(KEY_MEMORY_RESTART_HEAP_MAX_KB)
             .remove(KEY_MEMORY_RESTART_OOM_COUNT)
+            .remove(KEY_MEMORY_RESTART_TRIGGER)
+            .remove(KEY_MEMORY_RESTART_PROCESS_PRESSURE_PERCENT)
+            .remove(KEY_MEMORY_RESTART_NATIVE_PSS_KB)
             .apply()
     }
 
@@ -675,6 +796,11 @@ class App : Application() {
         "heapUsedKb" to (protection.heapUsedBytes / 1024L).toString(),
         "heapMaxKb" to (protection.heapMaxBytes / 1024L).toString(),
         "oomCount" to protection.totalOomCount.toString(),
+        "processPressurePercent" to protection.processPressurePercent.toString(),
+        "nativePssKb" to (protection.nativePssBytes / 1024L).toString(),
+        "nativeGrowthRateKbPerMin" to protection.nativeGrowthRateKbPerMin.toString(),
+        "nativeGrowthStreak" to protection.nativeGrowthStreak.toString(),
+        "nativeCriticalLatched" to protection.nativeCriticalLatched.toString(),
     )
 
     private fun installStrictMode() {
@@ -698,6 +824,7 @@ class App : Application() {
 
     private companion object {
         const val HEAP_PRESSURE_RATIO = 0.75
+        const val FULL_MEMORY_SAMPLE_FRESHNESS_MS = 15_000L
         const val PROCESS_START_PREFS = "process_start_evidence"
         const val KEY_LAST_OBSERVED_ELAPSED_REALTIME_MS = "last_observed_elapsed_realtime_ms"
         const val KEY_LAST_ESTIMATED_BOOT_EPOCH_MS = "last_estimated_boot_epoch_ms"
@@ -706,6 +833,7 @@ class App : Application() {
         const val LEGACY_RECOVERY_MIN_SDK = 21
         const val LEGACY_RECOVERY_MAX_SDK = 25
         const val MEMORY_RESTART_MIN_INTERVAL_MS = 15L * 60_000L
+        const val NATIVE_MEMORY_RESTART_MIN_INTERVAL_MS = 4L * 60L * 60_000L
         const val MEMORY_RESTART_RELAUNCH_DELAY_MS = 1_500L
         const val MEMORY_RESTART_FLUSH_GRACE_MS = 250L
         const val MEMORY_RECOVERY_REQUEST_CODE = 0x4D52
@@ -716,6 +844,9 @@ class App : Application() {
         const val KEY_MEMORY_RESTART_HEAP_USED_KB = "heap_used_kb"
         const val KEY_MEMORY_RESTART_HEAP_MAX_KB = "heap_max_kb"
         const val KEY_MEMORY_RESTART_OOM_COUNT = "oom_count"
+        const val KEY_MEMORY_RESTART_TRIGGER = "trigger"
+        const val KEY_MEMORY_RESTART_PROCESS_PRESSURE_PERCENT = "process_pressure_percent"
+        const val KEY_MEMORY_RESTART_NATIVE_PSS_KB = "native_pss_kb"
         const val CRASH_ENVELOPE_PREFS = "diagnostics_crash_envelope"
         const val KEY_CRASH_ENVELOPE = "envelope"
         const val LEGACY_CRASH_PREFS = "process_diagnostics"

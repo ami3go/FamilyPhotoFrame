@@ -44,7 +44,11 @@ fun runMemorySelfRecoveryChecks() {
         gc.state, PlaybackMemoryLevel.RECOVERY, 1L, oomAt, 90,
         oomAt + MemorySelfRecoveryPolicy.SUSTAINED_PRESSURE_BEFORE_GC_MS + 20_000L,
     )
-    check("pressure recovery cancels the watchdog", MemorySelfRecoveryState(), recovered.state)
+    check(
+        "pressure recovery cancels the watchdog but preserves the GC rate limit",
+        MemorySelfRecoveryState(lastGcRequestedAtElapsedMs = gc.state.lastGcRequestedAtElapsedMs),
+        recovered.state,
+    )
     check("pressure recovery never restarts", MemorySelfRecoveryAction.NONE, recovered.action)
 
     val staleOom = MemorySelfRecoveryPolicy.evaluate(
@@ -52,4 +56,19 @@ fun runMemorySelfRecoveryChecks() {
         oomAt + MemorySelfRecoveryPolicy.OOM_ELIGIBILITY_WINDOW_MS + 1L,
     )
     check("stale historical OOM cannot trigger restart", MemorySelfRecoveryAction.NONE, staleOom.action)
+
+    val secondOomAt = gc.state.lastGcRequestedAtElapsedMs + 30_000L
+    val secondStarted = MemorySelfRecoveryPolicy.evaluate(
+        recovered.state, critical, 2L, secondOomAt, 99, secondOomAt,
+    )
+    val suppressedGc = MemorySelfRecoveryPolicy.evaluate(
+        secondStarted.state, critical, 2L, secondOomAt, 99,
+        secondOomAt + MemorySelfRecoveryPolicy.SUSTAINED_PRESSURE_BEFORE_GC_MS,
+    )
+    check("a second OOM cannot request GC inside the global interval", MemorySelfRecoveryAction.NONE, suppressedGc.action)
+    val allowedGc = MemorySelfRecoveryPolicy.evaluate(
+        suppressedGc.state, critical, 2L, secondOomAt, 99,
+        gc.state.lastGcRequestedAtElapsedMs + MemorySelfRecoveryPolicy.GC_MIN_INTERVAL_MS,
+    )
+    check("GC becomes eligible after the global interval", MemorySelfRecoveryAction.REQUEST_GC, allowedGc.action)
 }

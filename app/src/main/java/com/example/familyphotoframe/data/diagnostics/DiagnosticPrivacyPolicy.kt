@@ -13,7 +13,8 @@ object DiagnosticPrivacyPolicy {
     private val identityFields = setOf(
         "activityToken", "anchorToken", "browserToken", "configRevision", "folderToken",
         "periodToken", "photoToken", "playlistToken", "presentationToken", "refreshToken", "sessionToken",
-        "sourceToken",
+        "sourceToken", "outgoingPresentationToken", "incomingPresentationToken",
+        "breadcrumbPresentationToken", "breadcrumbSessionToken",
     )
 
     private val classFields = setOf(

@@ -50,6 +50,8 @@ data class DisplayPhoto(
 data class EngineUiModel(
     val state: EngineState = EngineState.STARTING,
     val current: DisplayPhoto? = null,
+    /** Changes for every selection attempt, even when the same photo is selected again. */
+    val selectionGeneration: Long = 0L,
     val next: DisplayPhoto? = null,   // exposed so the UI can preload exactly one ahead (§10.2)
     val paused: Boolean = false,
     /** Progress through the current explicit-id playback cycle. */

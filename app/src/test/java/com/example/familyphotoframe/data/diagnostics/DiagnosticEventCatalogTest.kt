@@ -9,16 +9,26 @@ class DiagnosticEventCatalogTest {
     @Test fun onThisDayEvents_areRegisteredAsEngineEvents() {
         val skipped = DiagnosticEventCatalog.find("ON_THIS_DAY_SKIPPED_EMPTY")
         val triggered = DiagnosticEventCatalog.find("ON_THIS_DAY_TRIGGERED")
+        val exhausted = DiagnosticEventCatalog.find("ON_THIS_DAY_POOL_EXHAUSTED")
         assertNotNull(skipped)
         assertNotNull(triggered)
+        assertNotNull(exhausted)
         assertEquals(DiagnosticsLog.Category.ENGINE, skipped?.category)
         assertEquals(DiagnosticsLog.Category.ENGINE, triggered?.category)
+        assertEquals(DiagnosticsLog.Category.ENGINE, exhausted?.category)
     }
 
     @Test fun onThisDayTriggered_preservesStructuredFields() {
         val triggered = DiagnosticEventCatalog.require("ON_THIS_DAY_TRIGGERED")
         assertTrue("years" in triggered.permittedFields)
         assertTrue("preview" in triggered.permittedFields)
+    }
+
+    @Test fun onThisDayCompletion_preservesPoolProgress() {
+        val exhausted = DiagnosticEventCatalog.require("ON_THIS_DAY_POOL_EXHAUSTED")
+        assertTrue("photoToken" in exhausted.permittedFields)
+        assertTrue("poolSize" in exhausted.permittedFields)
+        assertTrue("remaining" in exhausted.permittedFields)
     }
 
     @Test fun collageSelectionEvaluation_isRegisteredWithOptimizerFields() {
@@ -45,5 +55,28 @@ class DiagnosticEventCatalogTest {
         assertTrue("sourceKind" in early.permittedFields)
         assertTrue("found" in early.permittedFields)
         assertTrue("poolSize" in early.permittedFields)
+    }
+
+    @Test fun renderAcknowledgementTelemetry_preservesTimeoutAndStageFields() {
+        val timeout = DiagnosticEventCatalog.require("RENDER_ACK_TIMEOUT")
+        val watchdog = DiagnosticEventCatalog.require("PREPARATION_WATCHDOG_TIMEOUT")
+        val cancellation = DiagnosticEventCatalog.require("PREPARATION_CANCELLED_RECOVERED")
+        val stage = DiagnosticEventCatalog.require("PRESENTATION_STAGE")
+        assertEquals(DiagnosticsLog.Category.ENGINE, stage.category)
+        assertTrue("photoToken" in stage.permittedFields)
+        assertTrue("stage" in stage.permittedFields)
+        assertTrue("lastPresentationStage" in timeout.permittedFields)
+        assertTrue("selectionAgeMs" in timeout.permittedFields)
+        assertTrue("stageAgeMs" in timeout.permittedFields)
+        assertTrue("preparationSubstage" in timeout.permittedFields)
+        assertTrue("preparationSubstageAgeMs" in watchdog.permittedFields)
+        assertTrue("watchdogTimeoutMs" in watchdog.permittedFields)
+        assertTrue("mediaTransferState" in watchdog.permittedFields)
+        assertTrue("mediaTransferCopiedBytes" in watchdog.permittedFields)
+        assertTrue("mediaTransferProgressAgeMs" in cancellation.permittedFields)
+        assertTrue("mediaTransferStreamCloseRequested" in cancellation.permittedFields)
+        assertTrue("mediaTransferSlotReleased" in timeout.permittedFields)
+        assertEquals(DiagnosticsLog.Category.ENGINE, cancellation.category)
+        assertTrue("cancellationInitiator" in cancellation.permittedFields)
     }
 }
