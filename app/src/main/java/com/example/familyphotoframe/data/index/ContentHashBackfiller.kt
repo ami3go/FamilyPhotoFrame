@@ -34,19 +34,10 @@ class ContentHashBackfiller(
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val timeoutMs: Long = 60_000L,
     private val batchSize: Int = 32,
-    private val messageDigestFactory: () -> MessageDigest = { MessageDigest.getInstance("SHA-256") },
 ) {
     data class BatchResult(val indexed: Int, val failed: Int, val remainingMayExist: Boolean)
 
     private val gate = Mutex()
-
-    /**
-     * Android 5's SHA-256 provider owns a native digest context. Constructing one for
-     * every remote photo makes a long SMB backfill look like a native-memory leak until
-     * finalization catches up. The gate serializes every call, so one resettable digest
-     * safely serves both foreground and background hashing without per-file native churn.
-     */
-    private val sha256Digest = ReusableMessageDigest(messageDigestFactory)
 
     suspend fun backfill(
         photoId: Long,
@@ -108,7 +99,7 @@ class ContentHashBackfiller(
         return try {
             val digest = withTimeoutOrNull(timeoutMs) {
                 withContext(io) {
-                    val md = sha256Digest.resetForNextHash()
+                    val md = MessageDigest.getInstance("SHA-256")
                     val item = row.toPhotoItem()
                     var bytesRead = 0L
                     source.openStream(
@@ -159,13 +150,4 @@ class ContentHashBackfiller(
         fileModifiedEpochMs = fileModifiedEpochMs,
         openToken = openToken,
     )
-}
-
-/** Single-owner digest holder; [ContentHashBackfiller.gate] provides serialization. */
-internal class ReusableMessageDigest(
-    private val factory: () -> MessageDigest = { MessageDigest.getInstance("SHA-256") },
-) {
-    private val digest: MessageDigest by lazy(LazyThreadSafetyMode.NONE, factory)
-
-    fun resetForNextHash(): MessageDigest = digest.apply { reset() }
 }

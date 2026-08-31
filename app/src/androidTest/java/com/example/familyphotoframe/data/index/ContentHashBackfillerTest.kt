@@ -27,7 +27,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.ByteArrayInputStream
 import java.io.InputStream
-import java.security.MessageDigest
 
 @RunWith(AndroidJUnit4::class)
 class ContentHashBackfillerTest {
@@ -56,38 +55,17 @@ class ContentHashBackfillerTest {
         assertTrue(source.lastOptions?.preferOriginal == true)
     }
 
-    @Test fun reusesOneDigestAcrossBackgroundBatch() = runBlocking {
-        val bytes = "same-content".toByteArray()
-        db.photoDao().insertBatch(listOf(row(1, bytes.size.toLong()), row(2, bytes.size.toLong())))
-        var factoryCalls = 0
-        val result = ContentHashBackfiller(
-            dao = db.photoDao(),
-            diagnostics = DiagnosticsLog(),
-            timeoutMs = 5_000,
-            batchSize = 4,
-            messageDigestFactory = {
-                factoryCalls++
-                MessageDigest.getInstance("SHA-256")
-            },
-        ).backfillPending(FakeSource(bytes), maxBatches = 1)
-
-        assertEquals(2, result.indexed)
-        assertEquals(0, result.failed)
-        assertEquals(1, factoryCalls)
-        assertEquals(db.photoDao().byId(1)?.contentSha256, db.photoDao().byId(2)?.contentSha256)
-    }
-
     private fun row(id: Long, size: Long) = PhotoItemEntity(
         id = id,
-        stableId = "local:Trip/$id.jpg",
+        stableId = "local:Trip/a.jpg",
         sourceId = "local",
-        normalizedPath = "Trip/$id.jpg",
+        normalizedPath = "Trip/a.jpg",
         folderName = "Trip",
-        fileName = "$id.jpg",
+        fileName = "a.jpg",
         mimeType = "image/jpeg",
         sizeBytes = size,
         fileModifiedEpochMs = 1,
-        openToken = "Trip/$id.jpg",
+        openToken = "Trip/a.jpg",
         indexedAtEpochMs = 1,
         canonicalDirectory = "Trip",
     )

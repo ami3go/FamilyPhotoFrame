@@ -1,22 +1,5 @@
 # Native-memory Phase 2B HIL test
 
-## Phase 4 follow-up: background content hashing (build 26.58.1)
-
-The build 26.57.1 V80 qualification run kept total PSS flat and rendered continuously,
-but native PSS grew by about 5.4 MiB/hour. A fresh `HOLD_COMMITTED_FRAME` process then
-reproduced faster native growth while slide selection and rendering remained fixed at two
-frames. Resource telemetry showed one balanced, non-overdue SMB stream at a time, always
-with purpose `CONTENT_HASH`; 83 streams had opened in the first 50 minutes while bitmap,
-media-transfer, transition, FD, and thread ownership remained flat.
-
-On Android 5, the platform SHA-256 provider owns a native digest context. The backfiller
-previously constructed a new `MessageDigest` for every file in a long SMB index pass.
-Build 26.58.1 reuses one resettable digest under the backfiller's existing serialization
-mutex. This removes per-file provider-context churn without changing hash bytes, timeout
-handling, batching, or database semantics. Repeat `HOLD_COMMITTED_FRAME` with a fresh
-process before resuming the normal Phase 4 gate; native PSS must remain flat while the
-`CONTENT_HASH` stream count continues to advance.
-
 Build `26.46.1` adds aggregate native-allocation attribution and four explicit test modes.
 The counters retain no image, path, or photo identifier. They are intended to determine whether
 the observed native-PSS slope comes from source/decode work, generated bitmaps, or rendering.
