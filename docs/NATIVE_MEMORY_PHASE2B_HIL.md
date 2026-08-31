@@ -1,5 +1,22 @@
 # Native-memory Phase 2B HIL test
 
+## Phase 4 follow-up: SMB content-hash read churn (build 26.58.1)
+
+The build 26.57.1 V80 qualification run kept total PSS flat and rendered continuously,
+but native PSS grew by about 5.4 MiB/hour. A fresh `HOLD_COMMITTED_FRAME` process then
+reproduced faster growth while slide selection and rendering remained fixed at two frames.
+Resource telemetry showed one balanced, non-overdue SMB stream at a time, always with
+purpose `CONTENT_HASH`; 83 streams opened in the first 50 minutes while bitmap,
+media-transfer, transition, FD, and thread ownership remained flat.
+
+The content-hash reader still used Kotlin's generic 8 KiB buffer. jCIFS maps each caller
+read to a bounded SMB request, so this path created about eight times as many short-lived
+request/response objects as the existing 64 KiB media-transfer path. Build 26.58.1 applies
+the same 64 KiB policy to remote content hashing without changing the hash, timeout,
+batching, or database semantics. Repeat `HOLD_COMMITTED_FRAME` with a fresh process before
+resuming the normal Phase 4 gate; native PSS must remain flat while `CONTENT_HASH` stream
+count and indexed bytes continue to advance.
+
 Build `26.46.1` adds aggregate native-allocation attribution and four explicit test modes.
 The counters retain no image, path, or photo identifier. They are intended to determine whether
 the observed native-PSS slope comes from source/decode work, generated bitmaps, or rendering.
