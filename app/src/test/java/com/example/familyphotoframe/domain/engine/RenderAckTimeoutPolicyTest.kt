@@ -5,6 +5,11 @@ import org.junit.Test
 
 class RenderAckTimeoutPolicyTest {
 
+    @Test fun boundedPreparationLeavesRoomForFinalRenderRecovery() {
+        assertEquals(60_000L, RenderAckTimeoutPolicy.PREPARATION_WATCHDOG_TIMEOUT_MS)
+        assertEquals(70_000L, RenderAckTimeoutPolicy.FINAL_RENDER_ACK_TIMEOUT_MS)
+    }
+
     @Test fun selectionWithoutAPreparationStageIsDiagnosable() {
         assertEquals("PREPARATION_NOT_STARTED", RenderAckTimeoutPolicy.reasonFor(null))
         assertEquals("PREPARATION_NOT_STARTED", RenderAckTimeoutPolicy.reasonFor("SELECTED"))

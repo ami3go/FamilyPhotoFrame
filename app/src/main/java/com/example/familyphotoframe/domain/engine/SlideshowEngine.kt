@@ -746,7 +746,7 @@ class SlideshowEngine(
     }
 
     /**
-     * The UI watchdog is deliberately narrower than [RENDER_ACK_TIMEOUT_MS]: it only
+     * The UI watchdog is deliberately narrower than the final render-ack timeout: it only
      * recovers a selection that has not left preparation.  A superseded Compose effect is
      * cancelled by the new selection; late bitmap results are already retired by the UI
      * hand-off guards.
@@ -928,9 +928,11 @@ class SlideshowEngine(
                     // Do not start the dwell countdown while the selected photo is still
                     // resolving/decoding. The UI keeps the previous bitmap visible and
                     // wakes this loop with Rendered (or Next on failure) — normally well
-                    // under RENDER_ACK_TIMEOUT_MS. Bounded, unlike the waits above,
+                    // under the final render-ack timeout. Bounded, unlike the waits above,
                     // because a dropped acknowledgment must not freeze playback forever.
-                    val cmd = withTimeoutOrNull(RENDER_ACK_TIMEOUT_MS) { commands.receive() }
+                    val cmd = withTimeoutOrNull(RenderAckTimeoutPolicy.FINAL_RENDER_ACK_TIMEOUT_MS) {
+                        commands.receive()
+                    }
                     if (cmd == null) {
                         _ui.value.current?.let {
                             val trace = renderAckTrace.forPhoto(it.id)
@@ -1866,7 +1868,6 @@ class SlideshowEngine(
          * seconds even for multi-candidate remote probing) so it never fires for a
          * merely slow — as opposed to lost — render.
          */
-        const val RENDER_ACK_TIMEOUT_MS = 30_000L
 
     }
 }

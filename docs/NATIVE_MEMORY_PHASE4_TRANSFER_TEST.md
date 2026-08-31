@@ -1,23 +1,23 @@
 # Phase 4 selected-transfer test
 
-Build `26.55.1` adds a bounded cache-transfer path for the currently selected
+Build `26.56.1` adds a bounded cache-transfer path for the currently selected
 presentation. It does not change the native-memory allocation strategy; the Phase 2B
 HIL matrix is still required to identify that owner.
 
 ## Device run
 
-1. Install build `26.55.1` / version code `55`.
+1. Install build `26.56.1` / version code `56`.
 2. Use normal playback with the real SMB source for 2–4 hours.
 3. Export diagnostics after the run. If a selected cache transfer stalls, keep the
    device running long enough to observe the next presentation recover.
 
 ## Expected behavior
 
-A selected cache operation shares one 18-second budget from presentation selection,
+A selected cache operation shares one 58-second budget from presentation selection,
 including any cache-key or transfer-slot wait. Background preload retains the existing
 two-minute budget. The selected deadline is intentionally two seconds earlier than the
-20-second preparation watchdog, so the current slide advances without waiting for the
-broader 30-second render-ack fallback.
+60-second preparation watchdog, so the current slide advances without waiting for the
+broader 70-second render-ack fallback.
 
 Routine progress is kept only in the bounded in-memory presentation trace. It will not
 rotate the bulk diagnostic log.
@@ -77,8 +77,11 @@ completed, and transfer progress remained fresh, but Kotlin's generic 8 KiB copy
 one bounded jCIFS read for every small chunk. The phone copied only about 0.4–0.7 MB during each
 18-second selection budget: 80 of 86 preparations expired and no slide rendered.
 
-Build `26.55.1` uses a fixed 64 KiB buffer for app-owned remote cache copies. This matches the
-practical SMB2 read size while retaining one bounded allocation, active cancellation/stream close,
-the 18-second selected deadline, and the two-minute background ceiling. Validation must show a
-material increase in copied bytes per selected window and successful rendering on both devices;
-the timeout itself is intentionally unchanged.
+Build `26.55.1` used a fixed 64 KiB buffer for app-owned remote cache copies. That matched the
+practical SMB2 read size and raised the phone's copied bytes to about 1.04 MB per selected window,
+but the unchanged 18-second budget still could not finish the smallest observed 2.5 MB file.
+
+Build `26.56.1` therefore keeps the 64 KiB buffer and gives a selected transfer 58 seconds, with
+the preparation watchdog at 60 seconds and the final render-ack fallback at 70 seconds. All three
+bounds remain below the existing two-minute background ceiling. Validation must show successful
+rendering on both devices without overdue streams, timeout loops, or unbounded resource growth.

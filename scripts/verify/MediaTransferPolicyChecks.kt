@@ -7,7 +7,7 @@ fun runMediaTransferPolicyChecks() {
     )
     check(
         "selected transfer ends before preparation watchdog",
-        18_000L,
+        58_000L,
         MediaTransferPolicy.deadlineMs(MediaTransferPriority.SELECTED_PRESENTATION),
     )
     check(

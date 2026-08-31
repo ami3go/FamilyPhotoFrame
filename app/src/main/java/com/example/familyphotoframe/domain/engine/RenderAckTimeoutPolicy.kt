@@ -10,12 +10,14 @@ internal object RenderAckTimeoutPolicy {
     const val SELECTED = "SELECTED"
 
     /**
-     * A selected slide normally reaches the image decoder in a few seconds.  Keep this
-     * below the engine's final render-ack recovery so a wedged preparation is abandoned
-     * promptly, while the existing 30-second timeout remains a last-resort guard for the
-     * entire UI hand-off.
+     * Keep this above the selected cache-transfer budget and below the engine's final
+     * render-ack recovery. Slow but advancing SMB2 reads get a usable bounded window,
+     * while a wedged preparation is still abandoned after one minute.
      */
-    const val PREPARATION_WATCHDOG_TIMEOUT_MS = 20_000L
+    const val PREPARATION_WATCHDOG_TIMEOUT_MS = 60_000L
+
+    /** Last-resort guard for the entire UI hand-off, including transition commit. */
+    const val FINAL_RENDER_ACK_TIMEOUT_MS = 70_000L
 
     fun shouldRecoverPreparation(lastStage: String?, preparationSubstage: String? = null): Boolean = when (lastStage) {
         null, SELECTED -> true

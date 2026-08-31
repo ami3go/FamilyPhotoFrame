@@ -10,9 +10,9 @@ class MediaTransferPolicyTest {
     }
 
     @Test fun selectedTransferLeavesCancellationTimeBeforeThePreparationWatchdog() {
-        assertEquals(18_000L, MediaTransferPolicy.deadlineMs(MediaTransferPriority.SELECTED_PRESENTATION))
+        assertEquals(58_000L, MediaTransferPolicy.deadlineMs(MediaTransferPriority.SELECTED_PRESENTATION))
         assertTrue(
-            MediaTransferPolicy.deadlineMs(MediaTransferPriority.SELECTED_PRESENTATION) < 20_000L,
+            MediaTransferPolicy.deadlineMs(MediaTransferPriority.SELECTED_PRESENTATION) < 60_000L,
         )
     }
 

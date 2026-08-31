@@ -15,7 +15,7 @@ enum class MediaTransferPriority {
 }
 
 internal object MediaTransferPolicy {
-    const val SELECTED_PRESENTATION_DEADLINE_MS = 18_000L
+    const val SELECTED_PRESENTATION_DEADLINE_MS = 58_000L
     const val BACKGROUND_PRELOAD_DEADLINE_MS = 2L * 60L * 1_000L
 
     /**
