@@ -24,6 +24,14 @@ threads ended two below the warm-up edge, and all SMB streams remained balanced 
 non-overdue. This passes the Hold isolation step; continue with a fresh-process
 `SINGLE_PHOTO_INSTANT` run before returning to Normal.
 
+The fresh-process Single instant run then completed 2.02 hours with 287 selections and
+282 visible renders, no crash, ANR, or render-ack timeout, and one active tracked bitmap.
+Across the 1.52-hour post-warm-up window, native PSS changed by only 4 KiB (118 KiB/hour
+regression slope) while total PSS fell 8.65 MiB. Another 907 SMB content-hash streams
+completed; FDs fell by one, threads fell by three, and decode/transition ownership was
+balanced apart from the in-flight final decode. This passes Single instant; continue with
+a fresh-process `SINGLE_PHOTO_CROSSFADE` run.
+
 Build `26.46.1` adds aggregate native-allocation attribution and four explicit test modes.
 The counters retain no image, path, or photo identifier. They are intended to determine whether
 the observed native-PSS slope comes from source/decode work, generated bitmaps, or rendering.
