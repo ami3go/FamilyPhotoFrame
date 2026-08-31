@@ -1,6 +1,11 @@
 fun runMediaTransferPolicyChecks() {
     println("-- media transfer priority --")
     check(
+        "remote copies use a bounded SMB-sized buffer",
+        64 * 1024,
+        MediaTransferPolicy.REMOTE_COPY_BUFFER_BYTES,
+    )
+    check(
         "selected transfer ends before preparation watchdog",
         18_000L,
         MediaTransferPolicy.deadlineMs(MediaTransferPriority.SELECTED_PRESENTATION),

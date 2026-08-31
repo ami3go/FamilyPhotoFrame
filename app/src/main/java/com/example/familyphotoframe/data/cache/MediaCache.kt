@@ -349,6 +349,7 @@ class MediaCache(
                             maxBytes = MAX_ENTRY_BYTES,
                             minimumUsableBytes = RESERVED_FREE_BYTES,
                             usableBytes = { dir.usableSpace },
+                            bufferSize = MediaTransferPolicy.REMOTE_COPY_BUFFER_BYTES,
                             onProgress = { copied ->
                                 copiedBytes = copied
                                 onTransferTelemetry(

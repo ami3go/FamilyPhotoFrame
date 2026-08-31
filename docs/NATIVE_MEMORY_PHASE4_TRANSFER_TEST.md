@@ -1,12 +1,12 @@
 # Phase 4 selected-transfer test
 
-Build `26.54.1` adds a bounded cache-transfer path for the currently selected
+Build `26.55.1` adds a bounded cache-transfer path for the currently selected
 presentation. It does not change the native-memory allocation strategy; the Phase 2B
 HIL matrix is still required to identify that owner.
 
 ## Device run
 
-1. Install build `26.54.1` / version code `54`.
+1. Install build `26.55.1` / version code `55`.
 2. Use normal playback with the real SMB source for 2–4 hours.
 3. Export diagnostics after the run. If a selected cache transfer stalls, keep the
    device running long enough to observe the next presentation recover.
@@ -68,3 +68,17 @@ shuffle cycle. The failed anchor is removed from that cycle before advancing, wh
 preparation cancellation still releases its reservation without penalizing the photo. The reset
 hardware cycle must show a different photo after a selected deadline and must not reproduce a
 same-anchor deadline retry storm.
+
+## Third hardware cycle finding
+
+The supplementary Android 6 phone run exposed a systematic remote-copy throughput failure that
+also appeared on the V80 when source throughput degraded. The app was reachable, indexing
+completed, and transfer progress remained fresh, but Kotlin's generic 8 KiB copy buffer caused
+one bounded jCIFS read for every small chunk. The phone copied only about 0.4–0.7 MB during each
+18-second selection budget: 80 of 86 preparations expired and no slide rendered.
+
+Build `26.55.1` uses a fixed 64 KiB buffer for app-owned remote cache copies. This matches the
+practical SMB2 read size while retaining one bounded allocation, active cancellation/stream close,
+the 18-second selected deadline, and the two-minute background ceiling. Validation must show a
+material increase in copied bytes per selected window and successful rendering on both devices;
+the timeout itself is intentionally unchanged.

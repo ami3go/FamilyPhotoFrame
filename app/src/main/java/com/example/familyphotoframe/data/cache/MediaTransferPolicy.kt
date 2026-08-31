@@ -18,6 +18,14 @@ internal object MediaTransferPolicy {
     const val SELECTED_PRESENTATION_DEADLINE_MS = 18_000L
     const val BACKGROUND_PRELOAD_DEADLINE_MS = 2L * 60L * 1_000L
 
+    /**
+     * jCIFS maps each caller read to a bounded SMB read request. Kotlin's generic
+     * 8 KiB stream-copy buffer therefore turns one photo into hundreds of network
+     * round trips on some Android 6 clients. 64 KiB remains a small fixed allocation
+     * while matching the practical SMB2 read size and preserving prompt cancellation.
+     */
+    const val REMOTE_COPY_BUFFER_BYTES = 64 * 1024
+
     fun deadlineMs(priority: MediaTransferPriority): Long = when (priority) {
         MediaTransferPriority.SELECTED_PRESENTATION -> SELECTED_PRESENTATION_DEADLINE_MS
         MediaTransferPriority.BACKGROUND_PRELOAD -> BACKGROUND_PRELOAD_DEADLINE_MS
