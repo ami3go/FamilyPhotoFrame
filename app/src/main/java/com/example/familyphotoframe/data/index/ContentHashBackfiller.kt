@@ -12,6 +12,7 @@ import com.example.familyphotoframe.data.source.SourceId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -36,6 +37,8 @@ class ContentHashBackfiller(
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val timeoutMs: Long = 60_000L,
     private val batchSize: Int = 32,
+    private val shouldYieldToMediaTransfer: () -> Boolean = { false },
+    private val onYieldToMediaTransfer: () -> Unit = {},
 ) {
     data class BatchResult(val indexed: Int, val failed: Int, val remainingMayExist: Boolean)
 
@@ -97,38 +100,55 @@ class ContentHashBackfiller(
     }
 
     private suspend fun hashAndPersist(row: PhotoItemEntity, source: PhotoSource): String? {
-        val attemptedAt = System.currentTimeMillis()
-        return try {
-            val digest = withTimeoutOrNull(timeoutMs) {
-                withContext(io) {
-                    val md = MessageDigest.getInstance("SHA-256")
-                    val item = row.toPhotoItem()
-                    val result = source.openStream(
-                        item,
-                        OpenOptions(
-                            timeoutMs = timeoutMs,
-                            preferOriginal = true,
-                            purpose = com.example.familyphotoframe.data.source.OpenPurpose.CONTENT_HASH,
-                        ),
-                    ).use { input ->
-                        digestContentStream(input, md)
+        while (true) {
+            awaitMediaTransferIdle(recordYield = true)
+            val attemptedAt = System.currentTimeMillis()
+            try {
+                val digest = withTimeoutOrNull(timeoutMs) {
+                    withContext(io) {
+                        val md = MessageDigest.getInstance("SHA-256")
+                        val item = row.toPhotoItem()
+                        val result = source.openStream(
+                            item,
+                            OpenOptions(
+                                timeoutMs = timeoutMs,
+                                preferOriginal = true,
+                                purpose = com.example.familyphotoframe.data.source.OpenPurpose.CONTENT_HASH,
+                            ),
+                        ).use { input ->
+                            digestContentStream(input, md, shouldYield = shouldYieldToMediaTransfer)
+                        }
+                        if (row.sizeBytes > 0L && result.bytesRead != row.sizeBytes) null
+                        else result.sha256
                     }
-                    if (row.sizeBytes > 0L && result.bytesRead != row.sizeBytes) null
-                    else result.sha256
                 }
-            }
-            if (digest == null) {
+                return if (digest == null) {
+                    dao.markContentHashAttempt(row.id, attemptedAt)
+                    null
+                } else {
+                    dao.updateContentHash(row.id, digest, attemptedAt)
+                    digest
+                }
+            } catch (c: CancellationException) {
+                throw c
+            } catch (_: ContentHashYieldException) {
+                onYieldToMediaTransfer()
+                awaitMediaTransferIdle(recordYield = false)
+                // Retry the same row without recording an I/O failure. Selected media
+                // owns display latency; hashing is durable background enrichment.
+            } catch (_: Exception) {
                 dao.markContentHashAttempt(row.id, attemptedAt)
-                null
-            } else {
-                dao.updateContentHash(row.id, digest, attemptedAt)
-                digest
+                return null
             }
-        } catch (c: CancellationException) {
-            throw c
-        } catch (_: Exception) {
-            dao.markContentHashAttempt(row.id, attemptedAt)
-            null
+        }
+    }
+
+    private suspend fun awaitMediaTransferIdle(recordYield: Boolean) {
+        if (!shouldYieldToMediaTransfer()) return
+        if (recordYield) onYieldToMediaTransfer()
+        while (shouldYieldToMediaTransfer()) {
+            coroutineContext.ensureActive()
+            delay(MEDIA_TRANSFER_YIELD_POLL_MS)
         }
     }
 
@@ -145,6 +165,8 @@ class ContentHashBackfiller(
     )
 }
 
+internal class ContentHashYieldException : RuntimeException(null, null, false, false)
+
 internal data class ContentDigestResult(val sha256: String, val bytesRead: Long)
 
 /**
@@ -157,11 +179,13 @@ internal suspend fun digestContentStream(
     input: InputStream,
     digest: MessageDigest,
     bufferSize: Int = MediaTransferPolicy.REMOTE_COPY_BUFFER_BYTES,
+    shouldYield: () -> Boolean = { false },
 ): ContentDigestResult {
     val buffer = ByteArray(bufferSize)
     var bytesRead = 0L
     while (true) {
         coroutineContext.ensureActive()
+        if (shouldYield()) throw ContentHashYieldException()
         val read = input.read(buffer)
         if (read < 0) break
         if (read == 0) continue
@@ -170,3 +194,5 @@ internal suspend fun digestContentStream(
     }
     return ContentDigestResult(digest.digest().toHexString(), bytesRead)
 }
+
+private const val MEDIA_TRANSFER_YIELD_POLL_MS = 100L

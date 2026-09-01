@@ -49,6 +49,7 @@ class RuntimeResourceTracker(
         val mediaTransfersFinished: Long = 0L,
         val oldestMediaTransferAgeMs: Long = 0L,
         val mediaTrackingSaturated: Boolean = false,
+        val contentHashYieldsToMediaTransfers: Long = 0L,
     )
 
     class Lease internal constructor(
@@ -89,6 +90,7 @@ class RuntimeResourceTracker(
     private val smbContexts = Bucket()
     private val smbStreams = Bucket()
     private val mediaTransfers = Bucket()
+    private var contentHashYieldsToMediaTransfers = 0L
 
     fun openSmbContext(): Lease = acquire(Kind.SMB_CONTEXT)
 
@@ -98,6 +100,16 @@ class RuntimeResourceTracker(
     ): Lease = acquire(Kind.SMB_STREAM, purpose, deadlineMs)
 
     fun startMediaTransfer(): Lease = acquire(Kind.MEDIA_TRANSFER)
+
+    /** Fast, privacy-safe priority signal used by low-priority content hashing. */
+    fun hasActiveMediaTransfer(): Boolean = synchronized(lock) {
+        mediaTransfers.activeCount > 0
+    }
+
+    /** Counts hash reads preempted so selected media can use the SMB transport first. */
+    fun recordContentHashYieldToMediaTransfer() = synchronized(lock) {
+        contentHashYieldsToMediaTransfers = saturatingIncrement(contentHashYieldsToMediaTransfers)
+    }
 
     fun snapshot(): Snapshot = synchronized(lock) {
         val now = elapsedRealtimeMs()
@@ -124,6 +136,7 @@ class RuntimeResourceTracker(
             mediaTransfersFinished = mediaTransfers.finished,
             oldestMediaTransferAgeMs = oldestAge(mediaTransfers, now),
             mediaTrackingSaturated = mediaTransfers.trackingSaturated,
+            contentHashYieldsToMediaTransfers = contentHashYieldsToMediaTransfers,
         )
     }
 

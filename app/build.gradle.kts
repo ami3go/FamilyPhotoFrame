@@ -16,7 +16,7 @@ import java.util.Properties
  * [buildNumber] instead when the distinction has to be visible to the package manager.
  */
 val releaseYear = 26
-val buildNumber = 60
+val buildNumber = 61
 val testingVariant: Int? = 1
 
 plugins {

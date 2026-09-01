@@ -202,6 +202,7 @@ object DiagnosticEventCatalog {
         "smbTrackingSaturated", "mediaActiveTransfers",
         "mediaPeakTransfers", "mediaTransfersStarted", "mediaTransfersFinished",
         "mediaOldestTransferAgeMs", "mediaTrackingSaturated",
+        "contentHashYieldsToMediaTransfers",
         "bitmapTrackedAllocations", "bitmapTrackedReleases", "bitmapTrackedAllocatedBytes",
         "bitmapTrackedReleasedBytes", "bitmapTrackedActiveCount", "bitmapTrackedActiveBytes",
         "bitmapTrackedPeakCount", "bitmapTrackedPeakBytes", "bitmapDecodedAllocations",

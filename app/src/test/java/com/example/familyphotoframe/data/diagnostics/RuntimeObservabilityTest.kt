@@ -15,6 +15,8 @@ class RuntimeObservabilityTest {
         val first = tracker.openSmbStream()
         val second = tracker.openSmbStream()
         val transfer = tracker.startMediaTransfer()
+        assertTrue(tracker.hasActiveMediaTransfer())
+        tracker.recordContentHashYieldToMediaTransfer()
         clock.set(250L)
 
         val active = tracker.snapshot()
@@ -24,11 +26,13 @@ class RuntimeObservabilityTest {
         assertEquals(1, active.activeSmbContexts)
         assertEquals(150L, active.oldestSmbContextAgeMs)
         assertEquals(1, active.activeMediaTransfers)
+        assertEquals(1L, active.contentHashYieldsToMediaTransfers)
 
         first.close()
         first.close()
         second.close()
         transfer.close()
+        assertFalse(tracker.hasActiveMediaTransfer())
         context.close()
         context.close()
         val closed = tracker.snapshot()

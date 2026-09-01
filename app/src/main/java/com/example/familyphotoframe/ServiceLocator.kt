@@ -340,6 +340,8 @@ class ServiceLocator(private val appContext: Context) {
                     "mediaTransfersFinished" to resources.mediaTransfersFinished.toString(),
                     "mediaOldestTransferAgeMs" to resources.oldestMediaTransferAgeMs.toString(),
                     "mediaTrackingSaturated" to resources.mediaTrackingSaturated.toString(),
+                    "contentHashYieldsToMediaTransfers" to
+                        resources.contentHashYieldsToMediaTransfers.toString(),
                     "bitmapTrackedAllocations" to bitmapLifecycle.allocations.toString(),
                     "bitmapTrackedReleases" to bitmapLifecycle.releases.toString(),
                     "bitmapTrackedAllocatedBytes" to bitmapLifecycle.allocatedBytes.toString(),
@@ -454,7 +456,14 @@ class ServiceLocator(private val appContext: Context) {
 
     /** Exact duplicate identity, populated asynchronously and never on the render path. */
     val contentHashBackfiller: ContentHashBackfiller by lazy {
-        ContentHashBackfiller(photoDao, diagnostics, dispatchers.io)
+        ContentHashBackfiller(
+            photoDao,
+            diagnostics,
+            dispatchers.io,
+            shouldYieldToMediaTransfer = runtimeResourceTracker::hasActiveMediaTransfer,
+            onYieldToMediaTransfer =
+                runtimeResourceTracker::recordContentHashYieldToMediaTransfer,
+        )
     }
 
     val shuffleRepository: ShuffleRepository by lazy {

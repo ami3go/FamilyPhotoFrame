@@ -99,3 +99,22 @@ Cached and background-preloaded anchors may still build collages. The selected t
 bounded at 58 seconds, while the preparation and final render-ack guards move to 70 and 80 seconds
 to leave a measured 12-second decode/transition margin. Validation must show that a successful
 fresh transfer reaches `SLIDE_RENDERED` without an intervening preparation watchdog.
+
+## Twelfth-hour build-60 finding
+
+The V80 build `26.60.1` Normal run rendered continuously for 12.06 hours without a crash, ANR,
+render-ack timeout, overdue resource, FD/thread growth, or ownership imbalance. Native PSS was
+flat for the first 9.8 hours. When source throughput degraded, selected transfers began reaching
+their 58-second deadline while a low-priority `CONTENT_HASH` stream remained active. Samples
+repeatedly showed one media transfer and two or three SMB streams, with content hashing holding
+the oldest stream for up to about 59 seconds. Native PSS then stepped upward by about 6.9 MiB;
+some allocator pages were reclaimed after source recovery, but the accelerated projection still
+failed. The same contention explains the supplementary phone's zero-render run: selected media
+and hash traffic shared an already slow SMB path.
+
+Build `26.61.1` makes content hashing cooperatively preemptible. Before each 64 KiB read it checks
+whether a media cache transfer is active; if so, it closes the hash stream, waits without marking
+the photo as failed, and retries that row after selected media becomes idle. A cumulative
+`contentHashYieldsToMediaTransfers` counter provides privacy-safe hardware evidence. The 64 KiB
+buffer remains unchanged: the problem was concurrent low-priority traffic under degraded source
+throughput, not insufficient application read size.
