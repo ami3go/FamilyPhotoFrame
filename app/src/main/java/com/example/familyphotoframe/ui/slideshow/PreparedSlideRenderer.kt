@@ -49,6 +49,7 @@ internal fun PreparedPhotoFrame(
     bitmapLifecycleTracker: BitmapLifecycleTracker,
     onRecoverableOom: (DisplayPhoto, String) -> Unit,
     onMotionDiagnostic: (List<Long>, String) -> Unit,
+    contentAlpha: Float = 1f,
 ) {
     when (prepared) {
         is PreparedSlide.Single -> PreparedSinglePhoto(
@@ -60,6 +61,7 @@ internal fun PreparedPhotoFrame(
             reclaimer,
             bitmapLifecycleTracker,
             onRecoverableOom,
+            contentAlpha,
         )
         is PreparedSlide.Collage -> if (
             prepared.layout == CollageLayout.TWO_COLUMNS ||
@@ -72,9 +74,10 @@ internal fun PreparedPhotoFrame(
                 allowDisplayMotion,
                 motionStore,
                 onMotionDiagnostic,
+                contentAlpha,
             )
         } else {
-            PreparedAdaptiveCollage(prepared, state)
+            PreparedAdaptiveCollage(prepared, state, contentAlpha)
         }
     }
 }
@@ -89,6 +92,7 @@ private fun PreparedSinglePhoto(
     reclaimer: LegacyBitmapReclaimer,
     bitmapLifecycleTracker: BitmapLifecycleTracker,
     onRecoverableOom: (DisplayPhoto, String) -> Unit,
+    contentAlpha: Float,
 ) {
     val photo = prepared.anchor
     // Display-time motion is separate from a transition's transform; suspend it while the
@@ -118,6 +122,7 @@ private fun PreparedSinglePhoto(
                 reclaimer = reclaimer,
                 bitmapLifecycleTracker = bitmapLifecycleTracker,
                 onOutOfMemory = { onRecoverableOom(photo, "blurred_backdrop_allocation") },
+                contentAlpha = contentAlpha,
             )
         }
         val imageBitmap = remember(prepared.bitmap) { prepared.bitmap.asImageBitmap() }
@@ -128,6 +133,7 @@ private fun PreparedSinglePhoto(
                 AspectMode.FIT_COLOR, AspectMode.FIT_BLUR -> ContentScale.Fit
                 AspectMode.FILL_CROP -> ContentScale.Crop
             },
+            alpha = contentAlpha.coerceIn(0f, 1f),
             modifier = Modifier.fillMaxSize().then(
                 if (!motionEnabled) Modifier else Modifier.graphicsLayer {
                     val frame = KenBurns.frameFor(photo.id, progress.value)

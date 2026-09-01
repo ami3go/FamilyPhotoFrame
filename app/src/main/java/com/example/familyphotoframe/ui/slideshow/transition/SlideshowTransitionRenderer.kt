@@ -29,10 +29,28 @@ internal fun <T> SlideshowTransitionRenderer(
     transition: ResolvedTransition,
     progress: Float,
     render: @Composable (T) -> Unit,
+    renderWithDirectAlpha: (@Composable (T, Float) -> Unit)? = null,
     renderBlurred: (@Composable (T) -> Unit)? = null,
 ) {
     val p = progress.coerceIn(0f, 1f)
     when (transition.effect) {
+        TransitionMode.CROSSFADE -> {
+            if (renderWithDirectAlpha == null) {
+                StandardRenderer(
+                    outgoing = outgoing,
+                    incoming = incoming,
+                    frame = transitionFrame(TransitionMode.CROSSFADE, p),
+                    render = render,
+                )
+            } else {
+                DirectAlphaCrossfadeRenderer(
+                    outgoing = outgoing,
+                    incoming = incoming,
+                    frame = transitionFrame(TransitionMode.CROSSFADE, p),
+                    render = renderWithDirectAlpha,
+                )
+            }
+        }
         TransitionMode.SOFT_REVEAL -> SoftRevealRenderer(outgoing, incoming, p, render)
         TransitionMode.SOFT_FOCUS_FADE -> {
             if (renderBlurred == null) {
@@ -54,6 +72,27 @@ internal fun <T> SlideshowTransitionRenderer(
         )
     }
 }
+
+/**
+ * Crossfade without a full-screen [graphicsLayer]. On API 22 even modulated layer alpha
+ * leaves a viewport-sized HWUI layer in the native cache. Passing alpha to each image
+ * draw keeps the same opacity curve while letting the bitmap painter modulate its paint.
+ */
+@Composable
+private fun <T> DirectAlphaCrossfadeRenderer(
+    outgoing: T?,
+    incoming: T,
+    frame: TransitionFrame,
+    render: @Composable (T, Float) -> Unit,
+) {
+    Box(Modifier.fillMaxSize()) {
+        if (outgoing != null) render(outgoing, frame.outgoing.alpha.coerceIn(0f, 1f))
+        render(incoming, frame.incoming.alpha.coerceIn(0f, 1f))
+    }
+}
+
+internal fun usesDirectContentAlpha(effect: TransitionMode): Boolean =
+    effect == TransitionMode.CROSSFADE
 
 @Composable
 private fun <T> StandardRenderer(

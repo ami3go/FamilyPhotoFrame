@@ -43,6 +43,20 @@ viewport buffer for each layer on API 22. Build 26.59.1 explicitly uses
 the crossfade while avoiding those offscreen buffers. Repeat Single crossfade with a
 fresh process before returning to Normal.
 
+The build 26.59.1 repeat ran for 3.81 hours with 545 selections and 540 renders and no
+crash, ANR, or render-ack timeout. It materially reduced the original slope, but did not
+flatten it: post-warm-up native PSS still rose 7.06 MiB at 2.58 MiB/hour, including
+3.95 MiB in the final hour, while total PSS fell 19.75 MiB. Decode, transition, bitmap,
+SMB, FD, and thread ownership remained balanced. API-22 `dumpsys gfxinfo` still reported
+one 1920x1216 viewport layer occupying 9,338,880 bytes in HWUI's layer cache, showing that
+`ModulateAlpha` alone did not remove the whole-presentation layer on this device.
+
+Build 26.60.1 therefore gives Crossfade a direct-content-alpha renderer: the transition
+curve is applied to each prepared bitmap draw through `Image` paint alpha, rather than to
+a full-screen `graphicsLayer`. Other spatial effects retain their existing presentation
+transforms. Repeat Single crossfade with a fresh build-60 process before returning to
+Normal.
+
 Build `26.46.1` adds aggregate native-allocation attribution and four explicit test modes.
 The counters retain no image, path, or photo identifier. They are intended to determine whether
 the observed native-PSS slope comes from source/decode work, generated bitmaps, or rendering.

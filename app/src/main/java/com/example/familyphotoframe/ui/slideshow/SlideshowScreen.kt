@@ -1330,6 +1330,21 @@ private fun PlayingContent(
                         onMotionDiagnostic = onMotionDiagnostic,
                     )
                 },
+                renderWithDirectAlpha = { slide, contentAlpha ->
+                    PreparedPhotoFrame(
+                        prepared = slide,
+                        state = state,
+                        imageLoader = imageLoader,
+                        allowDisplayMotion = false,
+                        motionStore = motionStore,
+                        memoryProtection = memoryProtection,
+                        reclaimer = reclaimer,
+                        bitmapLifecycleTracker = bitmapLifecycleTracker,
+                        onRecoverableOom = onRecoverableOom,
+                        onMotionDiagnostic = onMotionDiagnostic,
+                        contentAlpha = contentAlpha,
+                    )
+                },
                 renderBlurred = { slide -> PreparedTransitionBlur(slide) },
             )
         } else {
@@ -1380,6 +1395,7 @@ internal fun PreparedCollage(
     allowDisplayMotion: Boolean,
     motionStore: PanelMotionStore,
     onMotionDiagnostic: (List<Long>, String) -> Unit,
+    contentAlpha: Float = 1f,
 ) {
     val gapDp = when (gap) {
         CollageGap.NONE -> 0.dp
@@ -1389,7 +1405,10 @@ internal fun PreparedCollage(
     }
     val tileScale = state.portraitCollage.scaleMode.toContentScale()
     val tileAlignment = state.portraitCollage.alignment.toComposeAlignment()
-    val tileBackground = state.portraitCollage.background.toComposeColor(state.backgroundColorArgb)
+    val opacity = contentAlpha.coerceIn(0f, 1f)
+    val tileBackground = state.portraitCollage.background
+        .toComposeColor(state.backgroundColorArgb)
+        .let { color -> color.copy(alpha = color.alpha * opacity) }
     val tileShape = RoundedCornerShape(state.portraitCollage.cornerRadiusDpClamped.dp)
 
     // Task §1: motion is defined for the three-equal-portrait-panel layout only.
@@ -1506,6 +1525,7 @@ internal fun PreparedCollage(
                 contentDescription = null,
                 contentScale = tileScale,
                 alignment = tileAlignment,
+                alpha = opacity,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()

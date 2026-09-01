@@ -33,6 +33,7 @@ internal fun BlurredBackdrop(
     reclaimer: LegacyBitmapReclaimer,
     bitmapLifecycleTracker: BitmapLifecycleTracker,
     onOutOfMemory: () -> Unit,
+    contentAlpha: Float = 1f,
 ) {
     val context = LocalContext.current
     val backdropState = remember(photoId, model) { mutableStateOf<Bitmap?>(null) }
@@ -122,7 +123,7 @@ internal fun BlurredBackdrop(
             bitmap = bitmap.asImageBitmap(),
             contentDescription = null,
             contentScale = ContentScale.Crop,
-            alpha = 0.85f,
+            alpha = 0.85f * contentAlpha.coerceIn(0f, 1f),
             modifier = Modifier.fillMaxSize(),
         )
     }

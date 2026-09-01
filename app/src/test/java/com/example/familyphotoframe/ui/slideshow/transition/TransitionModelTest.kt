@@ -3,6 +3,7 @@ package com.example.familyphotoframe.ui.slideshow.transition
 import androidx.compose.ui.graphics.CompositingStrategy
 import com.example.familyphotoframe.data.settings.TransitionMode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -51,7 +52,7 @@ class TransitionModelTest {
     }
 
     @Test
-    fun crossfadeUsesModulatedAlphaInsteadOfOffscreenBuffers() {
+    fun layeredCrossfadeFallbackUsesModulatedAlphaInsteadOfOffscreenBuffers() {
         val middle = transitionFrame(TransitionMode.CROSSFADE, 0.5f)
 
         assertEquals(
@@ -66,6 +67,13 @@ class TransitionModelTest {
             CompositingStrategy.Auto,
             presentationCompositingStrategy(LayerTransform(alpha = 1f)),
         )
+    }
+
+    @Test
+    fun crossfadeUsesDirectBitmapPaintAlpha() {
+        assertTrue(usesDirectContentAlpha(TransitionMode.CROSSFADE))
+        assertFalse(usesDirectContentAlpha(TransitionMode.SOFT_DISSOLVE))
+        assertFalse(usesDirectContentAlpha(TransitionMode.SOFT_REVEAL))
     }
 
     @Test

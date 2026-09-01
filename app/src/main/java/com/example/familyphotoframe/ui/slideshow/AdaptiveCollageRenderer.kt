@@ -17,7 +17,11 @@ import kotlin.math.roundToInt
 
 /** Static renderer for adaptive mixed-orientation and user-selected layouts. */
 @Composable
-internal fun PreparedAdaptiveCollage(prepared: PreparedSlide.Collage, state: SlideshowUiState) {
+internal fun PreparedAdaptiveCollage(
+    prepared: PreparedSlide.Collage,
+    state: SlideshowUiState,
+    contentAlpha: Float = 1f,
+) {
     val settings = state.portraitCollage
     val gapDp = when (settings.gap) {
         CollageGap.NONE -> 0.dp
@@ -25,7 +29,10 @@ internal fun PreparedAdaptiveCollage(prepared: PreparedSlide.Collage, state: Sli
         CollageGap.MEDIUM -> 8.dp
         CollageGap.LARGE -> 16.dp
     }
-    val background = settings.background.toComposeColor(state.backgroundColorArgb)
+    val opacity = contentAlpha.coerceIn(0f, 1f)
+    val background = settings.background.toComposeColor(state.backgroundColorArgb).let { color ->
+        color.copy(alpha = color.alpha * opacity)
+    }
     val shape = RoundedCornerShape(settings.cornerRadiusDpClamped.dp)
     val contentScale = settings.scaleMode.toContentScale()
     val alignment = settings.alignment.toComposeAlignment()
@@ -39,6 +46,7 @@ internal fun PreparedAdaptiveCollage(prepared: PreparedSlide.Collage, state: Sli
                     contentDescription = null,
                     contentScale = contentScale,
                     alignment = alignment,
+                    alpha = opacity,
                     modifier = Modifier.background(background, shape).clip(shape),
                 )
             }
