@@ -57,6 +57,15 @@ a full-screen `graphicsLayer`. Other spatial effects retain their existing prese
 transforms. Repeat Single crossfade with a fresh build-60 process before returning to
 Normal.
 
+The build 26.60.1 Single crossfade repeat passed after 2.81 hours with 418 selections and
+417 renders and no crash, ANR, or render-ack timeout. Across the 2.31-hour post-warm-up
+window, native PSS changed by only 72 KiB (35 KiB/hour regression) while total PSS fell
+26.56 MiB. Decode and transition counters remained exactly balanced, one tracked bitmap
+remained active, FDs stayed at 42, threads stayed at 30, and 2,044 additional balanced SMB
+content-hash streams completed. API-22 `dumpsys gfxinfo` continued to report zero cached
+layers and zero layer bytes. This passes Single crossfade; return to a fresh-process Normal
+run for the primary Phase 4 gate.
+
 Build `26.46.1` adds aggregate native-allocation attribution and four explicit test modes.
 The counters retain no image, path, or photo identifier. They are intended to determine whether
 the observed native-PSS slope comes from source/decode work, generated bitmaps, or rendering.
