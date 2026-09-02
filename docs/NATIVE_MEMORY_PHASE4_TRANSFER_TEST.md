@@ -118,3 +118,24 @@ the photo as failed, and retries that row after selected media becomes idle. A c
 `contentHashYieldsToMediaTransfers` counter provides privacy-safe hardware evidence. The 64 KiB
 buffer remains unchanged: the problem was concurrent low-priority traffic under degraded source
 throughput, not insufficient application read size.
+
+## Build-61 Huawei supplementary result
+
+After a clean install and fresh SMB configuration, the Android 6 Huawei indexed 28,172 photos
+without an error and ran build `26.61.1` in Normal mode for 12.71 hours. The session remained
+crash- and ANR-free, recorded no render-ack timeout, kept SMB/media/decode/transition ownership
+balanced, held one tracked bitmap, and showed no FD or thread growth. Content hashing yielded to
+playback 779 times. Native PSS was flat after warm-up and the six-hour Java-heap floor gate passed.
+
+Playback nevertheless remained source-throughput limited. Of 783 selections, 85 rendered and 693
+made fresh progress but reached the bounded selected-transfer deadline. Most successful renders
+occurred during the first two hours; later large transfers could not finish inside 58 seconds.
+This is not evidence of an unclosed stream or retry loop, because each cancellation closed its
+stream, released its transfer slot, and advanced to another selection.
+
+The accelerated total-PSS gate reported a positive whole-window slope because Other PSS stepped
+up once by about 12 MiB around hour 6. That component then plateaued: over hours 7–12, native PSS
+was flat, Other PSS regressed at about +9 KiB/hour, and total PSS regressed at about -150 KiB/hour.
+The bounded step does not justify another native-memory change. The Huawei result is supplementary
+only: its low render count cannot satisfy rendering-rate gates and it does not replace the required
+V80 build-61 closure run.
