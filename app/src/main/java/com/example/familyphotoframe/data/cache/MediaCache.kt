@@ -11,13 +11,20 @@ import com.example.familyphotoframe.data.source.OpenPurpose
 import com.example.familyphotoframe.data.source.PhotoItem
 import com.example.familyphotoframe.data.source.PhotoSource
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InterruptedIOException
@@ -25,6 +32,8 @@ import java.net.ConnectException
 import java.net.NoRouteToHostException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.max
 import kotlin.math.min
 
@@ -58,6 +67,7 @@ class MediaCache(
     private val resourceTracker: RuntimeResourceTracker = RuntimeResourceTracker(),
     /** Aggregate native-heap attribution for the bounds-only cache verification decode. */
     private val nativeStageTracker: NativeAllocationStageTracker = NativeAllocationStageTracker(),
+    private val transferCoordinator: RemoteTransferCoordinator = RemoteTransferCoordinator(),
     /** Max cache size in bytes; defaults to spec §16.1 formula. */
     private val maxBytesProvider: (suspend () -> Long)? = null,
 ) {
@@ -66,6 +76,7 @@ class MediaCache(
         suspend fun setCacheKey(stableId: String, cacheKey: String?)
         suspend fun clearCacheKey(cacheKey: String)
         suspend fun clearAllCacheKeys()
+        suspend fun setContentHash(stableId: String, sha256: String, scannedAtEpochMs: Long) {}
     }
 
     enum class FailureStage {
@@ -120,6 +131,12 @@ class MediaCache(
 
     sealed interface ResolveResult {
         data class Ready(val file: File, val cacheHit: Boolean) : ResolveResult
+        /** Transfer made bounded progress and can safely continue from [copiedBytes]. */
+        data class Deferred(
+            val copiedBytes: Long,
+            val expectedBytes: Long,
+            val reason: String,
+        ) : ResolveResult
         data class Failed(
             val stage: FailureStage,
             val exceptionClass: String? = null,
@@ -129,7 +146,8 @@ class MediaCache(
     }
 
     private val dir: File = File(context.filesDir, "mediacache").apply { mkdirs() }
-    private val tmpSuffixCounter = java.util.concurrent.atomic.AtomicLong(0)
+    private val maintenanceScope = CoroutineScope(SupervisorJob() + io)
+    private val activePartialNames = ConcurrentHashMap.newKeySet<String>()
     private class KeyLock {
         val mutex = Mutex()
         var users = 0
@@ -190,17 +208,23 @@ class MediaCache(
                     transferDeadlineMonotonicMs = transferDeadlineMonotonicMs,
                     onTransferTelemetry = onTransferTelemetry,
                 ) { effectiveTransferDeadlineMs ->
-                    resourceTracker.startMediaTransfer().use {
-                        download(
-                            item = item,
-                            source = source,
-                            key = key,
-                            generation = generation,
-                            priority = priority,
-                            transferDeadlineMs = effectiveTransferDeadlineMs,
-                            onStage = onStage,
-                            onTransferTelemetry = onTransferTelemetry,
-                        )
+                    transferCoordinator.withPermit(
+                        sourceId = source.id.value,
+                        priority = MediaTransferPolicy.remotePriority(priority),
+                    ) { permit ->
+                        resourceTracker.startMediaTransfer().use {
+                            download(
+                                item = item,
+                                source = source,
+                                key = key,
+                                generation = generation,
+                                priority = priority,
+                                transferDeadlineMs = effectiveTransferDeadlineMs,
+                                shouldYield = permit::shouldYield,
+                                onStage = onStage,
+                                onTransferTelemetry = onTransferTelemetry,
+                            )
+                        }
                     }
                 }) {
                     is ResolveResult.Ready -> {
@@ -208,9 +232,12 @@ class MediaCache(
                         evictIfNeeded(protectedKeys + key)
                         downloaded
                     }
+                    is ResolveResult.Deferred -> downloaded
                     is ResolveResult.Failed -> downloaded
                 }
             }
+        } catch (deadline: SelectedTransferPermitDeadlineException) {
+            ResolveResult.Deferred(0L, item.sizeBytes.coerceAtLeast(0L), "transfer_slot_deadline")
         } catch (c: CancellationException) {
             throw c
         } catch (e: Exception) {
@@ -304,35 +331,51 @@ class MediaCache(
         generation: Long,
         priority: MediaTransferPriority,
         transferDeadlineMs: Long,
+        shouldYield: () -> Boolean,
         onStage: (ResolveStage) -> Unit,
         onTransferTelemetry: (TransferTelemetry) -> Unit,
     ): ResolveResult {
         val target = File(dir, key)
-        // Unique per call so concurrent downloads of the same key (e.g. current photo also
-        // happens to be the preloaded next photo) never write/delete/rename the same temp file.
-        val tmp = File(dir, "$key.${tmpSuffixCounter.incrementAndGet()}.part")
+        // The per-key mutex makes one deterministic partial safe. Its key already binds
+        // source, path, size and mtime, so changed remote content cannot reuse old bytes.
+        val tmp = File(dir, "$key.part")
         var stage = FailureStage.SOURCE_READ
         var targetCommitted = false
         var indexCommitted = false
-        var copiedBytes = 0L
+        var copiedBytes = validatedPartialLength(tmp, item.sizeBytes)
         val expectedBytes = item.sizeBytes.coerceAtLeast(0L)
+        val progress = TransferProgress(copiedBytes)
+        activePartialNames += tmp.name
         return try {
+            prunePartials(tmp.name)
             if (dir.usableSpace <= RESERVED_FREE_BYTES) {
                 throw CacheStorageReserveException(RESERVED_FREE_BYTES)
             }
-            withTimeout(transferDeadlineMs) {
+            if (expectedBytes <= 0L && copiedBytes > 0L) {
+                tmp.delete()
+                copiedBytes = 0L
+            }
+            if (expectedBytes == 0L || copiedBytes < expectedBytes) runWithTransferBudget(
+                priority = priority,
+                softDeadlineMs = transferDeadlineMs,
+                progress = progress,
+                expectedBytes = expectedBytes,
+            ) {
                 onStage(ResolveStage.STREAM_OPEN)
-                source.openStream(
-                    item,
-                    OpenOptions(
-                        // The source-level deadline stays at the long established limit.
-                        // A selected presentation is cancelled by this coroutine's earlier
-                        // deadline instead, so one slow item is not misclassified as a
-                        // source-wide SMB outage.
-                        timeoutMs = MediaTransferPolicy.BACKGROUND_PRELOAD_DEADLINE_MS,
-                        purpose = OpenPurpose.DISPLAY_CACHE,
-                    ),
-                ).use { input ->
+                val options = OpenOptions(
+                    // The source-level deadline stays at the established limit. A selected
+                    // presentation uses the earlier cache budget without demoting the source.
+                    timeoutMs = MediaTransferPolicy.BACKGROUND_PRELOAD_DEADLINE_MS,
+                    preferOriginal = true,
+                    purpose = OpenPurpose.DISPLAY_CACHE,
+                )
+                var input = source.openStreamFrom(item, copiedBytes, options)
+                if (input == null) {
+                    tmp.delete()
+                    copiedBytes = 0L
+                    input = source.openStream(item, options)
+                }
+                input.use {
                     stage = FailureStage.SOURCE_READ
                     onStage(ResolveStage.TRANSFER_COPY)
                     onTransferTelemetry(
@@ -343,15 +386,18 @@ class MediaCache(
                             deadlineMs = transferDeadlineMs,
                         )
                     )
-                    FileOutputStream(tmp).use { out ->
-                        input.copyToCancellable(
+                    FileOutputStream(tmp, copiedBytes > 0L).use { out ->
+                        it.copyToCancellable(
                             output = out,
                             maxBytes = MAX_ENTRY_BYTES,
                             minimumUsableBytes = RESERVED_FREE_BYTES,
                             usableBytes = { dir.usableSpace },
                             bufferSize = MediaTransferPolicy.REMOTE_COPY_BUFFER_BYTES,
+                            initialBytes = copiedBytes,
+                            shouldYield = shouldYield,
                             onProgress = { copied ->
                                 copiedBytes = copied
+                                progress.record(copied)
                                 onTransferTelemetry(
                                     TransferTelemetry(
                                         state = TransferTelemetryState.PROGRESS,
@@ -377,6 +423,9 @@ class MediaCache(
                         out.fd.sync()
                     }
                 }
+            }
+            if (expectedBytes > 0L && copiedBytes != expectedBytes) {
+                throw java.io.EOFException("remote item length did not match indexed size")
             }
             stage = FailureStage.VERIFY_DECODE
             onStage(ResolveStage.VERIFY_DECODE)
@@ -410,7 +459,32 @@ class MediaCache(
                 indexCommitted = true
                 mirrorCacheKey(item.stableId, key)
             }
+            maintenanceScope.launch {
+                runCatching {
+                    photoIndex?.setContentHash(
+                        item.stableId,
+                        sha256(target),
+                        System.currentTimeMillis(),
+                    )
+                }
+            }
             ResolveResult.Ready(target, cacheHit = false)
+        } catch (deadline: SelectedTransferDeadlineException) {
+            onTransferTelemetry(
+                TransferTelemetry(
+                    state = TransferTelemetryState.SELECTED_DEADLINE,
+                    copiedBytes = copiedBytes,
+                    expectedBytes = expectedBytes,
+                    deadlineMs = transferDeadlineMs,
+                )
+            )
+            val retained = retainPartial(tmp, copiedBytes, expectedBytes)
+            if (targetCommitted && !indexCommitted) target.delete()
+            if (retained) {
+                ResolveResult.Deferred(copiedBytes, expectedBytes, "selected_deadline")
+            } else {
+                ResolveResult.Failed(FailureStage.SOURCE_READ, "SelectedTransferDeadline")
+            }
         } catch (c: CancellationException) {
             if (c is TimeoutCancellationException &&
                 priority == MediaTransferPriority.SELECTED_PRESENTATION
@@ -424,17 +498,158 @@ class MediaCache(
                     )
                 )
             }
-            tmp.delete()
+            val retained = retainPartial(tmp, copiedBytes, expectedBytes)
             if (targetCommitted && !indexCommitted) target.delete()
+            if (c is TimeoutCancellationException &&
+                priority == MediaTransferPriority.SELECTED_PRESENTATION && retained
+            ) {
+                return ResolveResult.Deferred(copiedBytes, expectedBytes, "selected_deadline")
+            }
+            if (c is TimeoutCancellationException &&
+                priority == MediaTransferPriority.PARTIAL_RESUME && retained
+            ) {
+                return ResolveResult.Deferred(copiedBytes, expectedBytes, "resume_slice_deadline")
+            }
+            if (c is RemoteTransferCoordinator.YieldException && retained) {
+                return ResolveResult.Deferred(copiedBytes, expectedBytes, "higher_priority_waiting")
+            }
             throw c
         } catch (e: Exception) {
-            tmp.delete()
+            val retained = stage == FailureStage.SOURCE_READ &&
+                retainPartial(tmp, copiedBytes, expectedBytes)
+            if (!retained) tmp.delete()
             if (targetCommitted && !indexCommitted) target.delete()
             ResolveResult.Failed(
                 stage,
                 e.javaClass.simpleName,
                 sourceLevelFailure = stage == FailureStage.SOURCE_READ && isSourceLevelFailure(e),
             )
+        } finally {
+            activePartialNames -= tmp.name
+        }
+    }
+
+    private class SelectedTransferDeadlineException : java.io.IOException("selected_transfer_deadline")
+    private class SelectedTransferPermitDeadlineException :
+        java.io.IOException("selected_transfer_slot_deadline")
+
+    private class TransferProgress(initialBytes: Long) {
+        private var previousBytes = initialBytes
+        private var previousAtMs = System.nanoTime() / 1_000_000L
+        private var latestBytes = initialBytes
+        private var latestAtMs = previousAtMs
+
+        @Synchronized fun record(bytes: Long) {
+            val now = System.nanoTime() / 1_000_000L
+            if (bytes > latestBytes) {
+                previousBytes = latestBytes
+                previousAtMs = latestAtMs
+                latestBytes = bytes
+                latestAtMs = now
+            }
+        }
+
+        @Synchronized fun extensionMs(expectedBytes: Long): Long {
+            val elapsed = (latestAtMs - previousAtMs).coerceAtLeast(1L)
+            val bytesPerSecond = ((latestBytes - previousBytes).coerceAtLeast(0L) * 1_000L) / elapsed
+            return SelectedTransferDeadlinePolicy.extensionMs(
+                copiedBytes = latestBytes,
+                expectedBytes = expectedBytes,
+                lastProgressAgeMs = System.nanoTime() / 1_000_000L - latestAtMs,
+                recentBytesPerSecond = bytesPerSecond,
+            )
+        }
+    }
+
+    private suspend fun runWithTransferBudget(
+        priority: MediaTransferPriority,
+        softDeadlineMs: Long,
+        progress: TransferProgress,
+        expectedBytes: Long,
+        block: suspend () -> Unit,
+    ) {
+        if (priority != MediaTransferPriority.SELECTED_PRESENTATION) {
+            withTimeout(softDeadlineMs) { block() }
+            return
+        }
+        coroutineScope {
+            val operation = async { block() }
+            try {
+                val completedAtSoftBoundary = withTimeoutOrNull(softDeadlineMs) {
+                    operation.await()
+                    true
+                } == true
+                if (completedAtSoftBoundary) return@coroutineScope
+                val extensionMs = progress.extensionMs(expectedBytes)
+                val completedDuringExtension = extensionMs > 0L &&
+                    withTimeoutOrNull(extensionMs) {
+                        operation.await()
+                        true
+                    } == true
+                if (!completedDuringExtension) {
+                    operation.cancelAndJoin()
+                    throw SelectedTransferDeadlineException()
+                }
+            } finally {
+                if (!operation.isCompleted) operation.cancelAndJoin()
+            }
+        }
+    }
+
+    private fun validatedPartialLength(file: File, expectedBytes: Long): Long {
+        if (!file.isFile) return 0L
+        val length = file.length()
+        val valid = expectedBytes > 0L && length in 1L..expectedBytes &&
+            length <= MAX_ENTRY_BYTES &&
+            System.currentTimeMillis() - file.lastModified() <= PARTIAL_TTL_MS
+        if (!valid) {
+            file.delete()
+            return 0L
+        }
+        return length
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered(MediaTransferPolicy.REMOTE_COPY_BUFFER_BYTES).use { input ->
+            val buffer = ByteArray(MediaTransferPolicy.REMOTE_COPY_BUFFER_BYTES)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count > 0) digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+    }
+
+    private fun retainPartial(file: File, copiedBytes: Long, expectedBytes: Long): Boolean {
+        val valid = expectedBytes > 0L && copiedBytes in 1 until expectedBytes &&
+            file.isFile && file.length() == copiedBytes && copiedBytes <= MAX_ENTRY_BYTES
+        if (valid) file.setLastModified(System.currentTimeMillis()) else file.delete()
+        return valid
+    }
+
+    private suspend fun prunePartials(currentName: String) = maintenanceLock.withLock {
+        val now = System.currentTimeMillis()
+        val candidates = dir.listFiles().orEmpty()
+            .filter { file ->
+                file.name.endsWith(".part") && file.name != currentName &&
+                    file.name !in activePartialNames
+            }
+        candidates.filter { file ->
+            !PARTIAL_FILE_NAME.matches(file.name) || file.length() !in 1L..MAX_ENTRY_BYTES ||
+                now - file.lastModified() > PARTIAL_TTL_MS
+        }.forEach(File::delete)
+
+        val committedBytes = dao.totalSizeBytes()
+        val cacheMax = (maxBytesProvider?.invoke() ?: defaultMaxBytes(dir, committedBytes))
+            .coerceAtLeast(0L)
+        val partialMax = min(MAX_PARTIAL_BYTES, cacheMax / 4L)
+        val retained = candidates.filter(File::isFile).sortedByDescending(File::lastModified)
+        var kept = 0L
+        retained.forEach { file ->
+            val size = file.length().coerceAtLeast(0L)
+            if (kept > partialMax - size) file.delete() else kept += size
         }
     }
 
@@ -473,7 +688,7 @@ class MediaCache(
                         deadlineMs = selectedDeadlineMs,
                     )
                 )
-                throw timeout
+                throw SelectedTransferPermitDeadlineException()
             }
         } else {
             transferSlots.acquire()
@@ -563,7 +778,13 @@ class MediaCache(
                     if (page.size < RECONCILIATION_BATCH_SIZE) break
                 }
                 dir.listFiles()?.forEach { file ->
-                    val indexed = if (file.name.endsWith(".part")) null else dao.get(file.name)
+                    if (file.name.endsWith(".part")) {
+                        val validName = PARTIAL_FILE_NAME.matches(file.name)
+                        val validAge = System.currentTimeMillis() - file.lastModified() <= PARTIAL_TTL_MS
+                        if (!validName || !validAge || file.length() !in 1L..MAX_ENTRY_BYTES) file.delete()
+                        return@forEach
+                    }
+                    val indexed = dao.get(file.name)
                     val ownsThisFile = indexed != null && indexed.verifiedDecodeOk &&
                         File(indexed.localFilePathPrivate).absoluteFile == file.absoluteFile
                     if (!ownsThisFile) file.delete()
@@ -616,6 +837,9 @@ class MediaCache(
         private const val EMPTY_PROTECTED_SENTINEL = "__never_a_cache_key__"
         private const val MAX_ENTRY_BYTES = 256L * MB
         private const val RESERVED_FREE_BYTES = 512L * MB
+        private const val PARTIAL_TTL_MS = 7L * 24L * 60L * 60L * 1_000L
+        private const val MAX_PARTIAL_BYTES = 256L * MB
+        private val PARTIAL_FILE_NAME = Regex("^[0-9a-fA-F]{64}\\.part$")
         private fun subtractSize(total: Long, removed: Long): Long {
             val safeRemoved = removed.coerceAtLeast(0L)
             return if (safeRemoved >= total) 0L else total - safeRemoved

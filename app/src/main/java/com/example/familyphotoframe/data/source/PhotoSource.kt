@@ -153,6 +153,16 @@ interface PhotoSource {
     suspend fun openStream(item: PhotoItem, options: OpenOptions = OpenOptions()): InputStream
 
     /**
+     * Open original bytes at an exact offset, or return null when this source cannot seek.
+     * Implementations must never return a stream positioned at a different offset.
+     */
+    suspend fun openStreamFrom(
+        item: PhotoItem,
+        offsetBytes: Long,
+        options: OpenOptions = OpenOptions(),
+    ): InputStream? = if (offsetBytes == 0L) openStream(item, options) else null
+
+    /**
      * Releases any long-lived transport this source owns.
      *
      * Sources that open a connection per call hold nothing between calls, so the default

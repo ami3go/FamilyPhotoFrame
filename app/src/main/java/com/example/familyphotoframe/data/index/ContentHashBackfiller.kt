@@ -9,6 +9,7 @@ import com.example.familyphotoframe.data.source.OpenOptions
 import com.example.familyphotoframe.data.source.PhotoItem
 import com.example.familyphotoframe.data.source.PhotoSource
 import com.example.familyphotoframe.data.source.SourceId
+import com.example.familyphotoframe.data.cache.RemoteTransferCoordinator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +40,7 @@ class ContentHashBackfiller(
     private val batchSize: Int = 32,
     private val shouldYieldToMediaTransfer: () -> Boolean = { false },
     private val onYieldToMediaTransfer: () -> Unit = {},
+    private val transferCoordinator: RemoteTransferCoordinator = RemoteTransferCoordinator(),
 ) {
     data class BatchResult(val indexed: Int, val failed: Int, val remainingMayExist: Boolean)
 
@@ -108,15 +110,26 @@ class ContentHashBackfiller(
                     withContext(io) {
                         val md = MessageDigest.getInstance("SHA-256")
                         val item = row.toPhotoItem()
-                        val result = source.openStream(
-                            item,
-                            OpenOptions(
-                                timeoutMs = timeoutMs,
-                                preferOriginal = true,
-                                purpose = com.example.familyphotoframe.data.source.OpenPurpose.CONTENT_HASH,
-                            ),
-                        ).use { input ->
-                            digestContentStream(input, md, shouldYield = shouldYieldToMediaTransfer)
+                        val result = transferCoordinator.withPermit(
+                            sourceId = source.id.value,
+                            priority = RemoteTransferCoordinator.Priority.CONTENT_HASH,
+                        ) { permit ->
+                            source.openStream(
+                                item,
+                                OpenOptions(
+                                    timeoutMs = timeoutMs,
+                                    preferOriginal = true,
+                                    purpose = com.example.familyphotoframe.data.source.OpenPurpose.CONTENT_HASH,
+                                ),
+                            ).use { input ->
+                                digestContentStream(
+                                    input,
+                                    md,
+                                    shouldYield = {
+                                        shouldYieldToMediaTransfer() || permit.shouldYield()
+                                    },
+                                )
+                            }
                         }
                         if (row.sizeBytes > 0L && result.bytesRead != row.sizeBytes) null
                         else result.sha256
@@ -132,6 +145,11 @@ class ContentHashBackfiller(
             } catch (c: CancellationException) {
                 throw c
             } catch (_: ContentHashYieldException) {
+                onYieldToMediaTransfer()
+                awaitMediaTransferIdle(recordYield = false)
+                // Retry the same row without recording an I/O failure. Selected media
+                // owns display latency; hashing is durable background enrichment.
+            } catch (_: RemoteTransferCoordinator.YieldException) {
                 onYieldToMediaTransfer()
                 awaitMediaTransferIdle(recordYield = false)
                 // Retry the same row without recording an I/O failure. Selected media

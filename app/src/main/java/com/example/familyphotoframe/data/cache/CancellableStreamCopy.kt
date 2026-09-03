@@ -25,23 +25,29 @@ internal suspend fun InputStream.copyToCancellable(
     minimumUsableBytes: Long,
     usableBytes: () -> Long,
     bufferSize: Int = DEFAULT_BUFFER_SIZE,
+    /** Bytes already present in a validated resumable partial. */
+    initialBytes: Long = 0L,
+    /** Checked between bounded reads so selected playback can preempt background work. */
+    shouldYield: () -> Boolean = { false },
     /** Called at a bounded cadence; it must not retain the supplied transfer bytes. */
     onProgress: (copiedBytes: Long) -> Unit = {},
     /** Invoked after cancellation asks the source stream to close. */
     onCancellationClose: (copiedBytes: Long, closeSucceeded: Boolean) -> Unit = { _, _ -> },
 ): Long = suspendCancellableCoroutine { continuation ->
-    val copiedForCancellation = AtomicLong(0L)
+    require(initialBytes >= 0L) { "initialBytes must be non-negative" }
+    val copiedForCancellation = AtomicLong(initialBytes)
     continuation.invokeOnCancellation {
         val closeSucceeded = runCatching { close() }.isSuccess
         runCatching { onCancellationClose(copiedForCancellation.get(), closeSucceeded) }
     }
     val buffer = ByteArray(bufferSize)
-    var copied = 0L
+    var copied = initialBytes
     var bytesUntilSpaceCheck = 0L
     var lastProgressBytes = 0L
     var lastProgressAtMs = elapsedNowMs()
     try {
         while (continuation.isActive) {
+            if (shouldYield()) throw RemoteTransferCoordinator.YieldException()
             if (bytesUntilSpaceCheck <= 0L) {
                 if (usableBytes() <= minimumUsableBytes) {
                     throw CacheStorageReserveException(minimumUsableBytes)

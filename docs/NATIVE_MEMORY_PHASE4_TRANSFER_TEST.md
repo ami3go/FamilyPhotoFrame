@@ -139,3 +139,23 @@ was flat, Other PSS regressed at about +9 KiB/hour, and total PSS regressed at a
 The bounded step does not justify another native-memory change. The Huawei result is supplementary
 only: its low render count cannot satisfy rendering-rate gates and it does not replace the required
 V80 build-61 closure run.
+
+## Build-62 resumable transport foundation
+
+Build `26.62.1` addresses the remaining slow-link waste without increasing the fixed 64 KiB read
+buffer. Remote payload reads are serialized per source with selected presentation ahead of partial
+resume, preload, and content hashing. Lower-priority copies check for a higher-priority waiter after
+every bounded read and close cooperatively, preventing simultaneous jCIFS request chains from
+recreating the allocator high-water pattern seen in build 60.
+
+Selected downloads now retain a private deterministic `.part` file whose key already includes the
+source, path, size, and modification time. SMB resumes at that exact byte offset; invalid, oversized,
+or seven-day-old partials are discarded, partial storage is capped, and the completed file still
+requires exact length, bounds decode, and atomic commit. The 58-second boundary may extend by at
+most eight seconds only when the copy is at least 80% complete, progress is fresh, and recent
+throughput predicts completion inside that extension. Other progress is deferred and preserved.
+
+Exact duplicate hashes for remote photos are now calculated asynchronously from verified local
+cache files. Source-wide remote hashing is deferred during normal remote playback, avoiding a
+second full NAS read of every large original. Duplicate suppression remains eventually consistent
+as photos enter the cache.

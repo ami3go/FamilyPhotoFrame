@@ -11,11 +11,14 @@ package com.example.familyphotoframe.data.cache
  */
 enum class MediaTransferPriority {
     SELECTED_PRESENTATION,
+    PARTIAL_RESUME,
     BACKGROUND_PRELOAD,
 }
 
 internal object MediaTransferPolicy {
     const val SELECTED_PRESENTATION_DEADLINE_MS = 58_000L
+    const val SELECTED_PRESENTATION_MAX_EXTENSION_MS = 8_000L
+    const val PARTIAL_RESUME_SLICE_MS = 30_000L
     const val BACKGROUND_PRELOAD_DEADLINE_MS = 2L * 60L * 1_000L
 
     /**
@@ -28,6 +31,17 @@ internal object MediaTransferPolicy {
 
     fun deadlineMs(priority: MediaTransferPriority): Long = when (priority) {
         MediaTransferPriority.SELECTED_PRESENTATION -> SELECTED_PRESENTATION_DEADLINE_MS
+        MediaTransferPriority.PARTIAL_RESUME -> PARTIAL_RESUME_SLICE_MS
         MediaTransferPriority.BACKGROUND_PRELOAD -> BACKGROUND_PRELOAD_DEADLINE_MS
     }
+
+    fun remotePriority(priority: MediaTransferPriority): RemoteTransferCoordinator.Priority =
+        when (priority) {
+            MediaTransferPriority.SELECTED_PRESENTATION ->
+                RemoteTransferCoordinator.Priority.SELECTED_MEDIA
+            MediaTransferPriority.PARTIAL_RESUME ->
+                RemoteTransferCoordinator.Priority.PARTIAL_RESUME
+            MediaTransferPriority.BACKGROUND_PRELOAD ->
+                RemoteTransferCoordinator.Priority.PRELOAD
+        }
 }

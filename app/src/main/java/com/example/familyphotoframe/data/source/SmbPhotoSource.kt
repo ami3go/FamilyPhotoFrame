@@ -214,13 +214,24 @@ class SmbPhotoSource(
         }
     }.flowOn(io)
 
-    override suspend fun openStream(item: PhotoItem, options: OpenOptions): InputStream = withContext(io) {
+    override suspend fun openStream(item: PhotoItem, options: OpenOptions): InputStream =
+        openStreamFrom(item, 0L, options)!!
+
+    override suspend fun openStreamFrom(
+        item: PhotoItem,
+        offsetBytes: Long,
+        options: OpenOptions,
+    ): InputStream = withContext(io) {
+        require(offsetBytes >= 0L) { "offsetBytes must be non-negative" }
         val lease = contextOwner.acquire()
         var input: InputStream? = null
         var resourceLease: RuntimeResourceTracker.Lease? = null
         try {
             val openedInput = SmbFile(item.openToken, lease.value.context).inputStream
             input = openedInput
+            if (offsetBytes > 0L && openedInput.skip(offsetBytes) != offsetBytes) {
+                throw java.io.EOFException("SMB stream could not seek to requested offset")
+            }
             val openedResourceLease = resourceTracker.openSmbStream(
                 purpose = options.purpose.toTrackerPurpose(),
                 deadlineMs = options.timeoutMs,

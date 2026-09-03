@@ -80,4 +80,22 @@ class CancellableStreamCopyTest {
         assertEquals(64L, copied)
         assertEquals(listOf(64L), updates)
     }
+
+    @Test fun resumedCopyReportsAndLimitsCumulativeBytes() = runBlocking {
+        val output = ByteArrayOutputStream().apply { write(ByteArray(32) { 1 }) }
+        val updates = mutableListOf<Long>()
+        val copied = ByteArray(32) { 2 }.inputStream().copyToCancellable(
+            output,
+            maxBytes = 64,
+            minimumUsableBytes = 0,
+            usableBytes = { Long.MAX_VALUE },
+            bufferSize = 16,
+            initialBytes = 32,
+            onProgress = { updates += it },
+        )
+
+        assertEquals(64L, copied)
+        assertEquals(64, output.size())
+        assertEquals(listOf(64L), updates)
+    }
 }

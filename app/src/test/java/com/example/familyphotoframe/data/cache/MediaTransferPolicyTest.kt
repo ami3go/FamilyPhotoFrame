@@ -22,4 +22,8 @@ class MediaTransferPolicyTest {
             MediaTransferPolicy.deadlineMs(MediaTransferPriority.BACKGROUND_PRELOAD),
         )
     }
+
+    @Test fun resumableWorkUsesShortPreemptibleSlices() {
+        assertEquals(30_000L, MediaTransferPolicy.deadlineMs(MediaTransferPriority.PARTIAL_RESUME))
+    }
 }

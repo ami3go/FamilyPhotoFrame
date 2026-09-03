@@ -9,6 +9,7 @@ import coil.ImageLoader
 import coil.memory.MemoryCache
 import com.example.familyphotoframe.data.cache.LocalThumbnailCache
 import com.example.familyphotoframe.data.cache.MediaCache
+import com.example.familyphotoframe.data.cache.RemoteTransferCoordinator
 import com.example.familyphotoframe.data.db.AppDatabase
 import com.example.familyphotoframe.data.db.PhotoDao
 import com.example.familyphotoframe.data.diagnostics.DiagnosticsLog
@@ -136,6 +137,9 @@ class ServiceLocator(private val appContext: Context) {
 
     /** Native/provider ownership counters shared by SMB, cache and runtime sampling. */
     val runtimeResourceTracker: RuntimeResourceTracker = RuntimeResourceTracker()
+
+    /** One payload-heavy remote reader per source, with selected playback first. */
+    val remoteTransferCoordinator: RemoteTransferCoordinator = RemoteTransferCoordinator()
 
     /** Bitmap lifetime counters. This tracker retains no Bitmap references. */
     val bitmapLifecycleTracker: BitmapLifecycleTracker = BitmapLifecycleTracker()
@@ -426,9 +430,16 @@ class ServiceLocator(private val appContext: Context) {
                     photoDao.clearCacheKey(cacheKey)
 
                 override suspend fun clearAllCacheKeys() = photoDao.clearAllCacheKeys()
+
+                override suspend fun setContentHash(
+                    stableId: String,
+                    sha256: String,
+                    scannedAtEpochMs: Long,
+                ) = photoDao.updateContentHashByStableId(stableId, sha256, scannedAtEpochMs)
             },
             resourceTracker = runtimeResourceTracker,
             nativeStageTracker = nativeAllocationStageTracker,
+            transferCoordinator = remoteTransferCoordinator,
         )
     }
 
@@ -463,6 +474,7 @@ class ServiceLocator(private val appContext: Context) {
             shouldYieldToMediaTransfer = runtimeResourceTracker::hasActiveMediaTransfer,
             onYieldToMediaTransfer =
                 runtimeResourceTracker::recordContentHashYieldToMediaTransfer,
+            transferCoordinator = remoteTransferCoordinator,
         )
     }
 

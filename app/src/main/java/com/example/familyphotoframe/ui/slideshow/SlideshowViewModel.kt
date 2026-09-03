@@ -1888,8 +1888,14 @@ class SlideshowViewModel(
                 _state.update {
                     it.copy(transientNotice = appContext.getString(R.string.msg_scan_incomplete))
                 }
-            } else {
+            } else if (source.type.isLocal) {
                 scheduleContentHashBackfill(source)
+            } else {
+                diagnostics.log(
+                    DiagnosticsLog.Category.SCAN,
+                    "REMOTE_CONTENT_HASH_DEFERRED_TO_CACHE",
+                    "sourceKind" to diagnosticSourceKind(source),
+                )
             }
             return ScanResult(
                 total = total,
@@ -2707,6 +2713,16 @@ class SlideshowViewModel(
 
         return when (cacheResult) {
             is MediaCache.ResolveResult.Ready -> PhotoModelResolution.Ready(cacheResult.file)
+            is MediaCache.ResolveResult.Deferred -> PhotoModelResolution.Failed(
+                DecodeFailure(
+                    photoId = display.id,
+                    sourceId = display.sourceId,
+                    fileExtension = extension,
+                    mimeType = display.mimeType,
+                    stage = DecodeFailureStage.SOURCE_READ,
+                    reason = "transfer_deferred",
+                )
+            )
             is MediaCache.ResolveResult.Failed -> PhotoModelResolution.Failed(
                 DecodeFailure(
                     photoId = display.id,
@@ -2808,6 +2824,7 @@ class SlideshowViewModel(
                 }
                 return persist(dimensions)
             }
+            is MediaCache.ResolveResult.Deferred -> Unit
             is MediaCache.ResolveResult.Failed -> Unit
         }
 
