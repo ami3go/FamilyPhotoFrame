@@ -159,3 +159,24 @@ Exact duplicate hashes for remote photos are now calculated asynchronously from 
 cache files. Source-wide remote hashing is deferred during normal remote playback, avoiding a
 second full NAS read of every large original. Duplicate suppression remains eventually consistent
 as photos enter the cache.
+
+## Build-63 slow-link playback
+
+Build `26.63.1` layers cache-aware presentation over the build-62 transport foundation. Three
+progress-making selected-transfer deferrals inside five minutes activate slow-link mode when the
+single remote primary already has at least two verified cached photos. Presentation then selects
+only committed cache entries, while one incomplete photo resumes in 30-second slices after a
+two-second idle grace. A selected request always preempts that continuation.
+
+The in-memory continuation queue is capped at 32 items and prefers the partial with the highest
+completion ratio. The bounded partial-file store retains downloaded bytes across process restarts,
+and each verified completion becomes immediately visible to the engine's cached pool. Slow-link
+mode exits after
+three completed remote items and ten minutes without another selected deadline. True no-progress
+transport failures still use normal source
+recovery; slow but advancing transfers are not misclassified as source outages.
+
+Hardware validation must separately prove that cached presentation remains continuous while at
+least one formerly deferred large file completes, and that SMB streams, media transfers, native
+PSS, total PSS, FDs, and threads remain bounded. Huawei evidence is supplementary; V80 remains the
+only Phase 4 closure authority.

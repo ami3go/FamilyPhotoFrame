@@ -179,8 +179,20 @@ sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/engine/RenderAckTimeoutPolicy.kt \
   > "$PURE/RenderAckTimeoutPolicy.kt"
 sed 's/^package .*//' \
+  app/src/main/java/com/example/familyphotoframe/data/cache/RemoteTransferCoordinator.kt \
+  > "$PURE/RemoteTransferCoordinator.kt"
+sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/data/cache/MediaTransferPolicy.kt \
   > "$PURE/MediaTransferPolicy.kt"
+sed 's/^package .*//' \
+  app/src/main/java/com/example/familyphotoframe/data/cache/SelectedTransferDeadlinePolicy.kt \
+  > "$PURE/SelectedTransferDeadlinePolicy.kt"
+sed 's/^package .*//' \
+  app/src/main/java/com/example/familyphotoframe/data/cache/PartialCachePolicy.kt \
+  > "$PURE/PartialCachePolicy.kt"
+sed 's/^package .*//' \
+  app/src/main/java/com/example/familyphotoframe/domain/engine/SlowLinkPlaybackPolicy.kt \
+  > "$PURE/SlowLinkPlaybackPolicy.kt"
 sed 's/^package .*//' \
   app/src/main/java/com/example/familyphotoframe/domain/engine/OnThisDayPlaybackPolicy.kt \
   > "$PURE/OnThisDayPlaybackPolicy.kt"

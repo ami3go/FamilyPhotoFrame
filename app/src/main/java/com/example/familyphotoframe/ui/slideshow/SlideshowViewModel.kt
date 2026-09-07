@@ -106,6 +106,7 @@ import com.example.familyphotoframe.domain.engine.RecoveryPolicy
 import com.example.familyphotoframe.domain.engine.SourceRecoveryCoordinator
 import com.example.familyphotoframe.domain.engine.SourcePoolPolicy
 import com.example.familyphotoframe.domain.engine.SourceStatusPolicy
+import com.example.familyphotoframe.domain.engine.SlowLinkPlaybackPolicy
 import com.example.familyphotoframe.util.ImageFormatSupport
 import com.example.familyphotoframe.web.WebServerController
 import com.example.familyphotoframe.web.WebPreviewCaptureRequest
@@ -266,6 +267,18 @@ class SlideshowViewModel(
     private val scanFlights = mutableMapOf<String, ScanFlight>()
     /** One cancellable low-priority content-hash indexer per source. */
     private val contentHashJobs = mutableMapOf<String, Job>()
+    private data class PendingPartialResume(
+        val item: PhotoItem,
+        val source: PhotoSource,
+        val copiedBytes: Long,
+        val expectedBytes: Long,
+        val updatedAtMs: Long,
+    )
+    private val pendingPartialResumes = linkedMapOf<String, PendingPartialResume>()
+    private var partialResumeJob: Job? = null
+    private var slowLinkExitJob: Job? = null
+    private var slowLinkState = SlowLinkPlaybackPolicy.State()
+    @Volatile private var slowLinkCachedOnlySourceId: String? = null
 
     /**
      * Remote playback and background-backfill sources. One registry owns promotion,
@@ -390,6 +403,9 @@ class SlideshowViewModel(
         recoveryRuntimes.clear()
         contentHashJobs.values.forEach { it.cancel() }
         contentHashJobs.clear()
+        partialResumeJob?.cancel()
+        slowLinkExitJob?.cancel()
+        pendingPartialResumes.clear()
         // The sampler re-posts itself every frame, so leaving it running would keep this
         // collector (and its sample buffer) reachable from the Choreographer queue for the
         // life of the process, with a fresh one added on each recreation.
@@ -602,6 +618,13 @@ class SlideshowViewModel(
         healthJob = null
         exifJob = null
         contentHashJob = null
+        partialResumeJob?.cancelAndJoin()
+        partialResumeJob = null
+        slowLinkExitJob?.cancelAndJoin()
+        slowLinkExitJob = null
+        pendingPartialResumes.clear()
+        slowLinkState = SlowLinkPlaybackPolicy.State()
+        slowLinkCachedOnlySourceId = null
         frameStats.stop()
         frameStatsJob?.cancelAndJoin()
         frameStatsJob = null
@@ -1078,6 +1101,13 @@ class SlideshowViewModel(
         recoveryRuntimes.values.forEach { it.wake.close() }
         recoveryRuntimes.clear()
         cancelAndJoinSourceConsumingJobs()
+        partialResumeJob?.cancelAndJoin()
+        partialResumeJob = null
+        slowLinkExitJob?.cancelAndJoin()
+        slowLinkExitJob = null
+        pendingPartialResumes.clear()
+        slowLinkState = SlowLinkPlaybackPolicy.State()
+        slowLinkCachedOnlySourceId = null
         releaseResolvedSources()
         primaryPoolIds.clear()
         unavailablePoolIds.clear()
@@ -1663,10 +1693,13 @@ class SlideshowViewModel(
                     it.copy(surface = Surface.Playing, indexingFound = null, stalePlayback = false)
                 }
                 val primary = playlistFilteredIds(plan.primaryIds)
+                val slowCachedOnly = slowLinkCachedOnlySourceId?.let { slowSource ->
+                    primary.size == 1 && primary.single() == slowSource
+                } == true
                 val fallback = if (activePlaylistSourceFilter.isEmpty()) listOf(ServiceLocator.SOURCE_FALLBACK) else emptyList()
                 engine.configure(
                     primary, fallback,
-                    currentIntervalSeconds(), currentMaxFailures(), primaryCachedOnly = false,
+                    currentIntervalSeconds(), currentMaxFailures(), primaryCachedOnly = slowCachedOnly,
                     unavailableSourceIds = playlistUnavailableSourceIds(),
                     exhaustedUnavailableSourceIds = playlistExhaustedSourceIds(),
                 )
@@ -1703,6 +1736,15 @@ class SlideshowViewModel(
      * which is exactly the previous behaviour.
      */
     private suspend fun configureForUnreachable(sourceId: String, label: String) {
+        if (slowLinkCachedOnlySourceId == sourceId) {
+            slowLinkCachedOnlySourceId = null
+            slowLinkState = SlowLinkPlaybackPolicy.State()
+            pendingPartialResumes.entries.removeAll { it.value.source.id.value == sourceId }
+            partialResumeJob?.cancelAndJoin()
+            partialResumeJob = null
+            slowLinkExitJob?.cancelAndJoin()
+            slowLinkExitJob = null
+        }
         remotePrimarySourceId = sourceId
         val policy = lastSettings?.onUnreachable ?: UnreachablePolicy.FALLBACK_SAMPLES
         val cached = if (policy == UnreachablePolicy.STALE_CACHE) {
@@ -1977,6 +2019,169 @@ class SlideshowViewModel(
                 "remaining" to remaining.toString(),
             )
         }
+    }
+
+    /** Queue a progress-making timeout for low-priority, byte-exact continuation. */
+    private fun schedulePartialResume(
+        item: PhotoItem,
+        source: PhotoSource,
+        deferred: MediaCache.ResolveResult.Deferred,
+    ) {
+        viewModelScope.launch {
+            val now = SystemClock.elapsedRealtime()
+            pendingPartialResumes[item.stableId] = PendingPartialResume(
+                item = item,
+                source = source,
+                copiedBytes = deferred.copiedBytes,
+                expectedBytes = deferred.expectedBytes,
+                updatedAtMs = now,
+            )
+            while (pendingPartialResumes.size > MAX_PENDING_PARTIAL_RESUMES) {
+                val leastUseful = pendingPartialResumes.values.minWithOrNull(
+                    compareBy<PendingPartialResume> { it.completionRatio() }
+                        .thenByDescending { it.updatedAtMs }
+                ) ?: break
+                pendingPartialResumes.remove(leastUseful.item.stableId)
+            }
+            val cached = cancellableOrDefault(0) {
+                services.photoDao.cachedCount(
+                    listOf(source.id.value),
+                    currentMaxFailures(),
+                    if (services.allowHeifPlayback) 1 else 0,
+                )
+            }
+            val previous = slowLinkState
+            slowLinkState = SlowLinkPlaybackPolicy.onProgressDeadline(previous, now, cached)
+            if (!previous.active && slowLinkState.active &&
+                !setSlowLinkCachedPlayback(source.id.value, enabled = true)
+            ) {
+                slowLinkState = slowLinkState.copy(active = false)
+            }
+            if (slowLinkState.active) ensurePartialResumeWorker()
+        }
+    }
+
+    private fun ensurePartialResumeWorker() {
+        if (!slowLinkState.active || partialResumeJob?.isActive == true ||
+            pendingPartialResumes.isEmpty()
+        ) return
+        partialResumeJob = viewModelScope.launch {
+            try {
+                while (isActive && slowLinkState.active && pendingPartialResumes.isNotEmpty()) {
+                    // Let the just-selected presentation acquire the source first.
+                    delay(SLOW_LINK_RESUME_IDLE_GRACE_MS)
+                    val pending = pendingPartialResumes.values.maxWithOrNull(
+                        compareBy<PendingPartialResume> { it.completionRatio() }
+                            .thenBy { -it.updatedAtMs }
+                    ) ?: break
+                    val protectedKeys = setOfNotNull(
+                        _state.value.engine.current?.stableId,
+                        _state.value.engine.next?.stableId,
+                    ).filter(String::isNotEmpty).toSet()
+                    when (val result = services.mediaCache.resolve(
+                        item = pending.item,
+                        source = pending.source,
+                        protectedKeys = protectedKeys,
+                        priority = com.example.familyphotoframe.data.cache.MediaTransferPriority.PARTIAL_RESUME,
+                    )) {
+                        is MediaCache.ResolveResult.Ready -> {
+                            pendingPartialResumes.remove(pending.item.stableId)
+                            engine.invalidatePlaybackPool()
+                            recordSlowLinkRemoteCompletion(pending.source.id.value)
+                            diagnostics.log(
+                                DiagnosticsLog.Category.SOURCE,
+                                "SLOW_LINK_PARTIAL_COMPLETED",
+                                "sourceKind" to diagnosticSourceKind(pending.source),
+                            )
+                        }
+                        is MediaCache.ResolveResult.Deferred -> {
+                            pendingPartialResumes[pending.item.stableId] = pending.copy(
+                                copiedBytes = result.copiedBytes,
+                                expectedBytes = result.expectedBytes,
+                                updatedAtMs = SystemClock.elapsedRealtime(),
+                            )
+                        }
+                        is MediaCache.ResolveResult.Failed -> {
+                            pendingPartialResumes.remove(pending.item.stableId)
+                            diagnostics.log(
+                                DiagnosticsLog.Category.SOURCE,
+                                "SLOW_LINK_PARTIAL_FAILED",
+                                "sourceKind" to diagnosticSourceKind(pending.source),
+                                "stage" to result.stage.name,
+                            )
+                        }
+                    }
+                }
+            } finally {
+                val shouldRestart = isActive && slowLinkState.active &&
+                    pendingPartialResumes.isNotEmpty()
+                partialResumeJob = null
+                if (shouldRestart) ensurePartialResumeWorker()
+            }
+        }
+    }
+
+    private fun PendingPartialResume.completionRatio(): Double =
+        if (expectedBytes > 0L) copiedBytes.toDouble() / expectedBytes else 0.0
+
+    private suspend fun recordSlowLinkRemoteCompletion(sourceId: String) {
+        val previous = slowLinkState
+        slowLinkState = SlowLinkPlaybackPolicy.onRemoteCompletion(
+            previous,
+            SystemClock.elapsedRealtime(),
+        )
+        if (previous.active && !slowLinkState.active) {
+            setSlowLinkCachedPlayback(sourceId, enabled = false)
+            return
+        }
+        if (slowLinkState.active &&
+            slowLinkState.completionsSinceDeadline >=
+            SlowLinkPlaybackPolicy.HEALTHY_COMPLETIONS_TO_EXIT
+        ) {
+            slowLinkExitJob?.cancel()
+            slowLinkExitJob = viewModelScope.launch {
+                val remaining = (
+                    slowLinkState.lastDeadlineMs + SlowLinkPlaybackPolicy.DEADLINE_FREE_EXIT_MS -
+                        SystemClock.elapsedRealtime()
+                    ).coerceAtLeast(0L)
+                delay(remaining)
+                val beforeTimer = slowLinkState
+                slowLinkState = SlowLinkPlaybackPolicy.onIdleTimer(
+                    beforeTimer,
+                    SystemClock.elapsedRealtime(),
+                )
+                if (beforeTimer.active && !slowLinkState.active) {
+                    setSlowLinkCachedPlayback(sourceId, enabled = false)
+                }
+            }
+        }
+    }
+
+    /** Cache-only slow-link mode is safe only when this source is the whole primary pool. */
+    private suspend fun setSlowLinkCachedPlayback(sourceId: String, enabled: Boolean): Boolean {
+        if (enabled && (primaryPoolIds.size != 1 || sourceId !in primaryPoolIds)) return false
+        if (!enabled && slowLinkCachedOnlySourceId != sourceId) return false
+        slowLinkCachedOnlySourceId = sourceId.takeIf { enabled }
+        val primary = playlistFilteredIds(primaryPoolIds.toList())
+        val fallback =
+            if (activePlaylistSourceFilter.isEmpty()) listOf(ServiceLocator.SOURCE_FALLBACK)
+            else emptyList()
+        engine.configure(
+            primary,
+            fallback,
+            currentIntervalSeconds(),
+            currentMaxFailures(),
+            primaryCachedOnly = enabled,
+            unavailableSourceIds = playlistUnavailableSourceIds(),
+            exhaustedUnavailableSourceIds = playlistExhaustedSourceIds(),
+        )
+        diagnostics.log(
+            DiagnosticsLog.Category.SOURCE,
+            "SLOW_LINK_CACHE_PLAYBACK",
+            "sourceKind" to diagnosticSourceKind(sourceId),
+            "state" to if (enabled) "ENTERED" else "EXITED",
+        )
+        return true
     }
 
     /** Scan filters from settings, falling back to the built-in defaults (spec §20). */
@@ -2682,7 +2887,10 @@ class SlideshowViewModel(
             ModelResolutionPriority.BACKGROUND_PRELOAD ->
                 com.example.familyphotoframe.data.cache.MediaTransferPriority.BACKGROUND_PRELOAD
         }
-        val cacheResult = if (remotePrimaryCachedOnly && display.sourceId == remotePrimarySourceId) {
+        val cacheOnlyForDisplay =
+            (remotePrimaryCachedOnly && display.sourceId == remotePrimarySourceId) ||
+                display.sourceId == slowLinkCachedOnlySourceId
+        val cacheResult = if (cacheOnlyForDisplay) {
             services.mediaCache.resolveIfCached(item, onMediaCacheStage)
         } else {
             val src = remoteSources.active(display.sourceId)
@@ -2708,7 +2916,11 @@ class SlideshowViewModel(
                 transferDeadlineMonotonicMs = request.selectedTransferDeadlineMonotonicMs,
                 onStage = onMediaCacheStage,
                 onTransferTelemetry = onMediaCacheTransfer,
-            )
+            ).also { result ->
+                if (result is MediaCache.ResolveResult.Deferred && result.progressed) {
+                    schedulePartialResume(item, src, result)
+                }
+            }
         }
 
         return when (cacheResult) {
@@ -2885,7 +3097,10 @@ class SlideshowViewModel(
         }
 
         val favoritesFlag = if (_state.value.favoritesOnly) 1 else 0
-        val cachedFlag = if (remotePrimaryCachedOnly && anchor.sourceId == remotePrimarySourceId) 1 else 0
+        val cachedFlag = if (
+            (remotePrimaryCachedOnly && anchor.sourceId == remotePrimarySourceId) ||
+            anchor.sourceId == slowLinkCachedOnlySourceId
+        ) 1 else 0
         val anchorTime = anchor.dateTakenEpochMs ?: anchor.fileModifiedEpochMs
         val now = System.currentTimeMillis()
         val anchorParent = anchor.normalizedPath.substringBeforeLast('/', "")
@@ -5486,6 +5701,8 @@ class SlideshowViewModel(
         const val WEATHER_RECHECK_MS = 5 * 60_000L
         const val INITIAL_REMOTE_NETWORK_WAIT_MS = 60_000L
         const val INITIAL_REMOTE_NETWORK_POLL_MS = 500L
+        const val SLOW_LINK_RESUME_IDLE_GRACE_MS = 2_000L
+        const val MAX_PENDING_PARTIAL_RESUMES = 32
         const val WEATHER_KEY_REF = CredentialPolicy.WEATHER_API_KEY_REF
     }
 

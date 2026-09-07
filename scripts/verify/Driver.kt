@@ -28,6 +28,7 @@ fun main() {
     runRenderAckRecoveryChecks()
     runRenderAckPhase3CChecks()
     runMediaTransferPolicyChecks()
+    runSmbStabilityPolicyChecks()
     runOnThisDayPhase3BChecks()
     runPlaybackMemoryPolicyChecks()
     runDecodeColorPolicyChecks()

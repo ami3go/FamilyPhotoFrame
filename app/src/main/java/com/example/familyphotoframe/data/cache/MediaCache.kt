@@ -136,6 +136,8 @@ class MediaCache(
             val copiedBytes: Long,
             val expectedBytes: Long,
             val reason: String,
+            /** True only when this attempt appended at least one new byte. */
+            val progressed: Boolean,
         ) : ResolveResult
         data class Failed(
             val stage: FailureStage,
@@ -237,7 +239,12 @@ class MediaCache(
                 }
             }
         } catch (deadline: SelectedTransferPermitDeadlineException) {
-            ResolveResult.Deferred(0L, item.sizeBytes.coerceAtLeast(0L), "transfer_slot_deadline")
+            ResolveResult.Deferred(
+                copiedBytes = 0L,
+                expectedBytes = item.sizeBytes.coerceAtLeast(0L),
+                reason = "transfer_slot_deadline",
+                progressed = false,
+            )
         } catch (c: CancellationException) {
             throw c
         } catch (e: Exception) {
@@ -342,12 +349,16 @@ class MediaCache(
         var stage = FailureStage.SOURCE_READ
         var targetCommitted = false
         var indexCommitted = false
-        var copiedBytes = validatedPartialLength(tmp, item.sizeBytes)
+        var copiedBytes = 0L
+        var initialCopiedBytes = 0L
         val expectedBytes = item.sizeBytes.coerceAtLeast(0L)
-        val progress = TransferProgress(copiedBytes)
+        lateinit var progress: TransferProgress
         activePartialNames += tmp.name
         return try {
             prunePartials(tmp.name)
+            copiedBytes = validatedPartialLength(tmp, item.sizeBytes)
+            initialCopiedBytes = copiedBytes
+            progress = TransferProgress(copiedBytes)
             if (dir.usableSpace <= RESERVED_FREE_BYTES) {
                 throw CacheStorageReserveException(RESERVED_FREE_BYTES)
             }
@@ -481,7 +492,12 @@ class MediaCache(
             val retained = retainPartial(tmp, copiedBytes, expectedBytes)
             if (targetCommitted && !indexCommitted) target.delete()
             if (retained) {
-                ResolveResult.Deferred(copiedBytes, expectedBytes, "selected_deadline")
+                ResolveResult.Deferred(
+                    copiedBytes,
+                    expectedBytes,
+                    "selected_deadline",
+                    progressed = copiedBytes > initialCopiedBytes,
+                )
             } else {
                 ResolveResult.Failed(FailureStage.SOURCE_READ, "SelectedTransferDeadline")
             }
@@ -503,15 +519,30 @@ class MediaCache(
             if (c is TimeoutCancellationException &&
                 priority == MediaTransferPriority.SELECTED_PRESENTATION && retained
             ) {
-                return ResolveResult.Deferred(copiedBytes, expectedBytes, "selected_deadline")
+                return ResolveResult.Deferred(
+                    copiedBytes,
+                    expectedBytes,
+                    "selected_deadline",
+                    progressed = copiedBytes > initialCopiedBytes,
+                )
             }
             if (c is TimeoutCancellationException &&
                 priority == MediaTransferPriority.PARTIAL_RESUME && retained
             ) {
-                return ResolveResult.Deferred(copiedBytes, expectedBytes, "resume_slice_deadline")
+                return ResolveResult.Deferred(
+                    copiedBytes,
+                    expectedBytes,
+                    "resume_slice_deadline",
+                    progressed = copiedBytes > initialCopiedBytes,
+                )
             }
             if (c is RemoteTransferCoordinator.YieldException && retained) {
-                return ResolveResult.Deferred(copiedBytes, expectedBytes, "higher_priority_waiting")
+                return ResolveResult.Deferred(
+                    copiedBytes,
+                    expectedBytes,
+                    "higher_priority_waiting",
+                    progressed = copiedBytes > initialCopiedBytes,
+                )
             }
             throw c
         } catch (e: Exception) {
@@ -619,7 +650,9 @@ class MediaCache(
                 if (count > 0) digest.update(buffer, 0, count)
             }
         }
-        return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+        return digest.digest().joinToString("") { byte ->
+            "%02x".format(byte.toInt() and 0xff)
+        }
     }
 
     private fun retainPartial(file: File, copiedBytes: Long, expectedBytes: Long): Boolean {
@@ -633,11 +666,11 @@ class MediaCache(
         val now = System.currentTimeMillis()
         val candidates = dir.listFiles().orEmpty()
             .filter { file ->
-                file.name.endsWith(".part") && file.name != currentName &&
-                    file.name !in activePartialNames
+                file.name.endsWith(PartialCachePolicy.FILE_SUFFIX) &&
+                    (file.name == currentName || file.name !in activePartialNames)
             }
         candidates.filter { file ->
-            !PARTIAL_FILE_NAME.matches(file.name) || file.length() !in 1L..MAX_ENTRY_BYTES ||
+            !PartialCachePolicy.ownsFileName(file.name) || file.length() !in 1L..MAX_ENTRY_BYTES ||
                 now - file.lastModified() > PARTIAL_TTL_MS
         }.forEach(File::delete)
 
@@ -778,8 +811,8 @@ class MediaCache(
                     if (page.size < RECONCILIATION_BATCH_SIZE) break
                 }
                 dir.listFiles()?.forEach { file ->
-                    if (file.name.endsWith(".part")) {
-                        val validName = PARTIAL_FILE_NAME.matches(file.name)
+                    if (file.name.endsWith(PartialCachePolicy.FILE_SUFFIX)) {
+                        val validName = PartialCachePolicy.ownsFileName(file.name)
                         val validAge = System.currentTimeMillis() - file.lastModified() <= PARTIAL_TTL_MS
                         if (!validName || !validAge || file.length() !in 1L..MAX_ENTRY_BYTES) file.delete()
                         return@forEach
@@ -839,7 +872,6 @@ class MediaCache(
         private const val RESERVED_FREE_BYTES = 512L * MB
         private const val PARTIAL_TTL_MS = 7L * 24L * 60L * 60L * 1_000L
         private const val MAX_PARTIAL_BYTES = 256L * MB
-        private val PARTIAL_FILE_NAME = Regex("^[0-9a-fA-F]{64}\\.part$")
         private fun subtractSize(total: Long, removed: Long): Long {
             val safeRemoved = removed.coerceAtLeast(0L)
             return if (safeRemoved >= total) 0L else total - safeRemoved
