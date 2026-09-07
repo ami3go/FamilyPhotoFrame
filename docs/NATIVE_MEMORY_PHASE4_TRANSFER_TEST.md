@@ -180,3 +180,18 @@ Hardware validation must separately prove that cached presentation remains conti
 least one formerly deferred large file completes, and that SMB streams, media transfers, native
 PSS, total PSS, FDs, and threads remain bounded. Huawei evidence is supplementary; V80 remains the
 only Phase 4 closure authority.
+
+## Build-64 collage eligibility correction
+
+The build-63 V80 run exposed an unintended interaction between selected-transfer priority and
+portrait collages. The link was healthy enough to finish selected transfers in about five seconds,
+but every cache miss was classified as a reason to skip collage enrichment. Only 15 of 2,404
+presentations became collages; 2,383 otherwise healthy selections recorded
+`selected_anchor_transfer` single-photo fallback.
+
+Build `26.64.1` retains immediate-single presentation for a selected anchor that reaches its
+deadline or spends more than eight seconds transferring. A completed transfer at or below eight
+seconds may continue into the existing bounded collage path. Companion resolution still shares
+the selected presentation's absolute deadline, so this does not restore unbounded candidate work
+on a degraded link. Hardware validation must show materially recurring `COLLAGE_RENDERED` events
+on the V80 while preserving zero render timeouts and bounded transfer ownership.

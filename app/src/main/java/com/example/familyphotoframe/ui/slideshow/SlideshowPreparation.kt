@@ -643,7 +643,8 @@ internal suspend fun prepareSlide(
             return PrepareSlideResult.Ready(prepared)
         }
 
-        var anchorTransferObserved = false
+        var anchorTransferStartedAtMs: Long? = null
+        var anchorTransferDeadlineReached = false
         onPreparationSubstage("MODEL_RESOLUTION")
         val resolvedAnchor = when (val resolved = resolvePhoto(
             photo,
@@ -654,8 +655,12 @@ internal suspend fun prepareSlide(
                 if (update.state == PreparationTransferState.STARTED ||
                     update.state == PreparationTransferState.PROGRESS
                 ) {
-                    anchorTransferObserved = true
+                    if (anchorTransferStartedAtMs == null) {
+                        anchorTransferStartedAtMs = presentationMonotonicNowMs()
+                    }
                 }
+                anchorTransferDeadlineReached = anchorTransferDeadlineReached ||
+                    update.state == PreparationTransferState.SELECTED_DEADLINE
                 onPreparationTransferUpdate(update)
             },
         )) {
@@ -703,15 +708,24 @@ internal suspend fun prepareSlide(
         } else requestedFallback
 
         if (collageMode == PortraitCollageMode.OFF) return prepareSingle()
+        val anchorTransferDurationMs = anchorTransferStartedAtMs?.let { started ->
+            (presentationMonotonicNowMs() - started).coerceAtLeast(0L)
+        }
         if (SelectedAnchorPresentationPolicy.shouldPreferSingle(
                 modelResolutionRequest.priority,
-                anchorTransferObserved,
+                anchorTransferDurationMs,
+                anchorTransferDeadlineReached,
             )
         ) {
             return prepareSingle(
                 forcedAspect = if (photo.metadataOrientation() == PhotoOrientation.PORTRAIT) allowedFallback else null,
-                eventReason = "selected_anchor_transfer",
+                eventReason = "slow_selected_anchor_transfer",
                 allowTransitionBlur = false,
+                eventDetails = mapOf(
+                    "anchorTransferDurationMs" to anchorTransferDurationMs.toString(),
+                    "fastTransferLimitMs" to SelectedAnchorPresentationPolicy.FAST_TRANSFER_MAX_MS.toString(),
+                    "selectedDeadlineReached" to anchorTransferDeadlineReached.toString(),
+                ),
             )
         }
         if (maxCollagePhotos < 2) {

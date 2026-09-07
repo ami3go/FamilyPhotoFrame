@@ -16,6 +16,5 @@
     <exclude domain="database" path="frame.db" />
     <exclude domain="database" path="frame.db-wal" />
     <exclude domain="database" path="frame.db-shm" />
-    <exclude domain="cache" path="." />
     <exclude domain="external" path="." />
 </full-backup-content>
