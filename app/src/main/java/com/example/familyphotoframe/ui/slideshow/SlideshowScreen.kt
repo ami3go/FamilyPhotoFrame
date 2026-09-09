@@ -22,6 +22,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
@@ -1308,7 +1309,10 @@ private fun PlayingContent(
             activeIncoming?.anchor?.id,
             committed?.anchor?.id,
         )
-        LaunchedEffect(liveSlideIds) { motionStore.retain(liveSlideIds) }
+        // Prune in the same successful composition that changes the visible slide set.
+        // A coroutine effect can be delayed behind a busy main thread, unnecessarily
+        // extending the lifetime of motion state belonging to an already-released frame.
+        SideEffect { motionStore.retain(liveSlideIds) }
 
         if (activeIncoming != null && transitionState is TransitionState.Animating) {
             SlideshowTransitionRenderer(
@@ -1425,12 +1429,13 @@ internal fun PreparedCollage(
     val slideId = prepared.anchor.id
     val durationMillis = state.intervalSecondsForUi.coerceIn(3, 600) * 1000
     var fallbackReason: String? = null
-    val entry = motionStore.entryFor(slideId, "$profile|$durationMillis") {
+    val entry = motionStore.entryForThreePanel(
+        slideId = slideId,
+        signature = "$profile|$durationMillis",
+        layout = prepared.layout,
+        panelCount = prepared.tiles.size,
+    ) {
         when {
-            !threePanel -> {
-                fallbackReason = "not_three_panel_layout"
-                null
-            }
             state.portraitCollage.scaleMode == CollageScaleMode.FIT -> {
                 fallbackReason = "fit_scale_mode"
                 null
@@ -1444,22 +1449,24 @@ internal fun PreparedCollage(
                 .getOrNull()   // Task §15: a failed path falls back to a static frame.
         }
     }
-    val paths = entry.paths
+    val paths = entry?.paths
 
     // Task §16: one entry per frame describing panel assignment, presets and limits.
     // compareAndSet ensures this fires exactly once across all composition slots that
     // simultaneously render this slide (committed frame, outgoing frame in the transition
     // renderer, and any recomposition of the same slot). See PanelMotionStore.Entry.described.
-    LaunchedEffect(slideId, paths) {
-        if (entry.described.compareAndSet(false, true)) {
-            onMotionDiagnostic(
-                prepared.photos.map { it.id },
-                if (paths == null) {
-                    "static fallback: ${fallbackReason ?: "unknown"}"
-                } else {
-                    PortraitPanelMotion.describeFrame(paths)
-                },
-            )
+    if (entry != null) {
+        LaunchedEffect(slideId, paths) {
+            if (entry.described.compareAndSet(false, true)) {
+                onMotionDiagnostic(
+                    prepared.photos.map { it.id },
+                    if (paths == null) {
+                        "static fallback: ${fallbackReason ?: "unknown"}"
+                    } else {
+                        PortraitPanelMotion.describeFrame(paths)
+                    },
+                )
+            }
         }
     }
 
@@ -1496,19 +1503,21 @@ internal fun PreparedCollage(
      * calculation below, so motion continues from where it paused rather than restarting.
      */
     val animating = allowDisplayMotion && paths != null && !state.engine.paused
-    LaunchedEffect(slideId, animating, durationMillis) {
-        if (animating) {
-            onMotionDiagnostic(prepared.photos.map { it.id }, "animation start: slide=$slideId")
-            val remaining = ((1f - entry.progress.value) * durationMillis).toInt().coerceAtLeast(0)
-            try {
-                entry.progress.animateTo(
-                    targetValue = 1f,
-                    animationSpec = tween(durationMillis = remaining, easing = LinearEasing),
-                )
-                onMotionDiagnostic(prepared.photos.map { it.id }, "animation completion: slide=$slideId")
-            } catch (e: CancellationException) {
-                onMotionDiagnostic(prepared.photos.map { it.id }, "animation cancellation: slide=$slideId")
-                throw e
+    if (entry != null) {
+        LaunchedEffect(slideId, animating, durationMillis) {
+            if (animating) {
+                onMotionDiagnostic(prepared.photos.map { it.id }, "animation start: slide=$slideId")
+                val remaining = ((1f - entry.progress.value) * durationMillis).toInt().coerceAtLeast(0)
+                try {
+                    entry.progress.animateTo(
+                        targetValue = 1f,
+                        animationSpec = tween(durationMillis = remaining, easing = LinearEasing),
+                    )
+                    onMotionDiagnostic(prepared.photos.map { it.id }, "animation completion: slide=$slideId")
+                } catch (e: CancellationException) {
+                    onMotionDiagnostic(prepared.photos.map { it.id }, "animation cancellation: slide=$slideId")
+                    throw e
+                }
             }
         }
     }

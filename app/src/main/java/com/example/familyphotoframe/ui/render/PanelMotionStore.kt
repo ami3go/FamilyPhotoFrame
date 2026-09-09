@@ -5,6 +5,7 @@ import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.remember
+import com.example.familyphotoframe.domain.engine.CollageLayout
 
 /**
  * Per-slide motion state for three-portrait-panel collages.
@@ -56,13 +57,27 @@ class PanelMotionStore {
     private val signatures = HashMap<Long, String>()
 
     /**
-     * The entry for [slideId], creating it on first use.
+     * The entry for a genuine three-panel slide, creating it on first use.
+     *
+     * Two-photo collages are the common case and never use panel motion. Rejecting them
+     * here prevents each static frame from allocating an [Animatable], effect guard and
+     * map entry that cannot affect rendering. Keeping the eligibility check in the store
+     * also makes it impossible for a renderer call site to accidentally reintroduce that
+     * per-frame lifecycle.
      *
      * [signature] captures the inputs the paths were built from. When it changes — a new
      * profile because the user toggled the setting, or a new slide duration — the entry is
      * rebuilt so the paths match the current settings rather than going stale.
      */
-    fun entryFor(slideId: Long, signature: String, build: () -> List<PanelMotionPath>?): Entry {
+    fun entryForThreePanel(
+        slideId: Long,
+        signature: String,
+        layout: CollageLayout,
+        panelCount: Int,
+        build: () -> List<PanelMotionPath>?,
+    ): Entry? {
+        if (layout != CollageLayout.THREE_COLUMNS || panelCount != 3) return null
+
         val existing = entries[slideId]
         if (existing != null && signatures[slideId] == signature) return existing
         val created = Entry(paths = build(), progress = Animatable(0f))
