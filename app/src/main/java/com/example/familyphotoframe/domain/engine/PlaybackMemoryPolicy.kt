@@ -175,6 +175,13 @@ object PlaybackMemoryPolicy {
     const val CRITICAL_RECOVERY_HOLD_MS = 5L * 60_000L
     const val EXTERNAL_CRITICAL_HOLD_MS = 10L * 60_000L
     const val EXTERNAL_GUARDED_HOLD_MS = 15L * 60_000L
+    /**
+     * Native PSS is sampled at arbitrary decode/transition phases. Once a qualifying
+     * window trips the guard, keep that conservative decision long enough to span two
+     * maximum observation windows instead of alternating NORMAL/GUARDED on allocator
+     * noise every 15 minutes. Entry thresholds and critical escalation stay unchanged.
+     */
+    const val NATIVE_GROWTH_GUARDED_HOLD_MS = 60L * 60_000L
     const val FIRST_OOM_COOLDOWN_MS = 60_000L
     const val MAX_OOM_COOLDOWN_MS = 5L * 60_000L
     const val OOM_STREAK_WINDOW_MS = 10L * 60_000L
@@ -378,6 +385,20 @@ object PlaybackMemoryPolicy {
         var externalCriticalUntil = previous.externalCriticalUntilElapsedMs
         var externalGuardedUntil = previous.externalGuardedUntilElapsedMs
         var externalSource = previous.externalPressureSource
+        // strongestSignal deliberately preserves source priority for equal severity.
+        // A simultaneous process/system signal can therefore be reported as the source
+        // even though a qualifying native-growth window also closed in this sample. The
+        // longer native hold must follow the evidence, not just the winning label.
+        val nativeGrowthPressureActive =
+            (nativeAssessment.signal.level != ExternalLevel.NONE &&
+                nativeAssessment.signal.source == PlaybackMemoryPressureSource.NATIVE_PSS_GROWTH) ||
+                (nativeLatchSignal.level != ExternalLevel.NONE &&
+                    nativeLatchSignal.source == PlaybackMemoryPressureSource.NATIVE_PSS_GROWTH)
+        val guardedHoldMs = if (nativeGrowthPressureActive) {
+            NATIVE_GROWTH_GUARDED_HOLD_MS
+        } else {
+            EXTERNAL_GUARDED_HOLD_MS
+        }
         when (signal.level) {
             ExternalLevel.CRITICAL -> {
                 externalCriticalUntil = maxOf(
@@ -386,14 +407,14 @@ object PlaybackMemoryPolicy {
                 )
                 externalGuardedUntil = maxOf(
                     externalGuardedUntil,
-                    nowElapsedMs + EXTERNAL_GUARDED_HOLD_MS,
+                    nowElapsedMs + guardedHoldMs,
                 )
                 externalSource = signal.source
             }
             ExternalLevel.GUARDED -> {
                 externalGuardedUntil = maxOf(
                     externalGuardedUntil,
-                    nowElapsedMs + EXTERNAL_GUARDED_HOLD_MS,
+                    nowElapsedMs + guardedHoldMs,
                 )
                 if (nowElapsedMs >= externalCriticalUntil) externalSource = signal.source
             }

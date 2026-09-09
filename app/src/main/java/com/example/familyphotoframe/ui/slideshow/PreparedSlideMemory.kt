@@ -5,6 +5,7 @@ import android.os.Handler
 import com.example.familyphotoframe.data.diagnostics.BitmapLifecycleTracker
 import java.util.Collections
 import java.util.IdentityHashMap
+import java.util.concurrent.atomic.AtomicReference
 
 /** Small Compose-safe identity; bitmap-bearing slides stay outside snapshot state. */
 internal data class PreparedSlideHandle(val value: Long)
@@ -23,6 +24,29 @@ internal data class PendingBitmapDisposals(
     val count: Int,
     val oldestStartedAtElapsedMs: Long,
 )
+
+/**
+ * Owns a prepared result until its dispatcher handoff has completed.
+ *
+ * Coroutine dispatcher hops have prompt cancellation: a producer can finish and transfer
+ * ownership immediately before the caller is cancelled on the return hop. Keeping this
+ * bridge independent from Android bitmap types makes that narrow race directly testable.
+ */
+internal class UndeliveredOwnershipGuard<T : Any>(
+    private val release: (T) -> Unit,
+) {
+    private val pending = AtomicReference<T?>(null)
+
+    fun arm(value: T) {
+        check(pending.compareAndSet(null, value)) { "ownership guard already armed" }
+    }
+
+    fun markDelivered(value: T): Boolean = pending.compareAndSet(value, null)
+
+    fun close() {
+        pending.getAndSet(null)?.let(release)
+    }
+}
 
 /**
  * Ordinary bounded registry for decoded presentations.

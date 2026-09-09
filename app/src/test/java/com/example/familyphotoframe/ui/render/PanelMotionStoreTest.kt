@@ -9,6 +9,21 @@ import org.junit.Test
 
 class PanelMotionStoreTest {
 
+    @Test fun rendererCanBypassAllMotionCompositionForStaticCollages() {
+        assertEquals(
+            false,
+            PanelMotionStore.isThreePanelEligible(CollageLayout.TWO_COLUMNS, 2),
+        )
+        assertEquals(
+            false,
+            PanelMotionStore.isThreePanelEligible(CollageLayout.THREE_COLUMNS, 2),
+        )
+        assertEquals(
+            true,
+            PanelMotionStore.isThreePanelEligible(CollageLayout.THREE_COLUMNS, 3),
+        )
+    }
+
     @Test fun twoPhotoCollageDoesNotAllocateMotionState() {
         val store = PanelMotionStore()
         var builds = 0

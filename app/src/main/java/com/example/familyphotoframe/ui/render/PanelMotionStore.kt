@@ -76,7 +76,7 @@ class PanelMotionStore {
         panelCount: Int,
         build: () -> List<PanelMotionPath>?,
     ): Entry? {
-        if (layout != CollageLayout.THREE_COLUMNS || panelCount != 3) return null
+        if (!isThreePanelEligible(layout, panelCount)) return null
 
         val existing = entries[slideId]
         if (existing != null && signatures[slideId] == signature) return existing
@@ -94,6 +94,12 @@ class PanelMotionStore {
 
     /** Visible for tests: how many slides currently hold state. */
     val size: Int get() = entries.size
+
+    companion object {
+        /** Shared gate used before the renderer enters any motion composition. */
+        fun isThreePanelEligible(layout: CollageLayout, panelCount: Int): Boolean =
+            layout == CollageLayout.THREE_COLUMNS && panelCount == 3
+    }
 }
 
 /** Remember a [PanelMotionStore] for the lifetime of the slideshow composition. */

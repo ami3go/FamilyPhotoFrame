@@ -22,7 +22,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
@@ -560,65 +559,100 @@ private fun PlayingContent(
             memoryProtection.maxCollagePhotos
         }
         val maxPhotos = minOf(configuredMaxPhotos, memoryMaxPhotos)
-        return prepareSlide(
-            context = context,
-            photo = photo,
-            imageLoader = imageLoader,
-            resolveModel = resolveModel,
-            loadCollageCandidates = loadCollageCandidates,
-            probeRemoteDimensions = probeRemoteDimensions,
-            // A memory-driven limit is passed through as the limit it is, not laundered
-            // into mode OFF: prepareSlide's own guard branch then records why the frame
-            // dropped to a single photo, which "the user turned collages off" would not.
-            collageMode = if (fastManual) PortraitCollageMode.OFF else state.portraitCollage.mode,
-            maxCollagePhotos = maxPhotos,
-            configuredMaxCollagePhotos = configuredMaxPhotos,
-            memoryMaxCollagePhotos = memoryMaxPhotos,
-            portraitFallback = state.portraitCollage.fallback,
-            collageGap = state.portraitCollage.gap,
-            collageOrientationFilter = state.portraitCollage.orientationFilter,
-            collageFillWithOtherOrientations = state.portraitCollage.fillWithOtherOrientations,
-            collageLayoutPreference = state.portraitCollage.layoutPreference,
-            prepareSoftFocusBlur = softFocusNeeded && !fastManual,
-            allowBlurredBackground = state.nativeMemoryHilMode == NativeMemoryHilMode.NORMAL &&
-                memoryProtection.allowBlurredBackdrop && !fastManual,
-            colorChoice = DecodeColorPolicy.choose(
-                preference = state.decodeColorDepth,
-                heapMaxBytes = Runtime.getRuntime().maxMemory(),
-                level = memoryProtection.level,
-                lowMemoryTier = memoryProtection.lowMemoryTier,
-            ),
-            excludedIds = buildSet {
-                addAll(registry.photoIds())
-                selected?.id?.let(::add)
-                next?.id?.let(::add)
-                addAll(permanentlyFailedCandidates)
-            },
-            targetW = decodeW,
-            targetH = decodeH,
-            localThumbnailCache = localThumbnailCache,
-            localThumbnailCacheProtectedStableIds = setOfNotNull(selected?.stableId, next?.stableId),
-            bitmapLifecycleTracker = bitmapLifecycleTracker,
-            nativeStageTracker = nativeStageTracker,
-            onRecoverableOom = { failure ->
-                onRecoverableOom(photo, failure.reason ?: "slide_preparation_allocation")
-            },
-            onCollageCandidateFailure = { failure ->
-                if (failure.permanent) permanentlyFailedCandidates += failure.photoId
-                onCollageCandidateFailure(failure)
-            },
-            onCollageEvent = onCollageEvent,
-            modelResolutionRequest = ModelResolutionRequest(
-                priority = if (onTransferUpdate != null) {
-                    ModelResolutionPriority.SELECTED_PRESENTATION
-                } else {
-                    ModelResolutionPriority.BACKGROUND_PRELOAD
-                },
-                selectedTransferDeadlineMonotonicMs = selectedTransferDeadlineMonotonicMs,
-            ),
-            onPreparationSubstage = { stage -> onPreparationSubstage?.invoke(stage) },
-            onPreparationTransferUpdate = { update -> onTransferUpdate?.invoke(update) },
-        )
+        // Read the main-thread-owned registry before dispatching. The remaining pipeline
+        // performs no Compose rendering and may enter legacy decoder/source code whose
+        // synchronous edge must not block the main looper.
+        val excludedIds = buildSet {
+            addAll(registry.photoIds())
+            selected?.id?.let(::add)
+            next?.id?.let(::add)
+            addAll(permanentlyFailedCandidates)
+        }
+        // withContext has prompt cancellation when dispatching the result back to Main.
+        // Once prepareSlide returns Ready it has transferred bitmap ownership out of its
+        // local cleanup map, so guard that narrow handoff window and retire any result the
+        // cancelled caller never receives.
+        val undelivered = UndeliveredOwnershipGuard(registry::retireUnowned)
+        return try {
+            val result = withContext(Dispatchers.Default) {
+                prepareSlide(
+                    context = context,
+                    photo = photo,
+                    imageLoader = imageLoader,
+                    resolveModel = resolveModel,
+                    loadCollageCandidates = loadCollageCandidates,
+                    probeRemoteDimensions = probeRemoteDimensions,
+                    // A memory-driven limit is passed through as the limit it is, not
+                    // laundered into mode OFF: prepareSlide records the actual guard reason.
+                    collageMode = if (fastManual) {
+                        PortraitCollageMode.OFF
+                    } else {
+                        state.portraitCollage.mode
+                    },
+                    maxCollagePhotos = maxPhotos,
+                    configuredMaxCollagePhotos = configuredMaxPhotos,
+                    memoryMaxCollagePhotos = memoryMaxPhotos,
+                    portraitFallback = state.portraitCollage.fallback,
+                    collageGap = state.portraitCollage.gap,
+                    collageOrientationFilter = state.portraitCollage.orientationFilter,
+                    collageFillWithOtherOrientations =
+                        state.portraitCollage.fillWithOtherOrientations,
+                    collageLayoutPreference = state.portraitCollage.layoutPreference,
+                    prepareSoftFocusBlur = softFocusNeeded && !fastManual,
+                    allowBlurredBackground =
+                        state.nativeMemoryHilMode == NativeMemoryHilMode.NORMAL &&
+                            memoryProtection.allowBlurredBackdrop && !fastManual,
+                    colorChoice = DecodeColorPolicy.choose(
+                        preference = state.decodeColorDepth,
+                        heapMaxBytes = Runtime.getRuntime().maxMemory(),
+                        level = memoryProtection.level,
+                        lowMemoryTier = memoryProtection.lowMemoryTier,
+                    ),
+                    excludedIds = excludedIds,
+                    targetW = decodeW,
+                    targetH = decodeH,
+                    localThumbnailCache = localThumbnailCache,
+                    localThumbnailCacheProtectedStableIds =
+                        setOfNotNull(selected?.stableId, next?.stableId),
+                    bitmapLifecycleTracker = bitmapLifecycleTracker,
+                    nativeStageTracker = nativeStageTracker,
+                    onRecoverableOom = { failure ->
+                        onRecoverableOom(
+                            photo,
+                            failure.reason ?: "slide_preparation_allocation",
+                        )
+                    },
+                    onCollageCandidateFailure = { failure ->
+                        if (failure.permanent) permanentlyFailedCandidates += failure.photoId
+                        onCollageCandidateFailure(failure)
+                    },
+                    onCollageEvent = onCollageEvent,
+                    modelResolutionRequest = ModelResolutionRequest(
+                        priority = if (onTransferUpdate != null) {
+                            ModelResolutionPriority.SELECTED_PRESENTATION
+                        } else {
+                            ModelResolutionPriority.BACKGROUND_PRELOAD
+                        },
+                        selectedTransferDeadlineMonotonicMs =
+                            selectedTransferDeadlineMonotonicMs,
+                    ),
+                    onPreparationSubstage = { stage -> onPreparationSubstage?.invoke(stage) },
+                    onPreparationTransferUpdate = { update -> onTransferUpdate?.invoke(update) },
+                ).also { prepared ->
+                    if (prepared is PrepareSlideResult.Ready) {
+                        undelivered.arm(prepared.slide)
+                    }
+                }
+            }
+            if (result is PrepareSlideResult.Ready) {
+                check(undelivered.markDelivered(result.slide)) {
+                    "prepared slide ownership was not armed"
+                }
+            }
+            result
+        } finally {
+            undelivered.close()
+        }
         }
 
         // A manual skip has higher priority than speculative collage preload.
@@ -1304,15 +1338,26 @@ private fun PlayingContent(
         // becomes the outgoing frame, and pruned so nothing is retained for frames that
         // have left the screen (task §10, §14).
         val motionStore = rememberPanelMotionStore()
-        val liveSlideIds = setOfNotNull(
+        val liveSlideIds = remember(
             outgoing?.anchor?.id,
             activeIncoming?.anchor?.id,
             committed?.anchor?.id,
-        )
-        // Prune in the same successful composition that changes the visible slide set.
-        // A coroutine effect can be delayed behind a busy main thread, unnecessarily
-        // extending the lifetime of motion state belonging to an already-released frame.
-        SideEffect { motionStore.retain(liveSlideIds) }
+        ) {
+            setOfNotNull(
+                outgoing?.anchor?.id,
+                activeIncoming?.anchor?.id,
+                committed?.anchor?.id,
+            )
+        }
+        // Dispose/re-enter only when the visible identities change. SideEffect runs on
+        // every transition-frame recomposition; allocating its closure and this Set at
+        // frame rate was visible as managed-heap/PSS growth in the build-65 V80 soak.
+        // DisposableEffect is still applied after a successful composition, so stale
+        // motion entries are pruned without waiting behind a coroutine.
+        DisposableEffect(motionStore, liveSlideIds) {
+            motionStore.retain(liveSlideIds)
+            onDispose { }
+        }
 
         if (activeIncoming != null && transitionState is TransitionState.Animating) {
             SlideshowTransitionRenderer(
@@ -1416,38 +1461,57 @@ internal fun PreparedCollage(
     val tileShape = RoundedCornerShape(state.portraitCollage.cornerRadiusDpClamped.dp)
 
     // Task §1: motion is defined for the three-equal-portrait-panel layout only.
-    val threePanel = prepared.layout == CollageLayout.THREE_COLUMNS && prepared.tiles.size == 3
-    val animationScale = rememberSystemAnimationScale()
-    val profile = if (!threePanel || state.portraitCollage.scaleMode == CollageScaleMode.FIT) {
-        PanelMotionProfile.OFF
-    } else {
-        PortraitPanelMotion.profileFor(state.portraitCollage.animateThreePhotoFrames, animationScale)
-    }
+    // Keep the whole motion composition path conditional, not merely the store write:
+    // the common two-photo frame must not read settings, build a signature/lambda, or
+    // install effect slots on every transition-frame recomposition.
+    val threePanel = PanelMotionStore.isThreePanelEligible(
+        prepared.layout,
+        prepared.tiles.size,
+    )
 
     // Seeded on the anchor so a given frame always animates identically (task §7) and the
     // paths survive recomposition and activity recreation (task §11).
     val slideId = prepared.anchor.id
-    val durationMillis = state.intervalSecondsForUi.coerceIn(3, 600) * 1000
+    val durationMillis = if (threePanel) {
+        state.intervalSecondsForUi.coerceIn(3, 600) * 1000
+    } else {
+        0
+    }
     var fallbackReason: String? = null
-    val entry = motionStore.entryForThreePanel(
-        slideId = slideId,
-        signature = "$profile|$durationMillis",
-        layout = prepared.layout,
-        panelCount = prepared.tiles.size,
-    ) {
-        when {
-            state.portraitCollage.scaleMode == CollageScaleMode.FIT -> {
-                fallbackReason = "fit_scale_mode"
-                null
-            }
-            profile == PanelMotionProfile.OFF -> {
-                fallbackReason = "motion_disabled"
-                null
-            }
-            else -> runCatching { PortraitPanelMotion.pathsForFrame(slideId, durationMillis, profile) }
-                .onFailure { fallbackReason = "path_generation_failed: ${it.javaClass.simpleName}" }
-                .getOrNull()   // Task §15: a failed path falls back to a static frame.
+    val entry = if (threePanel) {
+        val animationScale = rememberSystemAnimationScale()
+        val profile = if (state.portraitCollage.scaleMode == CollageScaleMode.FIT) {
+            PanelMotionProfile.OFF
+        } else {
+            PortraitPanelMotion.profileFor(
+                state.portraitCollage.animateThreePhotoFrames,
+                animationScale,
+            )
         }
+        motionStore.entryForThreePanel(
+            slideId = slideId,
+            signature = "$profile|$durationMillis",
+            layout = prepared.layout,
+            panelCount = prepared.tiles.size,
+        ) {
+            when {
+                state.portraitCollage.scaleMode == CollageScaleMode.FIT -> {
+                    fallbackReason = "fit_scale_mode"
+                    null
+                }
+                profile == PanelMotionProfile.OFF -> {
+                    fallbackReason = "motion_disabled"
+                    null
+                }
+                else -> runCatching {
+                    PortraitPanelMotion.pathsForFrame(slideId, durationMillis, profile)
+                }.onFailure {
+                    fallbackReason = "path_generation_failed: ${it.javaClass.simpleName}"
+                }.getOrNull() // Task §15: a failed path falls back to a static frame.
+            }
+        }
+    } else {
+        null
     }
     val paths = entry?.paths
 
@@ -1484,8 +1548,8 @@ internal fun PreparedCollage(
      *   in the coroutine, so it is untouched by the cancellation and the `graphicsLayer`
      *   below keeps reading whatever value it stopped at.
      * - **Release references to the outgoing frame**: handled separately by
-     *   [PanelMotionStore.retain], called once per composition from the slide list that is
-     *   actually on screen.
+     *   [PanelMotionStore.retain], applied after a successful composition whenever the
+     *   slide identities actually on screen change.
      * - **Start new motion only after the next frame is ready**: paths are built as soon
      *   as a slide is first composed, even while it is only a transition preview with
      *   `allowDisplayMotion=false` — but the coroutine that actually advances `progress`

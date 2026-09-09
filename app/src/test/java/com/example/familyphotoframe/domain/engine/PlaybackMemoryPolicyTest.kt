@@ -352,6 +352,83 @@ class PlaybackMemoryPolicyTest {
         )
     }
 
+    @Test fun nativeGrowthGuardSpansTransientAllocatorOscillationWithoutLevelChurn() {
+        val baseNative = 40L * 1024L * 1024L
+        val startedAt = 1_000L
+        val baseline = PlaybackMemoryPolicy.sample(
+            previous = PlaybackMemoryState(),
+            heapUsedBytes = heap / 2L,
+            heapMaxBytes = heap,
+            nowElapsedMs = startedAt,
+            nativePssBytes = baseNative,
+        )
+        val growingAt = startedAt + PlaybackMemoryPolicy.NATIVE_GROWTH_MIN_WINDOW_MS
+        val guarded = PlaybackMemoryPolicy.sample(
+            previous = baseline,
+            heapUsedBytes = heap / 2L,
+            heapMaxBytes = heap,
+            nowElapsedMs = growingAt,
+            nativePssBytes = baseNative + 1024L * 1024L,
+        )
+        val ordinaryHoldExpired = PlaybackMemoryPolicy.sample(
+            previous = guarded,
+            heapUsedBytes = heap / 2L,
+            heapMaxBytes = heap,
+            nowElapsedMs = growingAt + PlaybackMemoryPolicy.EXTERNAL_GUARDED_HOLD_MS,
+            nativePssBytes = baseNative,
+        )
+        val nativeHoldExpired = PlaybackMemoryPolicy.sample(
+            previous = ordinaryHoldExpired,
+            heapUsedBytes = heap / 2L,
+            heapMaxBytes = heap,
+            nowElapsedMs = growingAt + PlaybackMemoryPolicy.NATIVE_GROWTH_GUARDED_HOLD_MS,
+            nativePssBytes = baseNative,
+        )
+
+        assertEquals(PlaybackMemoryLevel.GUARDED, guarded.level)
+        assertEquals(PlaybackMemoryLevel.GUARDED, ordinaryHoldExpired.level)
+        assertEquals(guarded.decisionVersion, ordinaryHoldExpired.decisionVersion)
+        assertEquals(PlaybackMemoryLevel.NORMAL, nativeHoldExpired.level)
+    }
+
+    @Test fun nativeGrowthUsesLongHoldWhenEqualProcessPressureWinsSourcePriority() {
+        val budget = 100L * 1024L * 1024L
+        val baseNative = 40L * 1024L * 1024L
+        val startedAt = 1_000L
+        val baseline = PlaybackMemoryPolicy.sample(
+            previous = PlaybackMemoryState(processMemoryBudgetBytes = budget),
+            heapUsedBytes = heap / 2L,
+            heapMaxBytes = heap,
+            nowElapsedMs = startedAt,
+            nativePssBytes = baseNative,
+        )
+        val growingAt = startedAt + PlaybackMemoryPolicy.NATIVE_GROWTH_MIN_WINDOW_MS
+        val guarded = PlaybackMemoryPolicy.sample(
+            previous = baseline,
+            heapUsedBytes = heap / 2L,
+            heapMaxBytes = heap,
+            nowElapsedMs = growingAt,
+            processPssBytes = budget,
+            nativePssBytes = baseNative + 1024L * 1024L,
+        )
+        val ordinaryHoldExpired = PlaybackMemoryPolicy.sample(
+            previous = guarded,
+            heapUsedBytes = heap / 2L,
+            heapMaxBytes = heap,
+            nowElapsedMs = growingAt + PlaybackMemoryPolicy.EXTERNAL_GUARDED_HOLD_MS,
+            processPssBytes = budget / 2L,
+            nativePssBytes = baseNative,
+        )
+
+        assertEquals(PlaybackMemoryPressureSource.PROCESS_PSS, guarded.pressureSource)
+        assertEquals(
+            growingAt + PlaybackMemoryPolicy.NATIVE_GROWTH_GUARDED_HOLD_MS,
+            guarded.externalGuardedUntilElapsedMs,
+        )
+        assertEquals(PlaybackMemoryLevel.GUARDED, ordinaryHoldExpired.level)
+        assertEquals(guarded.decisionVersion, ordinaryHoldExpired.decisionVersion)
+    }
+
     @Test fun lowMemoryTierStartsWithABoundedEconomyProfile() {
         val state = PlaybackMemoryState(lowMemoryTier = true)
 
