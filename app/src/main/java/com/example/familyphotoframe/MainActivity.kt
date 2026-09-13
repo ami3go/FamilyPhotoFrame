@@ -23,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
 import com.example.familyphotoframe.ui.settings.SettingsPage
 import com.example.familyphotoframe.ui.settings.SettingsScreen
 import com.example.familyphotoframe.ui.slideshow.SlideshowScreen
@@ -31,6 +32,7 @@ import com.example.familyphotoframe.ui.slideshow.SlideshowViewModel
 import com.example.familyphotoframe.ui.theme.FamilyPhotoFrameTheme
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Single Activity hosting the slideshow and settings (spec §10, §12).
@@ -58,6 +60,8 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private val lightSensor by lazy { sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT) }
     private var settingsPage by mutableStateOf(SettingsPage.ROOT)
     private var latestUiState: SlideshowUiState? = null
+    private var runtimeReady by mutableStateOf(false)
+    private var runtimeInitializationStarted = false
     private val activityDiagnostics by lazy { ActivityDiagnosticsController(this, services) }
 
     private val immersiveMode by lazy {
@@ -139,6 +143,60 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         immersiveMode.install()
         immersiveMode.recover("ACTIVITY_CREATED")
 
+        setContent {
+            FamilyPhotoFrameTheme {
+                Box(Modifier.fillMaxSize()) {
+                    if (runtimeReady) {
+                        BackHandler(enabled = screen == Screen.SETTINGS) {
+                            navigateBackFromSettings()
+                        }
+                        // SlideshowScreen stays composed underneath Settings instead of being
+                        // torn down and rebuilt on every trip. The light empty Box shown before
+                        // runtimeReady lets Android finish the cold-start frame first.
+                        SlideshowScreen(
+                            vm = vm,
+                            imageLoader = services.imageLoader,
+                            onOpenSettings = ::openSettings,
+                            onOpenPhotoSources = ::openPhotoSources,
+                            localThumbnailCache = services.localThumbnailCache,
+                        )
+                        if (screen == Screen.SETTINGS) {
+                            SettingsScreen(
+                                vm = vm,
+                                diagnostics = services.diagnostics,
+                                page = settingsPage,
+                                onOpenPage = {
+                                    settingsPage = it
+                                    immersiveMode.recover("SETTINGS_PAGE_CHANGED")
+                                },
+                                onBack = {
+                                    settingsPage = if (settingsPage == SettingsPage.FOLDERS) {
+                                        SettingsPage.PHOTOS
+                                    } else {
+                                        SettingsPage.ROOT
+                                    }
+                                    immersiveMode.recover("SETTINGS_PAGE_BACK")
+                                },
+                                onBackToSlideshow = ::returnToSlideshow,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            withContext(services.dispatchers.default) {
+                services.prewarmSlideshowRuntime()
+            }
+            initializeSlideshowRuntime()
+        }
+    }
+
+    private fun initializeSlideshowRuntime() {
+        if (runtimeInitializationStarted || isFinishing || isDestroyed) return
+        runtimeInitializationStarted = true
+
         // When the UI asks to pick a folder, launch the system picker.
         lifecycleScope.launch {
             vm.pickFolderRequests.collectLatest { openTree.launch(null) }
@@ -178,49 +236,18 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             }
         }
 
-        setContent {
-            FamilyPhotoFrameTheme {
-                BackHandler(enabled = screen == Screen.SETTINGS) {
-                    navigateBackFromSettings()
-                }
-                // SlideshowScreen stays composed underneath Settings instead of being torn
-                // down and rebuilt on every trip. Disposing it used to clear the prepared
-                // slide registry (already-decoded current/next bitmaps), forcing a full
-                // re-decode — or, for remote sources, a full network re-fetch — on return,
-                // which showed up as a black screen for a few seconds. Settings is fully
-                // opaque and full-bleed on every page, so nothing bleeds through and it
-                // captures all touch while shown; D-pad routing is unaffected since that's
-                // driven by the `screen` field in onKeyDown, not by composition presence.
-                Box(Modifier.fillMaxSize()) {
-                    SlideshowScreen(
-                        vm = vm,
-                        imageLoader = services.imageLoader,
-                        onOpenSettings = ::openSettings,
-                        onOpenPhotoSources = ::openPhotoSources,
-                        localThumbnailCache = services.localThumbnailCache,
-                    )
-                    if (screen == Screen.SETTINGS) {
-                        SettingsScreen(
-                            vm = vm,
-                            diagnostics = services.diagnostics,
-                            page = settingsPage,
-                            onOpenPage = {
-                                settingsPage = it
-                                immersiveMode.recover("SETTINGS_PAGE_CHANGED")
-                            },
-                            onBack = {
-                                settingsPage = if (settingsPage == SettingsPage.FOLDERS) {
-                                    SettingsPage.PHOTOS
-                                } else {
-                                    SettingsPage.ROOT
-                                }
-                                immersiveMode.recover("SETTINGS_PAGE_BACK")
-                            },
-                            onBackToSlideshow = ::returnToSlideshow,
-                        )
-                    }
-                }
-            }
+        runtimeReady = true
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) vm.onHostStarted()
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) startAmbientMonitoring()
+    }
+
+    private fun startAmbientMonitoring() {
+        val sensor = lightSensor
+        if (sensor != null) {
+            sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_NORMAL)
+            vm.onAmbientLight(null, true)
+        } else {
+            vm.onAmbientLight(null, false)
         }
     }
 
@@ -264,20 +291,14 @@ class MainActivity : ComponentActivity(), SensorEventListener {
 
     override fun onStart() {
         super.onStart()
-        vm.onHostStarted()
+        if (runtimeReady) vm.onHostStarted()
         activityDiagnostics.onStarted()
     }
 
     override fun onResume() {
         super.onResume()
         activityDiagnostics.onResumed()
-        val sensor = lightSensor
-        if (sensor != null) {
-            sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_NORMAL)
-            vm.onAmbientLight(null, true)
-        } else {
-            vm.onAmbientLight(null, false)
-        }
+        if (runtimeReady) startAmbientMonitoring()
         immersiveMode.recover("ACTIVITY_RESUMED")
     }
 
@@ -288,7 +309,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     }
 
     override fun onStop() {
-        vm.onHostStopped()
+        if (runtimeReady) vm.onHostStopped()
         activityDiagnostics.onStopped()
         super.onStop()
     }
@@ -316,6 +337,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (!runtimeReady) return super.onKeyDown(keyCode, event)
         // On settings, let the framework drive focus traversal. Back first closes a
         // submenu, then returns from the group list to the slideshow.
         if (screen == Screen.SETTINGS) {

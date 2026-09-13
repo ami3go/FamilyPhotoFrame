@@ -587,6 +587,22 @@ class ServiceLocator(private val appContext: Context) {
             .build()
     }
 
+    /**
+     * Materialize slideshow dependencies away from the main looper before the Activity
+     * asks for its ViewModel. On the API-22 frame, Room recovery and the first creation
+     * of the web/cache graph can take several seconds even though their later work is
+     * asynchronous. Keeping the lazies, but resolving them from the startup worker,
+     * preserves single ownership without blocking Activity resume.
+     */
+    fun prewarmSlideshowRuntime() {
+        settings
+        photoDao
+        engine
+        webServer
+        imageLoader
+        localThumbnailCache
+    }
+
     companion object {
         private const val BYTES_PER_MIB = 1024L * 1024L
         const val SOURCE_LOCAL_SAF = BuiltInSourceIds.LOCAL_SAF

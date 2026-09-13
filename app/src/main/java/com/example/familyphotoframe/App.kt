@@ -63,7 +63,6 @@ class App : Application() {
         if (BuildConfig.DEBUG) installStrictMode()
         services = ServiceLocator(this)
         val previousRuntimeBreadcrumb = services.runtimeBreadcrumbs.persisted()
-        seedRuntimeSnapshot()
 
         // Attach durable logging before anything else is recorded. A new session id per
         // process is what makes restarts — expected (reboot) or not (crash, low-memory
@@ -80,7 +79,11 @@ class App : Application() {
         )
         services.diagnostics.updateCrashEnvelopeHealth(
             previousEnvelope !is CrashEnvelopeStore.ReadResult.Missing,
-            crashEnvelopeStore.sizeBytes(),
+            when (previousEnvelope) {
+                CrashEnvelopeStore.ReadResult.Missing -> 0
+                is CrashEnvelopeStore.ReadResult.Corrupt -> previousEnvelope.sizeBytes
+                is CrashEnvelopeStore.ReadResult.Valid -> previousEnvelope.sizeBytes
+            },
         )
         installCrashRecorder()
         val processEvidencePreferences = getSharedPreferences(PROCESS_START_PREFS, MODE_PRIVATE)
@@ -125,7 +128,6 @@ class App : Application() {
                 "memoryClassMb" to activityManager.memoryClass.toString(),
                 "lowRam" to activityManager.isLowRamDevice.toString(),
                 "imageCacheMaxKb" to (imageCacheMaxBytes / 1024L).toString(),
-                "retainedBytes" to services.diagnostics.durableBytes().toString(),
                 "queueCapacity" to services.diagnostics.writerQueueCapacity().toString(),
                 "queueDepth" to services.diagnostics.writerQueueDepth().toString(),
                 "droppedTotal" to services.diagnostics.totalDroppedEvents().toString(),
@@ -166,6 +168,10 @@ class App : Application() {
         )
         startMainThreadWatchdog()
         appScope.launch {
+            // Debug.getPss() can be slow on the API-22 validation tablet. The first
+            // snapshot is only a seed for pressure callbacks, so it must not delay the
+            // Activity's first frame or make a cold start look like an ANR.
+            seedRuntimeSnapshot()
             reportCompletedMemoryProcessRecovery()
             recoverPreviousEvidence(previousEnvelope)
             inspectPreviousProcessExit(previousEnvelope is CrashEnvelopeStore.ReadResult.Valid)
