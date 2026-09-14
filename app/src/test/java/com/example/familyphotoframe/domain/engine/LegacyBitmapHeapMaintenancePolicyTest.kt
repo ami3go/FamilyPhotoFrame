@@ -56,7 +56,40 @@ class LegacyBitmapHeapMaintenancePolicyTest {
         assertEquals(LegacyBitmapHeapMaintenanceAction.REQUEST_GC, safe.action)
     }
 
-    @Test fun requestsAreLimitedToOncePerHour() {
+    @Test fun requestRequiresSixtyFourMiBRetiredSincePreviousCollection() {
+        val first = sample(
+            seededHighState(),
+            now = LegacyBitmapHeapMaintenancePolicy.WARMUP_MS + 120_000L,
+            heapMiB = 31,
+            releasedMiB = 340,
+        )
+        var state = first.state
+        repeat(3) { index ->
+            state = sample(
+                state,
+                now = first.state.lastRequestElapsedMs + (index + 1L) * 7L * 60_000L,
+                heapMiB = 31,
+                releasedMiB = if (index < 2) 403 else 404,
+            ).state
+        }
+        val belowThreshold = sample(
+            first.state.copy(consecutiveHighSamples = 3),
+            now = first.state.lastRequestElapsedMs + 20L * 60_000L,
+            heapMiB = 31,
+            releasedMiB = 403,
+        )
+        val atThreshold = sample(
+            state.copy(consecutiveHighSamples = 3),
+            now = first.state.lastRequestElapsedMs + 21L * 60_000L,
+            heapMiB = 31,
+            releasedMiB = 404,
+        )
+
+        assertEquals(LegacyBitmapHeapMaintenanceAction.NONE, belowThreshold.action)
+        assertEquals(LegacyBitmapHeapMaintenanceAction.REQUEST_GC, atThreshold.action)
+    }
+
+    @Test fun requestsAreLimitedToOncePerTwentyMinutes() {
         val first = sample(
             seededHighState(),
             now = LegacyBitmapHeapMaintenancePolicy.WARMUP_MS + 120_000L,
@@ -74,13 +107,13 @@ class LegacyBitmapHeapMaintenancePolicyTest {
         }
         val limited = sample(
             state,
-            now = first.state.lastRequestElapsedMs + 59L * 60_000L,
+            now = first.state.lastRequestElapsedMs + 19L * 60_000L,
             heapMiB = 32,
             releasedMiB = 700,
         )
         val allowed = sample(
             limited.state,
-            now = first.state.lastRequestElapsedMs + 60L * 60_000L,
+            now = first.state.lastRequestElapsedMs + 20L * 60_000L,
             heapMiB = 32,
             releasedMiB = 700,
         )

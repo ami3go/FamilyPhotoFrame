@@ -36,10 +36,18 @@ data class LegacyBitmapHeapMaintenanceDecision(
  *
  * This is deliberately not a periodic GC timer. Collection is eligible only after:
  *  - the two-hour warmup used by the authoritative accelerated gate;
- *  - at least 256 MiB of *released* bitmap traffic;
+ *  - at least 64 MiB of *released* bitmap traffic;
  *  - three consecutive one-minute samples at least 4 MiB above the warmup floor;
  *  - no pending legacy recycle and no active media transfer;
- *  - at least one hour since the previous request.
+ *  - at least twenty minutes since the previous request.
+ *
+ * The V80 build-68 run confirmed that every tracked allocation mapped exactly to one rendered
+ * photo member and every retired presentation balanced ownership, while Dalvik PSS correlated
+ * 0.965 with cumulative decoded pixels. Collection every 64-80 minutes reclaimed 5-10 MiB each
+ * time, but allowed old ART to recommit a higher managed-heap floor between requests.
+ * Sixty-four MiB is roughly one third of the observed hourly churn; the twenty-minute floor
+ * stays twice the qualification gate's ten-minute minimum while collecting before the next
+ * allocator expansion.
  *
  * Modern Android, standard-memory devices, OOM recovery, and ordinary low heap occupancy are
  * untouched. The caller executes the request off the main looper and records durable evidence.
@@ -49,9 +57,9 @@ object LegacyBitmapHeapMaintenancePolicy {
     const val MAX_SDK = 25
     const val BASELINE_START_MS = 30L * 60_000L
     const val WARMUP_MS = 2L * 60L * 60_000L
-    const val MIN_RETIRED_BYTES = 256L * 1024L * 1024L
+    const val MIN_RETIRED_BYTES = 64L * 1024L * 1024L
     const val MIN_HEAP_GROWTH_BYTES = 4L * 1024L * 1024L
-    const val MIN_REQUEST_INTERVAL_MS = 60L * 60_000L
+    const val MIN_REQUEST_INTERVAL_MS = 20L * 60_000L
     const val REQUIRED_HIGH_SAMPLES = 3
     const val MAX_ACTIVE_BITMAP_COUNT = 4
     const val MAX_ACTIVE_BITMAP_BYTES = 4L * 1024L * 1024L
