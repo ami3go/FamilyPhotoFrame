@@ -27,6 +27,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import com.example.familyphotoframe.data.diagnostics.RuntimeSampler
 import com.example.familyphotoframe.domain.engine.PlaybackMemoryState
+import com.example.familyphotoframe.domain.engine.LegacyBitmapHeapMaintenanceAction
+import com.example.familyphotoframe.domain.engine.LegacyBitmapHeapMaintenancePolicy
+import com.example.familyphotoframe.domain.engine.LegacyBitmapHeapMaintenanceState
 import com.example.familyphotoframe.domain.engine.MemorySelfRecoveryAction
 import com.example.familyphotoframe.domain.engine.MemorySelfRecoveryPolicy
 import com.example.familyphotoframe.domain.engine.MemorySelfRecoveryState
@@ -53,6 +56,7 @@ class App : Application() {
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var lastPressureClearAtMs: Long = 0L
     private var memorySelfRecoveryState = MemorySelfRecoveryState()
+    private var legacyBitmapHeapMaintenanceState = LegacyBitmapHeapMaintenanceState()
     private lateinit var crashEnvelopeStore: CrashEnvelopeStore
     private lateinit var processSessionId: String
     private var stallWatchdog: MainThreadStallWatchdog? = null
@@ -234,6 +238,9 @@ class App : Application() {
                     )
                 }
                 evaluateMemorySelfRecovery(protection, elapsedMs)
+                if (fullSampleDue) {
+                    evaluateLegacyBitmapHeapMaintenance(reading, protection, elapsedMs)
+                }
                 val now = System.currentTimeMillis()
                 if (pressure >= HEAP_PRESSURE_RATIO &&
                     now - lastPressureClearAtMs >= PRESSURE_CLEAR_COOLDOWN_MS
@@ -644,6 +651,58 @@ class App : Application() {
             MemorySelfRecoveryAction.RESTART_PROCESS ->
                 restartAfterPinnedMemory(protection, decision.trigger)
         }
+    }
+
+    /**
+     * Reclaim unreachable API-21..25 bitmap churn without changing playback quality or policy.
+     * This runs in [appScope]'s Default dispatcher, never on the main looper.
+     */
+    private fun evaluateLegacyBitmapHeapMaintenance(
+        reading: RuntimeSampler.HeapReading,
+        protection: PlaybackMemoryState,
+        elapsedMs: Long,
+    ) {
+        val bitmapLifecycle = services.bitmapLifecycleTracker.snapshot()
+        val runtime = services.diagnosticRuntimeState.snapshot()
+        val decision = LegacyBitmapHeapMaintenancePolicy.evaluate(
+            previous = legacyBitmapHeapMaintenanceState,
+            sdkInt = Build.VERSION.SDK_INT,
+            lowMemoryTier = protection.lowMemoryTier,
+            memoryLevel = protection.level,
+            oomCount = protection.totalOomCount,
+            nowElapsedMs = elapsedMs,
+            heapUsedBytes = reading.usedBytes,
+            heapMaxBytes = reading.maxBytes,
+            bitmapReleasedBytes = bitmapLifecycle.releasedBytes,
+            activeBitmapCount = bitmapLifecycle.activeCount,
+            activeBitmapBytes = bitmapLifecycle.activeBytes,
+            pendingDisposals = runtime.bitmaps.pendingDisposals,
+            activeMediaTransfers = runtime.memory.activeMediaTransfers,
+        )
+        legacyBitmapHeapMaintenanceState = decision.state
+        if (decision.action != LegacyBitmapHeapMaintenanceAction.REQUEST_GC) return
+
+        val beforeKb = RuntimeSampler.HeapReading.current().usedBytes / 1024L
+        Runtime.getRuntime().gc()
+        val afterKb = RuntimeSampler.HeapReading.current().usedBytes / 1024L
+        services.diagnostics.logEvent(
+            "LEGACY_BITMAP_HEAP_MAINTENANCE_GC",
+            mapOf(
+                "trigger" to "retired_bitmap_churn",
+                "gcRequested" to "true",
+                "heapBeforeKb" to beforeKb.toString(),
+                "heapAfterKb" to afterKb.toString(),
+                "freedKb" to (beforeKb - afterKb).coerceAtLeast(0L).toString(),
+                "bitmapTrackedReleasedBytes" to bitmapLifecycle.releasedBytes.toString(),
+                "bitmapTrackedActiveCount" to bitmapLifecycle.activeCount.toString(),
+                "bitmapTrackedActiveBytes" to bitmapLifecycle.activeBytes.toString(),
+                "pendingDisposals" to runtime.bitmaps.pendingDisposals.toString(),
+                "retiredBitmapBytesSinceGc" to decision.retiredBytesSinceRequest.toString(),
+                "heapGrowthKb" to (decision.heapGrowthBytes / 1024L).toString(),
+                "memoryProtectionLevel" to protection.level.name,
+            ),
+            DiagnosticContext(origin = DiagnosticOrigin.RECOVERY),
+        )
     }
 
     private suspend fun restartAfterPinnedMemory(

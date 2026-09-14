@@ -709,7 +709,11 @@ def _controller_gate(events: list[dict[str, Any]], start_at: int) -> GateResult:
 
 def _self_recovery_gate(events: list[dict[str, Any]]) -> GateResult:
     codes = _by_code(events)
-    gc_events = sorted(codes.get("MEMORY_SELF_RECOVERY_GC", []), key=_time)
+    gc_events = sorted(
+        codes.get("MEMORY_SELF_RECOVERY_GC", []) +
+        codes.get("LEGACY_BITMAP_HEAP_MAINTENANCE_GC", []),
+        key=_time,
+    )
     restarts = sorted(codes.get("MEMORY_PROCESS_RESTART_SCHEDULED", []), key=_time)
     completed = sorted(codes.get("MEMORY_PROCESS_RECOVERY_COMPLETED", []), key=_time)
     failures = codes.get("MEMORY_PROCESS_RESTART_FAILED", [])

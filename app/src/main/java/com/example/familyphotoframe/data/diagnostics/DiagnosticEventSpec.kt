@@ -205,6 +205,7 @@ object DiagnosticEventCatalog {
         "contentHashYieldsToMediaTransfers",
         "bitmapTrackedAllocations", "bitmapTrackedReleases", "bitmapTrackedAllocatedBytes",
         "bitmapTrackedReleasedBytes", "bitmapTrackedActiveCount", "bitmapTrackedActiveBytes",
+        "retiredBitmapBytesSinceGc", "heapGrowthKb",
         "bitmapTrackedPeakCount", "bitmapTrackedPeakBytes", "bitmapDecodedAllocations",
         "bitmapDecodedActiveCount", "bitmapDecodedActiveBytes", "bitmapGeneratedAllocations",
         "bitmapGeneratedActiveCount", "bitmapGeneratedActiveBytes", "bitmapTemporaryAllocations",
@@ -336,7 +337,8 @@ object DiagnosticEventCatalog {
     private val memoryCodes = setOf(
         "DECODE_OOM_RECOVERY", "HEAP_SAMPLE", "IMAGE_CACHE_CLEARED", "LOW_MEMORY", "TRIM_MEMORY",
         "MEMORY_PROTECTION_CHANGED", "MEMORY_CLEANUP_REQUESTED",
-        "MEMORY_SELF_RECOVERY_GC", "MEMORY_PROCESS_RESTART_SCHEDULED",
+        "MEMORY_SELF_RECOVERY_GC", "LEGACY_BITMAP_HEAP_MAINTENANCE_GC",
+        "MEMORY_PROCESS_RESTART_SCHEDULED",
         "MEMORY_PROCESS_RESTART_SUPPRESSED", "MEMORY_PROCESS_RESTART_FAILED",
         "MEMORY_PROCESS_RECOVERY_COMPLETED",
         "NATIVE_HIL_MODE_CHANGED",
