@@ -69,7 +69,7 @@ class SmbPhotoSource(
      * the source permanently closed without destroying a transport that is still serving
      * a scan, image decode, cache fill, EXIF read, or dimension probe.
      */
-    private val contextOwner = DeferredCloseResource(
+    private val contextOwner = RotatingDeferredCloseResource(
         factory = {
             val props = Properties().apply {
                 put("jcifs.smb.client.minVersion", "SMB202")   // SMB2+ only (no SMB1)
@@ -133,7 +133,7 @@ class SmbPhotoSource(
 
     override suspend fun healthCheck(timeoutMs: Long): SourceHealth = withContext(io) {
         val lease = contextOwner.acquire()
-        try {
+        val result = try {
             withTimeoutOrNull(timeoutMs) {
                 try {
                     val root = SmbFile(rootUrl(), lease.value.context)
@@ -151,6 +151,16 @@ class SmbPhotoSource(
         } finally {
             lease.close()
         }
+        // A failed jcifs-ng transport remains registered in the CIFSContext's private
+        // transport pool. The build-69 V80 evidence showed the consequence clearly: every
+        // application-owned stream/bitmap was balanced and native allocations returned to
+        // baseline, but unavailable NAS recovery probes raised Native Heap PSS by ~5 MiB and
+        // that committed plateau survived after the source recovered. Retire only that
+        // transport-failure generation; missing shares, permission failures, and configuration
+        // errors do not justify rebuilding the pool. Existing stream leases finish on the old
+        // generation, while the next probe lazily gets a clean context and transport pool.
+        if (result == SourceHealth.Unavailable) contextOwner.invalidate(lease)
+        result
     }
 
     override fun scan(previousCursor: ScanCursor?, options: ScanOptions): Flow<ScanEvent> = flow {
@@ -252,7 +262,7 @@ class SmbPhotoSource(
 
     private class LeaseReleasingInputStream(
         input: InputStream,
-        private val lease: DeferredCloseResource.Lease<TrackedContext>,
+        private val lease: AutoCloseable,
         private val resourceLease: RuntimeResourceTracker.Lease,
     ) : FilterInputStream(input) {
         private val closed = AtomicBoolean(false)
