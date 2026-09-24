@@ -49,7 +49,7 @@ internal fun PreparedPhotoFrame(
     bitmapLifecycleTracker: BitmapLifecycleTracker,
     onRecoverableOom: (DisplayPhoto, String) -> Unit,
     onMotionDiagnostic: (List<Long>, String) -> Unit,
-    contentAlpha: Float = 1f,
+    contentAlphaProvider: (() -> Float)? = null,
 ) {
     when (prepared) {
         is PreparedSlide.Single -> PreparedSinglePhoto(
@@ -61,7 +61,7 @@ internal fun PreparedPhotoFrame(
             reclaimer,
             bitmapLifecycleTracker,
             onRecoverableOom,
-            contentAlpha,
+            contentAlphaProvider?.invoke() ?: 1f,
         )
         is PreparedSlide.Collage -> if (
             prepared.layout == CollageLayout.TWO_COLUMNS ||
@@ -74,10 +74,10 @@ internal fun PreparedPhotoFrame(
                 allowDisplayMotion,
                 motionStore,
                 onMotionDiagnostic,
-                contentAlpha,
+                contentAlphaProvider,
             )
         } else {
-            PreparedAdaptiveCollage(prepared, state, contentAlpha)
+            PreparedAdaptiveCollage(prepared, state, contentAlphaProvider?.invoke() ?: 1f)
         }
     }
 }

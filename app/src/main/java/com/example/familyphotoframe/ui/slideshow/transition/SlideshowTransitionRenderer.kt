@@ -27,15 +27,15 @@ internal fun <T> SlideshowTransitionRenderer(
     outgoing: T?,
     incoming: T,
     transition: ResolvedTransition,
-    progress: Float,
+    progressProvider: () -> Float,
     render: @Composable (T) -> Unit,
-    renderWithDirectAlpha: (@Composable (T, Float) -> Unit)? = null,
+    renderWithDirectAlpha: (@Composable (T, () -> Float) -> Unit)? = null,
     renderBlurred: (@Composable (T) -> Unit)? = null,
 ) {
-    val p = progress.coerceIn(0f, 1f)
     when (transition.effect) {
         TransitionMode.CROSSFADE -> {
             if (renderWithDirectAlpha == null) {
+                val p = progressProvider().coerceIn(0f, 1f)
                 StandardRenderer(
                     outgoing = outgoing,
                     incoming = incoming,
@@ -46,13 +46,19 @@ internal fun <T> SlideshowTransitionRenderer(
                 DirectAlphaCrossfadeRenderer(
                     outgoing = outgoing,
                     incoming = incoming,
-                    frame = transitionFrame(TransitionMode.CROSSFADE, p),
+                    progressProvider = progressProvider,
                     render = renderWithDirectAlpha,
                 )
             }
         }
-        TransitionMode.SOFT_REVEAL -> SoftRevealRenderer(outgoing, incoming, p, render)
+        TransitionMode.SOFT_REVEAL -> SoftRevealRenderer(
+            outgoing,
+            incoming,
+            progressProvider().coerceIn(0f, 1f),
+            render,
+        )
         TransitionMode.SOFT_FOCUS_FADE -> {
+            val p = progressProvider().coerceIn(0f, 1f)
             if (renderBlurred == null) {
                 StandardRenderer(
                     outgoing = outgoing,
@@ -64,12 +70,15 @@ internal fun <T> SlideshowTransitionRenderer(
                 SoftFocusRenderer(outgoing, incoming, p, render, renderBlurred)
             }
         }
-        else -> StandardRenderer(
-            outgoing = outgoing,
-            incoming = incoming,
-            frame = transitionFrame(transition.effect, p, transition.direction),
-            render = render,
-        )
+        else -> {
+            val p = progressProvider().coerceIn(0f, 1f)
+            StandardRenderer(
+                outgoing = outgoing,
+                incoming = incoming,
+                frame = transitionFrame(transition.effect, p, transition.direction),
+                render = render,
+            )
+        }
     }
 }
 
@@ -82,12 +91,18 @@ internal fun <T> SlideshowTransitionRenderer(
 private fun <T> DirectAlphaCrossfadeRenderer(
     outgoing: T?,
     incoming: T,
-    frame: TransitionFrame,
-    render: @Composable (T, Float) -> Unit,
+    progressProvider: () -> Float,
+    render: @Composable (T, () -> Float) -> Unit,
 ) {
     Box(Modifier.fillMaxSize()) {
-        if (outgoing != null) render(outgoing, frame.outgoing.alpha.coerceIn(0f, 1f))
-        render(incoming, frame.incoming.alpha.coerceIn(0f, 1f))
+        if (outgoing != null) {
+            render(outgoing) {
+                crossfadeOutgoingAlpha(progressProvider()).coerceIn(0f, 1f)
+            }
+        }
+        render(incoming) {
+            crossfadeIncomingAlpha(progressProvider()).coerceIn(0f, 1f)
+        }
     }
 }
 
@@ -236,13 +251,11 @@ internal fun transitionFrame(
     val p = rawProgress.coerceIn(0f, 1f)
     return when (effect) {
         TransitionMode.CROSSFADE -> {
-            val incoming = FastOutSlowInEasing.transform(p)
-            val outgoing = LinearOutSlowInEasing.transform(p)
             TransitionFrame(
                 // Keep combined opacity at or above one so easing curves cannot create
                 // a dark flash that exposes the application background.
-                outgoing = LayerTransform(alpha = max(1f - incoming, 1f - outgoing)),
-                incoming = LayerTransform(alpha = incoming),
+                outgoing = LayerTransform(alpha = crossfadeOutgoingAlpha(p)),
+                incoming = LayerTransform(alpha = crossfadeIncomingAlpha(p)),
             )
         }
 
@@ -354,6 +367,16 @@ internal fun transitionFrame(
         TransitionMode.SOFT_FOCUS_FADE -> transitionFrame(TransitionMode.CROSSFADE, p, direction)
 
     }
+}
+
+private fun crossfadeIncomingAlpha(rawProgress: Float): Float =
+    FastOutSlowInEasing.transform(rawProgress.coerceIn(0f, 1f))
+
+private fun crossfadeOutgoingAlpha(rawProgress: Float): Float {
+    val p = rawProgress.coerceIn(0f, 1f)
+    val incoming = FastOutSlowInEasing.transform(p)
+    val outgoing = LinearOutSlowInEasing.transform(p)
+    return max(1f - incoming, 1f - outgoing)
 }
 
 private fun TransitionDirection.vector(): Pair<Float, Float> = when (this) {

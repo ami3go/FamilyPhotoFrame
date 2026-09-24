@@ -1,6 +1,7 @@
 package com.example.familyphotoframe.ui.slideshow
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -32,10 +33,16 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.ImageLoader
@@ -1371,7 +1378,7 @@ private fun PlayingContent(
                 outgoing = outgoing,
                 incoming = activeIncoming,
                 transition = activeTransition,
-                progress = transitionProgress,
+                progressProvider = { transitionProgress },
                 render = { slide ->
                     PreparedPhotoFrame(
                         prepared = slide,
@@ -1386,7 +1393,7 @@ private fun PlayingContent(
                         onMotionDiagnostic = onMotionDiagnostic,
                     )
                 },
-                renderWithDirectAlpha = { slide, contentAlpha ->
+                renderWithDirectAlpha = { slide, contentAlphaProvider ->
                     PreparedPhotoFrame(
                         prepared = slide,
                         state = state,
@@ -1398,7 +1405,7 @@ private fun PlayingContent(
                         bitmapLifecycleTracker = bitmapLifecycleTracker,
                         onRecoverableOom = onRecoverableOom,
                         onMotionDiagnostic = onMotionDiagnostic,
-                        contentAlpha = contentAlpha,
+                        contentAlphaProvider = contentAlphaProvider,
                     )
                 },
                 renderBlurred = { slide -> PreparedTransitionBlur(slide) },
@@ -1451,7 +1458,7 @@ internal fun PreparedCollage(
     allowDisplayMotion: Boolean,
     motionStore: PanelMotionStore,
     onMotionDiagnostic: (List<Long>, String) -> Unit,
-    contentAlpha: Float = 1f,
+    contentAlphaProvider: (() -> Float)? = null,
 ) {
     val gapDp = when (gap) {
         CollageGap.NONE -> 0.dp
@@ -1461,11 +1468,34 @@ internal fun PreparedCollage(
     }
     val tileScale = state.portraitCollage.scaleMode.toContentScale()
     val tileAlignment = state.portraitCollage.alignment.toComposeAlignment()
-    val opacity = contentAlpha.coerceIn(0f, 1f)
-    val tileBackground = state.portraitCollage.background
-        .toComposeColor(state.backgroundColorArgb)
-        .let { color -> color.copy(alpha = color.alpha * opacity) }
+    val tileBackground = state.portraitCollage.background.toComposeColor(state.backgroundColorArgb)
     val tileShape = RoundedCornerShape(state.portraitCollage.cornerRadiusDpClamped.dp)
+
+    // Build-71 hardware evidence isolated the persistent transition slowdown to static
+    // TWO_COLUMNS collages: all 50 latest warnings were this layout, while ownership,
+    // decode, I/O, and native memory remained healthy. Consume transition alpha from the
+    // Canvas draw phase for this common path so frame-clock updates invalidate drawing
+    // without recomposing both tile hierarchies. The bitmaps, crop/alignment policy,
+    // background, clipping, and filtering remain identical to the ordinary Image path.
+    if (
+        contentAlphaProvider != null &&
+        prepared.layout == CollageLayout.TWO_COLUMNS &&
+        prepared.tiles.size == 2
+    ) {
+        DirectAlphaTwoColumnCollage(
+            prepared = prepared,
+            gap = gapDp,
+            contentScale = tileScale,
+            alignment = tileAlignment,
+            background = tileBackground,
+            tileShape = tileShape,
+            alphaProvider = contentAlphaProvider,
+        )
+        return
+    }
+
+    val opacity = contentAlphaProvider?.invoke()?.coerceIn(0f, 1f) ?: 1f
+    val fadedTileBackground = tileBackground.copy(alpha = tileBackground.alpha * opacity)
 
     // Task §1: motion is defined for the three-equal-portrait-panel layout only.
     // Keep the whole motion composition path conditional, not merely the store write:
@@ -1594,7 +1624,7 @@ internal fun PreparedCollage(
     }
 
     Row(
-        modifier = Modifier.fillMaxSize().background(tileBackground),
+        modifier = Modifier.fillMaxSize().background(fadedTileBackground),
         horizontalArrangement = Arrangement.spacedBy(gapDp),
     ) {
         prepared.tiles.forEachIndexed { index, tile ->
@@ -1609,7 +1639,7 @@ internal fun PreparedCollage(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .background(tileBackground, tileShape)
+                    .background(fadedTileBackground, tileShape)
                     .clip(tileShape)
                     // Clip to the panel so transformed pixels never bleed into a neighbour.
                     .clipToBounds()
@@ -1631,6 +1661,73 @@ internal fun PreparedCollage(
             )
         }
     }
+}
+
+@Composable
+private fun DirectAlphaTwoColumnCollage(
+    prepared: PreparedSlide.Collage,
+    gap: androidx.compose.ui.unit.Dp,
+    contentScale: ContentScale,
+    alignment: Alignment,
+    background: Color,
+    tileShape: androidx.compose.ui.graphics.Shape,
+    alphaProvider: () -> Float,
+) {
+    Box(Modifier.fillMaxSize()) {
+        Canvas(Modifier.fillMaxSize()) {
+            drawRect(background, alpha = alphaProvider().coerceIn(0f, 1f))
+        }
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(gap),
+        ) {
+            prepared.tiles.forEach { tile ->
+                val imageBitmap = remember(tile.bitmap) { tile.bitmap.asImageBitmap() }
+                Canvas(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(tileShape)
+                        .clipToBounds()
+                ) {
+                    drawScaledBitmap(
+                        image = imageBitmap,
+                        contentScale = contentScale,
+                        alignment = alignment,
+                        alpha = alphaProvider().coerceIn(0f, 1f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun DrawScope.drawScaledBitmap(
+    image: ImageBitmap,
+    contentScale: ContentScale,
+    alignment: Alignment,
+    alpha: Float,
+) {
+    val sourceSize = Size(image.width.toFloat(), image.height.toFloat())
+    val scale = contentScale.computeScaleFactor(sourceSize, size)
+    val destinationSize = IntSize(
+        width = (sourceSize.width * scale.scaleX).roundToInt().coerceAtLeast(1),
+        height = (sourceSize.height * scale.scaleY).roundToInt().coerceAtLeast(1),
+    )
+    val canvasSize = IntSize(
+        width = size.width.roundToInt().coerceAtLeast(1),
+        height = size.height.roundToInt().coerceAtLeast(1),
+    )
+    val destinationOffset = alignment.align(destinationSize, canvasSize, layoutDirection)
+    drawImage(
+        image = image,
+        srcOffset = IntOffset.Zero,
+        srcSize = IntSize(image.width, image.height),
+        dstOffset = destinationOffset,
+        dstSize = destinationSize,
+        alpha = alpha,
+        filterQuality = FilterQuality.Low,
+    )
 }
 
 /**
