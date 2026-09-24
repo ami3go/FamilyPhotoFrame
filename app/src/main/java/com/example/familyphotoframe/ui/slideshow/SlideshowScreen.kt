@@ -24,6 +24,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
@@ -465,7 +466,13 @@ private fun PlayingContent(
         onDispose { registry.clear() }
     }
     val preparationMutex = remember { Mutex() }
-    val transitionProgress = remember { Animatable(1f) }
+    // This progress is derived directly from the frame clock; it is never animated by
+    // Animatable. Calling Animatable.snapTo on every frame needlessly enters its
+    // suspending mutation coordinator before Compose can draw. That showed up on the
+    // API-22 V80 as alternating one/two-vsync crossfade frames after startup. Primitive
+    // snapshot state preserves the same time-derived values without that per-frame
+    // coroutine/mutex work.
+    var transitionProgress by remember { mutableFloatStateOf(1f) }
     val transitionSelector = remember {
         TransitionSelector(Random(SystemClock.elapsedRealtimeNanos()))
     }
@@ -968,7 +975,7 @@ private fun PlayingContent(
             val previousInstantHandle = committedHandle
             val operation = nativeStageTracker.start(NativeAllocationStageTracker.Stage.TRANSITION)
             try {
-                transitionProgress.snapTo(1f)
+                transitionProgress = 1f
                 committedHandle = targetHandle
                 outgoingHandle = null
                 incomingHandle = null
@@ -1107,7 +1114,7 @@ private fun PlayingContent(
         outgoingHandle = previousHandle
         incomingHandle = targetHandle
         activeTransition = resolved
-        transitionProgress.snapTo(0f)
+        transitionProgress = 0f
         transitionState = TransitionState.Animating(
             outgoingPresentationId = previous?.anchor?.id,
             incomingPresentationId = target.anchor.id,
@@ -1126,7 +1133,7 @@ private fun PlayingContent(
             val firstFrameNs = withFrameNanos { it }
             firstFrameAtNs = firstFrameNs
             frameSampler.record(firstFrameNs)
-            transitionProgress.snapTo(0f)
+            transitionProgress = 0f
             while (currentCoroutineContext().isActive) {
                 val frameAtNs = withFrameNanos { it }
                 frameSampler.record(frameAtNs)
@@ -1134,7 +1141,7 @@ private fun PlayingContent(
                     elapsedNanos = (frameAtNs - firstFrameNs).coerceAtLeast(0L),
                     durationMs = durationMs,
                 )
-                transitionProgress.snapTo(progress)
+                transitionProgress = progress
                 if (progress >= 1f) break
             }
             completed = true
@@ -1158,7 +1165,7 @@ private fun PlayingContent(
                 // from NonCancellable anyway. Keep a prepared candidate for resume while
                 // refusing to make it visible or report it rendered in an old generation.
                 if (!isHostPlaybackTokenCurrent(lifecycleToken)) {
-                    transitionProgress.snapTo(1f)
+                    transitionProgress = 1f
                     outgoingHandle = null
                     incomingHandle = null
                     transitionState = TransitionState.Ready(
@@ -1190,7 +1197,7 @@ private fun PlayingContent(
                     // two-frame "transitions" and briefly rendering stale selections.
                     // Keep the last committed frame and let the new candidate start its
                     // own transition instead.
-                    transitionProgress.snapTo(1f)
+                    transitionProgress = 1f
                     outgoingHandle = null
                     incomingHandle = null
                     transitionState = if (previous != null) {
@@ -1226,7 +1233,7 @@ private fun PlayingContent(
                     return@withContext
                 }
 
-                transitionProgress.snapTo(1f)
+                transitionProgress = 1f
                 committedHandle = targetHandle
                 outgoingHandle = null
                 incomingHandle = null
@@ -1364,7 +1371,7 @@ private fun PlayingContent(
                 outgoing = outgoing,
                 incoming = activeIncoming,
                 transition = activeTransition,
-                progress = transitionProgress.value,
+                progress = transitionProgress,
                 render = { slide ->
                     PreparedPhotoFrame(
                         prepared = slide,
