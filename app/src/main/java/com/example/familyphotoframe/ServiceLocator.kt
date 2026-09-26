@@ -62,6 +62,8 @@ import com.example.familyphotoframe.domain.engine.DeviceMemoryTier
 import com.example.familyphotoframe.domain.engine.DeviceMemoryTierPolicy
 import com.example.familyphotoframe.util.ImageFormatSupport
 import com.example.familyphotoframe.util.ImageMemoryBudget
+import com.example.familyphotoframe.ui.slideshow.LegacyBitmapReuseDecoder
+import com.example.familyphotoframe.ui.slideshow.LegacyBitmapReusePool
 import java.io.File
 import kotlinx.coroutines.flow.first
 
@@ -144,6 +146,13 @@ class ServiceLocator(private val appContext: Context) {
     /** Bitmap lifetime counters. This tracker retains no Bitmap references. */
     val bitmapLifecycleTracker: BitmapLifecycleTracker = BitmapLifecycleTracker()
 
+    /** Physical pixel buffers reused only on the validated API-21..25 low-memory tier. */
+    internal val legacyBitmapReusePool: LegacyBitmapReusePool by lazy {
+        LegacyBitmapReusePool(
+            enabled = Build.VERSION.SDK_INT in 21..25 && memoryTier.isLow,
+        )
+    }
+
     /** Aggregate native-heap deltas at real decode/render stage boundaries. */
     val nativeAllocationStageTracker: NativeAllocationStageTracker =
         NativeAllocationStageTracker(
@@ -199,6 +208,7 @@ class ServiceLocator(private val appContext: Context) {
                 val procfs = procfsResourceSampler.sample()
                 val resources = runtimeResourceTracker.snapshot()
                 val bitmapLifecycle = bitmapLifecycleTracker.snapshot()
+                val legacyBitmapPool = legacyBitmapReusePool.snapshot()
                 val nativeStages = nativeAllocationStageTracker.snapshot()
                 val sampleElapsedMs = android.os.SystemClock.elapsedRealtime()
                 val oldestPendingDisposalAgeMs = bitmapInventory
@@ -286,6 +296,12 @@ class ServiceLocator(private val appContext: Context) {
                     "nativeHeapKb" to nativeHeapKb.toString(),
                     "imageCacheKb" to imageCacheKb.toString(),
                     "imageCacheMaxKb" to ((cache?.maxSize ?: 0).toLong() / 1024L).toString(),
+                    "legacyBitmapPoolCount" to legacyBitmapPool.count.toString(),
+                    "legacyBitmapPoolBytes" to legacyBitmapPool.bytes.toString(),
+                    "legacyBitmapPoolHits" to legacyBitmapPool.hits.toString(),
+                    "legacyBitmapPoolMisses" to legacyBitmapPool.misses.toString(),
+                    "legacyBitmapPoolOffers" to legacyBitmapPool.offers.toString(),
+                    "legacyBitmapPoolEvictions" to legacyBitmapPool.evictions.toString(),
                     "preparedSlideCount" to bitmapInventory.preparedSlideCount.toString(),
                     "renderedSlideCount" to bitmapInventory.renderedSlideCount.toString(),
                     "decodedBitmapCount" to bitmapInventory.decodedBitmapCount.toString(),
@@ -579,6 +595,14 @@ class ServiceLocator(private val appContext: Context) {
         )
         ImageLoader.Builder(appContext)
             .crossfade(false)
+            .components {
+                add(
+                    LegacyBitmapReuseDecoder.Factory(
+                        enabled = Build.VERSION.SDK_INT in 21..25 && memoryTier.isLow,
+                        pool = legacyBitmapReusePool,
+                    )
+                )
+            }
             .memoryCache {
                 MemoryCache.Builder(appContext)
                     .maxSizeBytes(cacheBytes)

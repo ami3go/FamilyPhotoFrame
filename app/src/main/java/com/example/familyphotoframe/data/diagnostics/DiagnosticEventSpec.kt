@@ -210,6 +210,8 @@ object DiagnosticEventCatalog {
         "bitmapDecodedActiveCount", "bitmapDecodedActiveBytes", "bitmapGeneratedAllocations",
         "bitmapGeneratedActiveCount", "bitmapGeneratedActiveBytes", "bitmapTemporaryAllocations",
         "bitmapTemporaryActiveCount", "bitmapTemporaryActiveBytes", "bitmapReleaseUnderflowCount",
+        "legacyBitmapPoolCount", "legacyBitmapPoolBytes", "legacyBitmapPoolHits",
+        "legacyBitmapPoolMisses", "legacyBitmapPoolOffers", "legacyBitmapPoolEvictions",
     ) + nativeStageFields
 
     private val lifecycleFields = setOf(

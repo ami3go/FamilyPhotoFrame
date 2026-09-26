@@ -172,6 +172,7 @@ class SlideshowViewModel(
         services.webServer.previewCaptureRequest
     internal val bitmapLifecycleTracker = services.bitmapLifecycleTracker
     internal val nativeAllocationStageTracker = services.nativeAllocationStageTracker
+    internal val legacyBitmapReusePool = services.legacyBitmapReusePool
     private val _hostActive = MutableStateFlow(false)
     val hostActive: StateFlow<Boolean> = _hostActive.asStateFlow()
     private val _hostGeneration = MutableStateFlow(0L)

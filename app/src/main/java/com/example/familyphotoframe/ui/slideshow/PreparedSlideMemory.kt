@@ -223,6 +223,7 @@ internal class LegacyBitmapReclaimer(
     private val sdkInt: Int,
     private val handler: Handler,
     private val lifecycleTracker: BitmapLifecycleTracker,
+    private val reusePool: LegacyBitmapReusePool? = null,
     private val graceMs: Long = DEFAULT_GRACE_MS,
     private val elapsedRealtimeMs: () -> Long = { System.nanoTime() / 1_000_000L },
     private val onPendingChanged: (PendingBitmapDisposals) -> Unit = {},
@@ -321,7 +322,11 @@ internal class LegacyBitmapReclaimer(
     private fun release(bitmaps: List<OwnedBitmap>, recycle: Boolean) {
         bitmaps.forEach { owned ->
             lifecycleTracker.recordRelease(owned.kind, owned.bytes)
-            if (recycle && !owned.bitmap.isRecycled) runCatching { owned.bitmap.recycle() }
+            if (recycle && !owned.bitmap.isRecycled) {
+                val pooled = owned.kind == BitmapLifecycleTracker.Kind.DECODED &&
+                    reusePool?.offer(owned.bitmap) == true
+                if (!pooled) runCatching { owned.bitmap.recycle() }
+            }
         }
     }
 

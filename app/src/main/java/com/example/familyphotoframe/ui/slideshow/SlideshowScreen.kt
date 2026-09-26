@@ -230,6 +230,7 @@ fun SlideshowScreen(
                 onBitmapInventory = vm::onBitmapInventory,
                 bitmapLifecycleTracker = vm.bitmapLifecycleTracker,
                 nativeStageTracker = vm.nativeAllocationStageTracker,
+                legacyBitmapReusePool = vm.legacyBitmapReusePool,
                 onMemoryCleanup = vm::onMemoryCleanup,
                 onMotionDiagnostic = vm::logThreePhotoMotion,
                 manualNavigationActive = controlsVisible,
@@ -416,6 +417,7 @@ private fun PlayingContent(
     onBitmapInventory: (PreparedBitmapInventory, PlaybackMemoryState) -> Unit,
     bitmapLifecycleTracker: BitmapLifecycleTracker,
     nativeStageTracker: NativeAllocationStageTracker,
+    legacyBitmapReusePool: LegacyBitmapReusePool,
     onMemoryCleanup: (Int, Long, Long) -> Unit,
     /** Task §16: panel-motion detail for one three-photo frame. */
     onMotionDiagnostic: (List<Long>, String) -> Unit,
@@ -446,6 +448,7 @@ private fun PlayingContent(
             sdkInt = Build.VERSION.SDK_INT,
             handler = Handler(Looper.getMainLooper()),
             lifecycleTracker = bitmapLifecycleTracker,
+            reusePool = legacyBitmapReusePool,
             onPendingChanged = { pendingDisposalsState.value = it },
         )
     }

@@ -7,6 +7,7 @@ import coil.ImageLoader
 import coil.request.ErrorResult
 import coil.request.CachePolicy
 import coil.request.ImageRequest
+import coil.request.Parameters
 import coil.request.SuccessResult
 import com.example.familyphotoframe.data.diagnostics.BitmapLifecycleTracker
 import com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker
@@ -362,6 +363,14 @@ private suspend fun decodePhoto(
             // Photographs are opaque, so ARGB_8888's alpha channel is a byte per pixel
             // of dead weight on the small heaps this runs on. See DecodeColorPolicy.
             .bitmapConfig(colorChoice.toBitmapConfig())
+            .parameters(
+                Parameters.Builder()
+                    .set(
+                        LEGACY_BITMAP_DECODE_PARAMETER,
+                        LegacyBitmapDecodeRequest(resolved.photo.exifOrientation),
+                    )
+                    .build()
+            )
             // PreparedSlide exclusively owns this software bitmap until retirement.
             // Retaining the same allocation in Coil doubles steady-state heap pressure.
             .memoryCachePolicy(CachePolicy.DISABLED)
