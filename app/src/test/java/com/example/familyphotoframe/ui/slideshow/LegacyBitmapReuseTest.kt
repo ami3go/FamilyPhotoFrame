@@ -44,6 +44,52 @@ class LegacyBitmapReuseTest {
     }
 
     @Test
+    fun poolEvictsSmallestAllocationWhenByteBudgetIsFull() {
+        val large = Bitmap.createBitmap(300, 100, Bitmap.Config.RGB_565)
+        val medium = Bitmap.createBitmap(250, 100, Bitmap.Config.RGB_565)
+        val small = Bitmap.createBitmap(100, 100, Bitmap.Config.RGB_565)
+        val retainedBytes = large.allocationByteCount.toLong() + medium.allocationByteCount
+        val pool = LegacyBitmapReusePool(
+            enabled = true,
+            maxCount = 4,
+            maxBytes = retainedBytes,
+        )
+
+        assertTrue(pool.offer(large))
+        assertTrue(pool.offer(small))
+        assertTrue(pool.offer(medium))
+
+        val snapshot = pool.snapshot()
+        assertEquals(2, snapshot.count)
+        assertEquals(retainedBytes, snapshot.bytes)
+        assertEquals(1, snapshot.evictions)
+        assertTrue(small.isRecycled)
+        assertSame(large, pool.take(55_000, Bitmap.Config.RGB_565))
+        assertSame(medium, pool.take(45_000, Bitmap.Config.RGB_565))
+    }
+
+    @Test
+    fun poolDoesNotEvictTheOnlyBufferForANewConfig() {
+        val large565 = Bitmap.createBitmap(300, 100, Bitmap.Config.RGB_565)
+        val small565 = Bitmap.createBitmap(100, 100, Bitmap.Config.RGB_565)
+        val argb = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)
+        val retainedBytes = large565.allocationByteCount.toLong() + argb.allocationByteCount
+        val pool = LegacyBitmapReusePool(
+            enabled = true,
+            maxCount = 4,
+            maxBytes = retainedBytes,
+        )
+
+        assertTrue(pool.offer(large565))
+        assertTrue(pool.offer(small565))
+        assertTrue(pool.offer(argb))
+
+        assertTrue(small565.isRecycled)
+        assertSame(argb, pool.take(1, Bitmap.Config.ARGB_8888))
+        assertSame(large565, pool.take(1, Bitmap.Config.RGB_565))
+    }
+
+    @Test
     fun sizingUsesPowerOfTwoSampleAndReservesPreDensityStorage() {
         val sizing = LegacyBitmapDecodeSizing.calculate(
             sourceWidth = 4000,

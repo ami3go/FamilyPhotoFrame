@@ -111,7 +111,26 @@ internal class LegacyBitmapReusePool(
 
     private fun trimLocked() {
         while (bitmaps.size > maxCount || pooledBytes > maxBytes) {
-            val removed = bitmaps.removeAt(0)
+            // A larger allocation can satisfy every request that a smaller allocation of
+            // the same config can satisfy. Keeping FIFO order therefore discards the most
+            // reusable buffers whenever varying photo dimensions fill the byte budget. The
+            // V80 build-73 soak made that failure mode visible: nearly every pool miss was
+            // paired with an eviction even though the pool stayed at its fixed 4 MiB cap.
+            // Prefer the smallest buffer dominated by another buffer of the same config.
+            // Fall back to the oldest entry only when every retained config/size is unique.
+            val dominated = bitmaps.indices.filter { candidateIndex ->
+                val candidate = bitmaps[candidateIndex]
+                val candidateBytes = candidate.reuseAllocationBytes()
+                bitmaps.indices.any { otherIndex ->
+                    otherIndex != candidateIndex &&
+                        bitmaps[otherIndex].config == candidate.config &&
+                        bitmaps[otherIndex].reuseAllocationBytes() >= candidateBytes
+                }
+            }
+            val removalIndex = dominated.minByOrNull { index ->
+                bitmaps[index].reuseAllocationBytes()
+            } ?: 0
+            val removed = bitmaps.removeAt(removalIndex)
             pooledBytes = (pooledBytes - removed.reuseAllocationBytes()).coerceAtLeast(0L)
             evictions++
             if (!removed.isRecycled) runCatching { removed.recycle() }
