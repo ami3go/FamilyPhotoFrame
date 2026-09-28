@@ -439,7 +439,7 @@ class PlaybackMemoryPolicyTest {
         assertFalse(state.allowWebPreview)
         assertTrue(state.forceSimpleTransition)
         assertEquals(2, state.maxCollagePhotos)
-        assertTrue(state.decodeScale < 1f)
+        assertEquals(1f, state.decodeScale)
         assertTrue(state.allowSelectedDecode)
     }
 }

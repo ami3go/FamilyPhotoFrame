@@ -105,7 +105,9 @@ data class PlaybackMemoryState(
 
     /** Decode below physical display size while guarded; the GPU scales the result. */
     val decodeScale: Float get() = when (level) {
-        PlaybackMemoryLevel.NORMAL -> if (lowMemoryTier) 0.82f else 1.0f
+        // DeviceMemoryTierPolicy owns the static low-tier ceiling. This value is only the
+        // reactive pressure ceiling, so NORMAL must not apply the same reduction again.
+        PlaybackMemoryLevel.NORMAL -> 1.0f
         PlaybackMemoryLevel.GUARDED -> 0.80f
         PlaybackMemoryLevel.CRITICAL -> 0.68f
         PlaybackMemoryLevel.CIRCUIT_OPEN -> 0.60f

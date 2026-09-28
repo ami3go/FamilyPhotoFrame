@@ -546,6 +546,9 @@ class App : Application() {
         trigger: String,
         clearCaches: Boolean = true,
     ) {
+        services.legacyBitmapReusePool.setMemoryPressureConstrained(
+            current.level != com.example.familyphotoframe.domain.engine.PlaybackMemoryLevel.NORMAL
+        )
         services.diagnosticRuntimeState.updateBitmapInventory(
             services.diagnosticRuntimeState.snapshot().bitmaps.copy(
                 memoryProtectionLevel = current.level.name,

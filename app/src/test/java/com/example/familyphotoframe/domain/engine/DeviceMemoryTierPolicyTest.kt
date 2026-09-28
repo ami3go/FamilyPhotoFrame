@@ -80,6 +80,30 @@ class DeviceMemoryTierPolicyTest {
         assertEquals(1f, DeviceMemoryTierPolicy.decodeScaleFor(DeviceMemoryTier.LOW, 1920, -5), 0.0001f)
     }
 
+    @Test fun staticAndPressureDecodeLimitsDoNotCompound() {
+        val baseline = DeviceMemoryTierPolicy.decodeScaleFor(
+            DeviceMemoryTier.LOW,
+            1920,
+            1200,
+        )
+
+        assertEquals(
+            baseline,
+            DeviceMemoryTierPolicy.effectiveDecodeScale(baseline, 1f),
+            0.0001f,
+        )
+        assertEquals(
+            0.68f,
+            DeviceMemoryTierPolicy.effectiveDecodeScale(baseline, 0.68f),
+            0.0001f,
+        )
+        assertEquals(
+            1f,
+            DeviceMemoryTierPolicy.effectiveDecodeScale(1f, 1f),
+            0.0001f,
+        )
+    }
+
     @Test fun theDiagnosticsRingIsSmallerOnALowTierFrame() {
         val low = DeviceMemoryTierPolicy.diagnosticsRingCapacity(DeviceMemoryTier.LOW)
         val standard = DeviceMemoryTierPolicy.diagnosticsRingCapacity(DeviceMemoryTier.STANDARD)

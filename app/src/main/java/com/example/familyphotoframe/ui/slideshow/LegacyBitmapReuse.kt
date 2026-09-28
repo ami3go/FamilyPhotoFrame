@@ -33,6 +33,7 @@ internal const val LEGACY_BITMAP_DECODE_PARAMETER =
 internal data class LegacyBitmapPoolSnapshot(
     val count: Int,
     val bytes: Long,
+    val budgetBytes: Long,
     val hits: Long,
     val misses: Long,
     val offers: Long,
@@ -40,6 +41,7 @@ internal data class LegacyBitmapPoolSnapshot(
     val rejectedOffers: Long,
     val reuseRejects: Long,
     val adaptiveTrims: Long,
+    val pressureTrims: Long,
     val requestBuckets: String,
     val hitBuckets: String,
     val missBuckets: String,
@@ -59,6 +61,7 @@ internal class LegacyBitmapReusePool(
     private val enabled: Boolean,
     private val maxCount: Int = DEFAULT_MAX_COUNT,
     private val maxBytes: Long = DEFAULT_MAX_BYTES,
+    private val pressureMaxBytes: Long = minOf(DEFAULT_PRESSURE_MAX_BYTES, maxBytes),
 ) {
     private val lock = Any()
     private val bitmaps = ArrayList<Bitmap>()
@@ -70,6 +73,8 @@ internal class LegacyBitmapReusePool(
     private var rejectedOffers = 0L
     private var reuseRejects = 0L
     private var adaptiveTrims = 0L
+    private var pressureTrims = 0L
+    private var retainedByteLimit = maxBytes
     private var totalRequests = 0L
     private var requestsSinceDemandDecay = 0
     private val recentDemand = LongArray(TELEMETRY_BUCKET_COUNT)
@@ -114,7 +119,7 @@ internal class LegacyBitmapReusePool(
         }
         if (bitmaps.any { it === bitmap }) return@synchronized true
         val bytes = bitmap.reuseAllocationBytes()
-        if (bytes <= 0L || bytes > maxBytes) {
+        if (bytes <= 0L || bytes > retainedByteLimit) {
             rejectedOffers++
             return@synchronized false
         }
@@ -129,6 +134,7 @@ internal class LegacyBitmapReusePool(
         LegacyBitmapPoolSnapshot(
             count = bitmaps.size,
             bytes = pooledBytes,
+            budgetBytes = retainedByteLimit,
             hits = hits,
             misses = misses,
             offers = offers,
@@ -136,6 +142,7 @@ internal class LegacyBitmapReusePool(
             rejectedOffers = rejectedOffers,
             reuseRejects = reuseRejects,
             adaptiveTrims = adaptiveTrims,
+            pressureTrims = pressureTrims,
             requestBuckets = requestBuckets.joinToString("+"),
             hitBuckets = hitBuckets.joinToString("+"),
             missBuckets = missBuckets.joinToString("+"),
@@ -147,12 +154,28 @@ internal class LegacyBitmapReusePool(
         reuseRejects++
     }
 
+    /**
+     * Keep the expanded working set only while the process is healthy. Under pressure,
+     * immediately return the extra four MiB to ART; returning to NORMAL merely restores
+     * the budget and does not allocate anything.
+     */
+    fun setMemoryPressureConstrained(constrained: Boolean) = synchronized(lock) {
+        if (!enabled) return@synchronized
+        val newLimit = if (constrained) pressureMaxBytes else maxBytes
+        if (newLimit == retainedByteLimit) return@synchronized
+        retainedByteLimit = newLimit
+        if (pooledBytes > retainedByteLimit) {
+            pressureTrims++
+            trimLocked()
+        }
+    }
+
     private fun trimLocked() {
-        if (bitmaps.size <= maxCount && pooledBytes <= maxBytes) return
+        if (bitmaps.size <= maxCount && pooledBytes <= retainedByteLimit) return
         if (totalRequests >= ADAPTIVE_MIN_REQUESTS && bitmaps.size <= MAX_ENUMERATED_BUFFERS) {
             adaptiveTrimLocked()
         }
-        while (bitmaps.size > maxCount || pooledBytes > maxBytes) {
+        while (bitmaps.size > maxCount || pooledBytes > retainedByteLimit) {
             // A larger allocation can satisfy every request that a smaller allocation of
             // the same config can satisfy. Keeping FIFO order therefore discards the most
             // reusable buffers whenever varying photo dimensions fill the byte budget. The
@@ -189,10 +212,10 @@ internal class LegacyBitmapReusePool(
             for (index in 0 until candidateCount) {
                 if (mask and (1 shl index) != 0) {
                     bytes += bitmaps[index].reuseAllocationBytes()
-                    if (bytes > maxBytes) break
+                    if (bytes > retainedByteLimit) break
                 }
             }
-            if (bytes > maxBytes) continue
+            if (bytes > retainedByteLimit) continue
             val score = subsetDemandScoreLocked(mask, candidateCount)
             if (score > bestScore ||
                 (score == bestScore && bytes < bestBytes) ||
@@ -286,6 +309,7 @@ internal class LegacyBitmapReusePool(
         // The extra 4 MiB is bounded process lifetime storage and is well below the
         // observed 100 MiB managed-heap budget; pressure recovery and GC policy are unchanged.
         const val DEFAULT_MAX_BYTES = 8L * 1024L * 1024L
+        const val DEFAULT_PRESSURE_MAX_BYTES = 4L * 1024L * 1024L
         const val SIZE_BUCKET_BYTES = 512L * 1024L
         const val REUSABLE_SIZE_BUCKET_COUNT = 8
         const val OVERFLOW_SIZE_BUCKET = REUSABLE_SIZE_BUCKET_COUNT

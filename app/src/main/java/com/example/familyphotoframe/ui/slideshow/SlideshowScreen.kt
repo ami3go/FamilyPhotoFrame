@@ -566,7 +566,10 @@ private fun PlayingContent(
             DecodeResolution.AUTO ->
                 DeviceMemoryTierPolicy.decodeScaleFor(state.memoryTier, targetW, targetH)
         }
-        val effectiveScale = baselineScale * memoryProtection.decodeScale
+        val effectiveScale = DeviceMemoryTierPolicy.effectiveDecodeScale(
+            baselineScale = baselineScale,
+            pressureScale = memoryProtection.decodeScale,
+        )
         val decodeW = (targetW * effectiveScale).roundToInt().coerceAtLeast(1)
         val decodeH = (targetH * effectiveScale).roundToInt().coerceAtLeast(1)
         val configuredMaxPhotos = state.portraitCollage.maxPhotosClamped

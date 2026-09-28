@@ -162,6 +162,30 @@ class LegacyBitmapReuseTest {
     }
 
     @Test
+    fun pressureImmediatelyShrinksExpandedPoolAndNormalOnlyRestoresBudget() {
+        val pool = LegacyBitmapReusePool(enabled = true)
+        val buffers = List(6) {
+            Bitmap.createBitmap(750, 800, Bitmap.Config.RGB_565)
+        }
+        buffers.forEach { assertTrue(pool.offer(it)) }
+
+        pool.setMemoryPressureConstrained(true)
+
+        val pressured = pool.snapshot()
+        assertEquals(4L * 1024L * 1024L, pressured.budgetBytes)
+        assertTrue(pressured.bytes <= pressured.budgetBytes)
+        assertEquals(1L, pressured.pressureTrims)
+        assertTrue(buffers.any(Bitmap::isRecycled))
+
+        pool.setMemoryPressureConstrained(false)
+
+        val recovered = pool.snapshot()
+        assertEquals(8L * 1024L * 1024L, recovered.budgetBytes)
+        assertEquals(pressured.bytes, recovered.bytes)
+        assertEquals(1L, recovered.pressureTrims)
+    }
+
+    @Test
     fun sizingUsesPowerOfTwoSampleAndReservesPreDensityStorage() {
         val sizing = LegacyBitmapDecodeSizing.calculate(
             sourceWidth = 4000,

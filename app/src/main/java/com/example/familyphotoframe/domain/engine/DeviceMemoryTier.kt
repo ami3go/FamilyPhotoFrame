@@ -72,6 +72,16 @@ object DeviceMemoryTierPolicy {
             .coerceIn(0.1f, 1f)
     }
 
+    /**
+     * Combines the device's static decode ceiling with the runtime pressure ceiling.
+     *
+     * These are independent upper bounds, not sequential resizes. Multiplying them made
+     * a low-tier panel pay the quality cost twice (0.81 × 0.68 on the V80), which was
+     * visible in the secondary collage tile. The stricter ceiling is sufficient.
+     */
+    fun effectiveDecodeScale(baselineScale: Float, pressureScale: Float): Float =
+        minOf(baselineScale, pressureScale).coerceIn(0.1f, 1f)
+
     /** In-memory diagnostics ring size; the durable file keeps the full history either way. */
     fun diagnosticsRingCapacity(tier: DeviceMemoryTier): Int =
         if (tier.isLow) 400 else 1000
