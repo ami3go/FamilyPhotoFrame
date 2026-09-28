@@ -279,7 +279,13 @@ internal class LegacyBitmapReusePool(
 
     private companion object {
         const val DEFAULT_MAX_COUNT = 6
-        const val DEFAULT_MAX_BYTES = 4L * 1024L * 1024L
+        // Build-76 V80 evidence showed that the former 4 MiB byte cap, rather than the
+        // six-entry cap, was the binding limit: the pool normally held only one or two
+        // 1-2 MiB buffers while three-photo collage bursts continued to allocate. Keep
+        // the same strict entry bound, but allow the common working set to remain reusable.
+        // The extra 4 MiB is bounded process lifetime storage and is well below the
+        // observed 100 MiB managed-heap budget; pressure recovery and GC policy are unchanged.
+        const val DEFAULT_MAX_BYTES = 8L * 1024L * 1024L
         const val SIZE_BUCKET_BYTES = 512L * 1024L
         const val REUSABLE_SIZE_BUCKET_COUNT = 8
         const val OVERFLOW_SIZE_BUCKET = REUSABLE_SIZE_BUCKET_COUNT

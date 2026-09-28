@@ -46,6 +46,9 @@ import android.graphics.Bitmap
 
 data class Photo(val id: Long)
 data class PreparedTile(val bitmap: Bitmap)
+internal class LegacyBitmapReusePool {
+    fun offer(bitmap: Bitmap): Boolean = false
+}
 sealed interface PreparedSlide {
     val anchor: Photo
     val photos: List<Photo>

@@ -130,6 +130,38 @@ class LegacyBitmapReuseTest {
     }
 
     @Test
+    fun defaultPoolRetainsSixCommonCollageBuffersWithinExpandedByteBudget() {
+        val pool = LegacyBitmapReusePool(enabled = true)
+        val buffers = List(6) {
+            Bitmap.createBitmap(750, 800, Bitmap.Config.RGB_565)
+        }
+
+        buffers.forEach { assertTrue(pool.offer(it)) }
+
+        val snapshot = pool.snapshot()
+        assertEquals(6, snapshot.count)
+        assertEquals(7_200_000L, snapshot.bytes)
+        assertEquals(0, snapshot.evictions)
+        buffers.forEach { assertTrue(!it.isRecycled) }
+    }
+
+    @Test
+    fun defaultPoolStillEnforcesSixBufferBound() {
+        val pool = LegacyBitmapReusePool(enabled = true)
+        val buffers = List(7) {
+            Bitmap.createBitmap(750, 800, Bitmap.Config.RGB_565)
+        }
+
+        buffers.forEach(pool::offer)
+
+        val snapshot = pool.snapshot()
+        assertEquals(6, snapshot.count)
+        assertTrue(snapshot.bytes <= 8L * 1024L * 1024L)
+        assertEquals(1, snapshot.evictions)
+        assertEquals(1, buffers.count(Bitmap::isRecycled))
+    }
+
+    @Test
     fun sizingUsesPowerOfTwoSampleAndReservesPreDensityStorage() {
         val sizing = LegacyBitmapDecodeSizing.calculate(
             sourceWidth = 4000,
