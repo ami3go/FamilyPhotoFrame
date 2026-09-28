@@ -117,7 +117,7 @@ class LegacyBitmapReuseTest {
         assertEquals(2, snapshot.count)
         assertEquals(retainedBytes, snapshot.bytes)
         assertEquals(1, snapshot.adaptiveTrims)
-        assertEquals(128, snapshot.requestBuckets.split(',').sumOf(String::toLong))
+        assertEquals(128, snapshot.requestBuckets.split('+').sumOf(String::toLong))
         assertSame(
             medium,
             pool.take(medium.allocationByteCount.toLong(), Bitmap.Config.ARGB_8888),

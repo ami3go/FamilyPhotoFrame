@@ -1,9 +1,12 @@
 # Build 75 legacy bitmap-pool contingency
 
-Status: activated for build 26.75.1 after build 74 completed 13.85 continuous hours and
-failed the authoritative total-PSS gate at a 20.09 MiB/24 h projection. Build 74 passed
-Java heap narrowly at +4.93 MiB/6 h and passed native/resource/ownership gates, isolating
-the remaining target to managed bitmap reuse and Dalvik committed high-water.
+Status: activated after build 74 completed 13.85 continuous hours and failed the
+authoritative total-PSS gate at a 20.09 MiB/24 h projection. Build 74 passed Java heap
+narrowly at +4.93 MiB/6 h and passed native/resource/ownership gates, isolating the
+remaining target to managed bitmap reuse and Dalvik committed high-water. Build 75.1
+proved the adaptive runtime path but encoded its aggregate buckets with a delimiter that
+the privacy boundary intentionally transformed; its brief window is not qualification
+evidence. The corrected, install-distinct validation candidate is build 26.76.1.
 
 ## Why this note exists
 

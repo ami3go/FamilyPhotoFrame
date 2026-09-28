@@ -5,10 +5,24 @@ import java.nio.file.Files
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DiagnosticsLogTest {
+    @Test fun bitmapPoolBucketTelemetryRemainsNumericAndVisible() {
+        val encoded = "0+12+345+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0"
+
+        val protected = DiagnosticPrivacyPolicy.protect(
+            "legacyBitmapPoolRequestBuckets",
+            encoded,
+        )
+
+        assertFalse(protected.transformed)
+        assertEquals(encoded, protected.value)
+    }
+
     @Test fun durableBundleStreamsQueuedEvents() {
         val root = Files.createTempDirectory("fpf-diagnostics").toFile()
         try {

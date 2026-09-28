@@ -136,10 +136,10 @@ internal class LegacyBitmapReusePool(
             rejectedOffers = rejectedOffers,
             reuseRejects = reuseRejects,
             adaptiveTrims = adaptiveTrims,
-            requestBuckets = requestBuckets.joinToString(","),
-            hitBuckets = hitBuckets.joinToString(","),
-            missBuckets = missBuckets.joinToString(","),
-            evictionBuckets = evictionBuckets.joinToString(","),
+            requestBuckets = requestBuckets.joinToString("+"),
+            hitBuckets = hitBuckets.joinToString("+"),
+            missBuckets = missBuckets.joinToString("+"),
+            evictionBuckets = evictionBuckets.joinToString("+"),
         )
     }
 
