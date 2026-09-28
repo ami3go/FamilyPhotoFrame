@@ -1,8 +1,9 @@
 # Build 75 legacy bitmap-pool contingency
 
-Status: design note only. Do not implement or start a build-75 validation window unless
-the authoritative build-74 memory gate fails or later evidence shows a repeatable reuse
-regression.
+Status: activated for build 26.75.1 after build 74 completed 13.85 continuous hours and
+failed the authoritative total-PSS gate at a 20.09 MiB/24 h projection. Build 74 passed
+Java heap narrowly at +4.93 MiB/6 h and passed native/resource/ownership gates, isolating
+the remaining target to managed bitmap reuse and Dalvik committed high-water.
 
 ## Why this note exists
 
@@ -62,7 +63,7 @@ offered buffer improves future request coverage, or how often a vendor decoder r
 an otherwise compatible `inBitmap` candidate. Another eviction heuristic without this
 information would be speculative.
 
-## Proposed bounded telemetry
+## Bounded telemetry
 
 Add fixed-size counters to `LegacyBitmapReusePool`; never log one event per decode.
 
@@ -82,10 +83,10 @@ Add fixed-size counters to `LegacyBitmapReusePool`; never log one event per deco
 The diagnostic schema must remain bounded and privacy-safe: no photo identity, filename,
 source location, dimensions, or path is recorded.
 
-## Candidate adaptive policy
+## Adaptive policy
 
-Retain best-fit selection in `take()`. Replace only the trim/admission decision, and only
-after enough requests have populated the bounded histogram.
+Build 75 retains best-fit selection in `take()`. It replaces only the trim/admission
+decision, and only after 128 requests have populated the bounded histogram.
 
 1. Form the candidate set from the currently retained buffers plus the newly offered
    buffer. At most seven entries are considered.

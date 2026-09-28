@@ -90,6 +90,46 @@ class LegacyBitmapReuseTest {
     }
 
     @Test
+    fun warmedPoolRetainsDemandWeightedSizeClassesWithinTheSameByteCap() {
+        val small = Bitmap.createBitmap(512, 256, Bitmap.Config.ARGB_8888)
+        val medium = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
+        val large = Bitmap.createBitmap(512, 768, Bitmap.Config.ARGB_8888)
+        val retainedBytes = small.allocationByteCount.toLong() +
+            medium.allocationByteCount.toLong()
+        assertEquals(retainedBytes, large.allocationByteCount.toLong())
+        val pool = LegacyBitmapReusePool(
+            enabled = true,
+            maxCount = 4,
+            maxBytes = retainedBytes,
+        )
+        repeat(100) {
+            assertNull(pool.take(small.allocationByteCount.toLong(), Bitmap.Config.ARGB_8888))
+        }
+        repeat(28) {
+            assertNull(pool.take(medium.allocationByteCount.toLong(), Bitmap.Config.ARGB_8888))
+        }
+
+        assertTrue(pool.offer(small))
+        assertTrue(pool.offer(medium))
+        assertTrue(!pool.offer(large))
+
+        val snapshot = pool.snapshot()
+        assertEquals(2, snapshot.count)
+        assertEquals(retainedBytes, snapshot.bytes)
+        assertEquals(1, snapshot.adaptiveTrims)
+        assertEquals(128, snapshot.requestBuckets.split(',').sumOf(String::toLong))
+        assertSame(
+            medium,
+            pool.take(medium.allocationByteCount.toLong(), Bitmap.Config.ARGB_8888),
+        )
+        assertSame(
+            small,
+            pool.take(small.allocationByteCount.toLong(), Bitmap.Config.ARGB_8888),
+        )
+        assertTrue(large.isRecycled)
+    }
+
+    @Test
     fun sizingUsesPowerOfTwoSampleAndReservesPreDensityStorage() {
         val sizing = LegacyBitmapDecodeSizing.calculate(
             sourceWidth = 4000,

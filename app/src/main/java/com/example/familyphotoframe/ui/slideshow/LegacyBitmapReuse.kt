@@ -37,6 +37,13 @@ internal data class LegacyBitmapPoolSnapshot(
     val misses: Long,
     val offers: Long,
     val evictions: Long,
+    val rejectedOffers: Long,
+    val reuseRejects: Long,
+    val adaptiveTrims: Long,
+    val requestBuckets: String,
+    val hitBuckets: String,
+    val missBuckets: String,
+    val evictionBuckets: String,
 )
 
 /**
@@ -60,9 +67,21 @@ internal class LegacyBitmapReusePool(
     private var misses = 0L
     private var offers = 0L
     private var evictions = 0L
+    private var rejectedOffers = 0L
+    private var reuseRejects = 0L
+    private var adaptiveTrims = 0L
+    private var totalRequests = 0L
+    private var requestsSinceDemandDecay = 0
+    private val recentDemand = LongArray(TELEMETRY_BUCKET_COUNT)
+    private val requestBuckets = LongArray(TELEMETRY_BUCKET_COUNT)
+    private val hitBuckets = LongArray(TELEMETRY_BUCKET_COUNT)
+    private val missBuckets = LongArray(TELEMETRY_BUCKET_COUNT)
+    private val evictionBuckets = LongArray(TELEMETRY_BUCKET_COUNT)
 
     fun take(minAllocationBytes: Long, config: Bitmap.Config): Bitmap? = synchronized(lock) {
         if (!enabled) return@synchronized null
+        val requestBucket = telemetryBucket(minAllocationBytes, config)
+        recordDemandLocked(requestBucket)
         var bestIndex = -1
         var bestBytes = Long.MAX_VALUE
         bitmaps.forEachIndexed { index, bitmap ->
@@ -76,21 +95,29 @@ internal class LegacyBitmapReusePool(
         }
         if (bestIndex < 0) {
             misses++
+            missBuckets[requestBucket]++
             null
         } else {
             val bitmap = bitmaps.removeAt(bestIndex)
             pooledBytes = (pooledBytes - bestBytes).coerceAtLeast(0L)
             hits++
+            hitBuckets[requestBucket]++
             bitmap
         }
     }
 
     /** Returns true when the pool took ownership; false means the caller must recycle. */
     fun offer(bitmap: Bitmap): Boolean = synchronized(lock) {
-        if (!enabled || bitmap.isRecycled || !bitmap.isMutable) return@synchronized false
+        if (!enabled || bitmap.isRecycled || !bitmap.isMutable) {
+            rejectedOffers++
+            return@synchronized false
+        }
         if (bitmaps.any { it === bitmap }) return@synchronized true
         val bytes = bitmap.reuseAllocationBytes()
-        if (bytes <= 0L || bytes > maxBytes) return@synchronized false
+        if (bytes <= 0L || bytes > maxBytes) {
+            rejectedOffers++
+            return@synchronized false
+        }
         offers++
         bitmaps += bitmap
         pooledBytes += bytes
@@ -106,10 +133,25 @@ internal class LegacyBitmapReusePool(
             misses = misses,
             offers = offers,
             evictions = evictions,
+            rejectedOffers = rejectedOffers,
+            reuseRejects = reuseRejects,
+            adaptiveTrims = adaptiveTrims,
+            requestBuckets = requestBuckets.joinToString(","),
+            hitBuckets = hitBuckets.joinToString(","),
+            missBuckets = missBuckets.joinToString(","),
+            evictionBuckets = evictionBuckets.joinToString(","),
         )
     }
 
+    fun recordDecoderReuseRejection() = synchronized(lock) {
+        reuseRejects++
+    }
+
     private fun trimLocked() {
+        if (bitmaps.size <= maxCount && pooledBytes <= maxBytes) return
+        if (totalRequests >= ADAPTIVE_MIN_REQUESTS && bitmaps.size <= MAX_ENUMERATED_BUFFERS) {
+            adaptiveTrimLocked()
+        }
         while (bitmaps.size > maxCount || pooledBytes > maxBytes) {
             // A larger allocation can satisfy every request that a smaller allocation of
             // the same config can satisfy. Keeping FIFO order therefore discards the most
@@ -130,16 +172,123 @@ internal class LegacyBitmapReusePool(
             val removalIndex = dominated.minByOrNull { index ->
                 bitmaps[index].reuseAllocationBytes()
             } ?: 0
-            val removed = bitmaps.removeAt(removalIndex)
-            pooledBytes = (pooledBytes - removed.reuseAllocationBytes()).coerceAtLeast(0L)
-            evictions++
-            if (!removed.isRecycled) runCatching { removed.recycle() }
+            evictLocked(removalIndex)
         }
     }
+
+    private fun adaptiveTrimLocked() {
+        val candidateCount = bitmaps.size
+        if (candidateCount == 0) return
+        val limit = 1 shl candidateCount
+        var bestMask = -1
+        var bestScore = Long.MIN_VALUE
+        var bestBytes = Long.MAX_VALUE
+        for (mask in 1 until limit) {
+            if (Integer.bitCount(mask) > maxCount) continue
+            var bytes = 0L
+            for (index in 0 until candidateCount) {
+                if (mask and (1 shl index) != 0) {
+                    bytes += bitmaps[index].reuseAllocationBytes()
+                    if (bytes > maxBytes) break
+                }
+            }
+            if (bytes > maxBytes) continue
+            val score = subsetDemandScoreLocked(mask, candidateCount)
+            if (score > bestScore ||
+                (score == bestScore && bytes < bestBytes) ||
+                (score == bestScore && bytes == bestBytes && (bestMask < 0 || mask < bestMask))
+            ) {
+                bestMask = mask
+                bestScore = score
+                bestBytes = bytes
+            }
+        }
+        if (bestMask < 0) return
+        adaptiveTrims++
+        for (index in candidateCount - 1 downTo 0) {
+            if (bestMask and (1 shl index) == 0) evictLocked(index)
+        }
+    }
+
+    private fun subsetDemandScoreLocked(mask: Int, candidateCount: Int): Long {
+        var score = 0L
+        for (configIndex in 0 until CONFIG_COUNT) {
+            for (sizeBucket in 0 until REUSABLE_SIZE_BUCKET_COUNT) {
+                val demand = recentDemand[configIndex * BUCKETS_PER_CONFIG + sizeBucket]
+                if (demand <= 0L) continue
+                var coverage = 0
+                for (index in 0 until candidateCount) {
+                    if (mask and (1 shl index) == 0) continue
+                    val bitmap = bitmaps[index]
+                    if (bitmapConfigIndex(bitmap.config) == configIndex &&
+                        reusableSizeBucket(bitmap.reuseAllocationBytes()) >= sizeBucket
+                    ) {
+                        coverage++
+                    }
+                }
+                for (rank in 0 until coverage) {
+                    score += demand * when (rank) {
+                        0 -> 100L
+                        1 -> 35L
+                        2 -> 10L
+                        else -> 3L
+                    }
+                }
+            }
+        }
+        return score
+    }
+
+    private fun recordDemandLocked(bucket: Int) {
+        if (requestsSinceDemandDecay >= DEMAND_DECAY_INTERVAL) {
+            recentDemand.indices.forEach { index ->
+                recentDemand[index] = (recentDemand[index] + 1L) / 2L
+            }
+            requestsSinceDemandDecay = 0
+        }
+        recentDemand[bucket]++
+        requestBuckets[bucket]++
+        totalRequests++
+        requestsSinceDemandDecay++
+    }
+
+    private fun evictLocked(index: Int) {
+        val removed = bitmaps.removeAt(index)
+        val removedBytes = removed.reuseAllocationBytes()
+        pooledBytes = (pooledBytes - removedBytes).coerceAtLeast(0L)
+        evictions++
+        evictionBuckets[telemetryBucket(removedBytes, removed.config)]++
+        if (!removed.isRecycled) runCatching { removed.recycle() }
+    }
+
+    private fun telemetryBucket(bytes: Long, config: Bitmap.Config?): Int {
+        val sizeBucket = reusableSizeBucket(bytes)
+        return bitmapConfigIndex(config) * BUCKETS_PER_CONFIG + sizeBucket
+    }
+
+    private fun reusableSizeBucket(bytes: Long): Int = if (bytes <= 0L) {
+        0
+    } else {
+        ((bytes - 1L) / SIZE_BUCKET_BYTES)
+            .coerceAtMost(OVERFLOW_SIZE_BUCKET.toLong())
+            .toInt()
+    }
+
+    private fun bitmapConfigIndex(config: Bitmap.Config?): Int =
+        if (config == Bitmap.Config.RGB_565) 0 else 1
 
     private companion object {
         const val DEFAULT_MAX_COUNT = 6
         const val DEFAULT_MAX_BYTES = 4L * 1024L * 1024L
+        const val SIZE_BUCKET_BYTES = 512L * 1024L
+        const val REUSABLE_SIZE_BUCKET_COUNT = 8
+        const val OVERFLOW_SIZE_BUCKET = REUSABLE_SIZE_BUCKET_COUNT
+        const val BUCKETS_PER_CONFIG = REUSABLE_SIZE_BUCKET_COUNT + 1
+        const val CONFIG_COUNT = 2
+        const val TELEMETRY_BUCKET_COUNT = CONFIG_COUNT * BUCKETS_PER_CONFIG
+        const val ADAPTIVE_MIN_REQUESTS = 128L
+        const val DEMAND_DECAY_INTERVAL = 256
+        const val MAX_ENUMERATED_BUFFERS = 12
     }
 }
 
@@ -239,6 +388,7 @@ internal class LegacyBitmapReuseDecoder private constructor(
         } catch (_: IllegalArgumentException) {
             // A few vendor decoders impose stricter inBitmap rules than API 19. Return
             // the untouched candidate and retry once without reuse rather than failing a slide.
+            if (candidate != null) pool.recordDecoderReuseRejection()
             candidate?.let(pool::offer)
             candidate = null
             decodeFile(file.absolutePath, config, sizing, null)
