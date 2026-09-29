@@ -215,6 +215,8 @@ object DiagnosticEventCatalog {
         "legacyBitmapPoolMisses", "legacyBitmapPoolOffers", "legacyBitmapPoolEvictions",
         "legacyBitmapPoolRejectedOffers", "legacyBitmapPoolReuseRejects",
         "legacyBitmapPoolAdaptiveTrims", "legacyBitmapPoolPressureTrims",
+        "legacyBitmapPoolCanonicalAllocations", "legacyBitmapPoolCanonicalAllocationFailures",
+        "legacyBitmapPoolPressureConstrained",
         "legacyBitmapPoolRequestBuckets",
         "legacyBitmapPoolHitBuckets", "legacyBitmapPoolMissBuckets",
         "legacyBitmapPoolEvictionBuckets",

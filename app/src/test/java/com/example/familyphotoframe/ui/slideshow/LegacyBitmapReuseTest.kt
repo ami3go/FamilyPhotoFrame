@@ -162,7 +162,7 @@ class LegacyBitmapReuseTest {
     }
 
     @Test
-    fun pressureImmediatelyShrinksExpandedPoolAndNormalOnlyRestoresBudget() {
+    fun pressureImmediatelyShrinksExpandedPoolAndKeepsStickyBudget() {
         val pool = LegacyBitmapReusePool(enabled = true)
         val buffers = List(6) {
             Bitmap.createBitmap(750, 800, Bitmap.Config.RGB_565)
@@ -180,9 +180,32 @@ class LegacyBitmapReuseTest {
         pool.setMemoryPressureConstrained(false)
 
         val recovered = pool.snapshot()
-        assertEquals(8L * 1024L * 1024L, recovered.budgetBytes)
+        assertEquals(4L * 1024L * 1024L, recovered.budgetBytes)
         assertEquals(pressured.bytes, recovered.bytes)
         assertEquals(1L, recovered.pressureTrims)
+        assertTrue(recovered.pressureConstrained)
+    }
+
+    @Test
+    fun canonicalMissAllocationUsesStableSizeClassWithoutChangingRequestedDimensions() {
+        val pool = LegacyBitmapReusePool(enabled = true)
+        val minimum = 1_100_000L
+
+        val first = pool.takeOrCreateCanonical(minimum, Bitmap.Config.RGB_565)
+        assertNotNull(first)
+        first!!
+        assertTrue(first.allocationByteCount.toLong() >= minimum)
+        assertTrue(first.allocationByteCount.toLong() >= 1_500_000L)
+        assertTrue(first.allocationByteCount.toLong() < 1_600_000L)
+        assertTrue(pool.offer(first))
+
+        val reused = pool.takeOrCreateCanonical(1_050_000L, Bitmap.Config.RGB_565)
+        assertSame(first, reused)
+        val snapshot = pool.snapshot()
+        assertEquals(1L, snapshot.canonicalAllocations)
+        assertEquals(0L, snapshot.canonicalAllocationFailures)
+        assertEquals(1L, snapshot.hits)
+        assertEquals(1L, snapshot.misses)
     }
 
     @Test

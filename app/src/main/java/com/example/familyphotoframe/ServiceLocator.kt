@@ -308,6 +308,12 @@ class ServiceLocator(private val appContext: Context) {
                     "legacyBitmapPoolReuseRejects" to legacyBitmapPool.reuseRejects.toString(),
                     "legacyBitmapPoolAdaptiveTrims" to legacyBitmapPool.adaptiveTrims.toString(),
                     "legacyBitmapPoolPressureTrims" to legacyBitmapPool.pressureTrims.toString(),
+                    "legacyBitmapPoolCanonicalAllocations" to
+                        legacyBitmapPool.canonicalAllocations.toString(),
+                    "legacyBitmapPoolCanonicalAllocationFailures" to
+                        legacyBitmapPool.canonicalAllocationFailures.toString(),
+                    "legacyBitmapPoolPressureConstrained" to
+                        legacyBitmapPool.pressureConstrained.toString(),
                     "legacyBitmapPoolRequestBuckets" to legacyBitmapPool.requestBuckets,
                     "legacyBitmapPoolHitBuckets" to legacyBitmapPool.hitBuckets,
                     "legacyBitmapPoolMissBuckets" to legacyBitmapPool.missBuckets,

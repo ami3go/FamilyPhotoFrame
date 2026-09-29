@@ -42,6 +42,9 @@ internal data class LegacyBitmapPoolSnapshot(
     val reuseRejects: Long,
     val adaptiveTrims: Long,
     val pressureTrims: Long,
+    val canonicalAllocations: Long,
+    val canonicalAllocationFailures: Long,
+    val pressureConstrained: Boolean,
     val requestBuckets: String,
     val hitBuckets: String,
     val missBuckets: String,
@@ -74,6 +77,9 @@ internal class LegacyBitmapReusePool(
     private var reuseRejects = 0L
     private var adaptiveTrims = 0L
     private var pressureTrims = 0L
+    private var canonicalAllocations = 0L
+    private var canonicalAllocationFailures = 0L
+    private var pressureConstrained = false
     private var retainedByteLimit = maxBytes
     private var totalRequests = 0L
     private var requestsSinceDemandDecay = 0
@@ -111,6 +117,37 @@ internal class LegacyBitmapReusePool(
         }
     }
 
+    /**
+     * Returns a pooled buffer or creates one allocation-size-class buffer on a miss.
+     *
+     * BitmapFactory otherwise allocates the exact output size, producing thousands of
+     * slightly different managed allocations that old ART cannot reuse efficiently. A
+     * bucket-ceiling backing store is still reconfigured by BitmapFactory to the requested
+     * image dimensions, so this changes allocation capacity only, never visible resolution.
+     */
+    fun takeOrCreateCanonical(minAllocationBytes: Long, config: Bitmap.Config): Bitmap? {
+        take(minAllocationBytes, config)?.let { return it }
+        val limit = synchronized(lock) {
+            if (!enabled || minAllocationBytes <= 0L || minAllocationBytes > retainedByteLimit) {
+                return null
+            }
+            retainedByteLimit
+        }
+        val bucketBytes = ceilToBucket(minAllocationBytes)
+        if (bucketBytes > limit) return null
+        val bytesPerPixel = config.bytesPerPixel().coerceAtLeast(1)
+        val pixels = (bucketBytes + bytesPerPixel - 1L) / bytesPerPixel
+        // Every 512 KiB class is exactly divisible by this row width for supported
+        // one-, two-, and four-byte configs, so allocationByteCount stays at the class
+        // ceiling rather than exceeding the active pool budget through row rounding.
+        val width = minOf(CANONICAL_ROW_PIXELS.toLong(), pixels).toInt().coerceAtLeast(1)
+        val height = ((pixels + width - 1L) / width).toInt().coerceAtLeast(1)
+        return runCatching { Bitmap.createBitmap(width, height, config) }
+            .onSuccess { synchronized(lock) { canonicalAllocations++ } }
+            .onFailure { synchronized(lock) { canonicalAllocationFailures++ } }
+            .getOrNull()
+    }
+
     /** Returns true when the pool took ownership; false means the caller must recycle. */
     fun offer(bitmap: Bitmap): Boolean = synchronized(lock) {
         if (!enabled || bitmap.isRecycled || !bitmap.isMutable) {
@@ -143,6 +180,9 @@ internal class LegacyBitmapReusePool(
             reuseRejects = reuseRejects,
             adaptiveTrims = adaptiveTrims,
             pressureTrims = pressureTrims,
+            canonicalAllocations = canonicalAllocations,
+            canonicalAllocationFailures = canonicalAllocationFailures,
+            pressureConstrained = pressureConstrained,
             requestBuckets = requestBuckets.joinToString("+"),
             hitBuckets = hitBuckets.joinToString("+"),
             missBuckets = missBuckets.joinToString("+"),
@@ -155,13 +195,15 @@ internal class LegacyBitmapReusePool(
     }
 
     /**
-     * Keep the expanded working set only while the process is healthy. Under pressure,
-     * immediately return the extra four MiB to ART; returning to NORMAL merely restores
-     * the budget and does not allocate anything.
+     * Keep the expanded working set only until this process first sees pressure. Under
+     * pressure, immediately return the extra four MiB to ART and keep the contracted cap
+     * for the rest of the process lifetime. Re-expanding after each recovery made API-22
+     * recommit new Dalvik pages while the prior high-water remained resident.
      */
     fun setMemoryPressureConstrained(constrained: Boolean) = synchronized(lock) {
         if (!enabled) return@synchronized
-        val newLimit = if (constrained) pressureMaxBytes else maxBytes
+        if (constrained) pressureConstrained = true
+        val newLimit = if (pressureConstrained) pressureMaxBytes else maxBytes
         if (newLimit == retainedByteLimit) return@synchronized
         retainedByteLimit = newLimit
         if (pooledBytes > retainedByteLimit) {
@@ -297,6 +339,11 @@ internal class LegacyBitmapReusePool(
             .toInt()
     }
 
+    private fun ceilToBucket(bytes: Long): Long {
+        val safe = bytes.coerceAtLeast(1L)
+        return ((safe - 1L) / SIZE_BUCKET_BYTES + 1L) * SIZE_BUCKET_BYTES
+    }
+
     private fun bitmapConfigIndex(config: Bitmap.Config?): Int =
         if (config == Bitmap.Config.RGB_565) 0 else 1
 
@@ -319,6 +366,7 @@ internal class LegacyBitmapReusePool(
         const val ADAPTIVE_MIN_REQUESTS = 128L
         const val DEMAND_DECAY_INTERVAL = 256
         const val MAX_ENUMERATED_BUFFERS = 12
+        const val CANONICAL_ROW_PIXELS = 1024
     }
 }
 
@@ -412,7 +460,7 @@ internal class LegacyBitmapReuseDecoder private constructor(
             bytesPerPixel = config.bytesPerPixel(),
         )
 
-        var candidate = pool.take(sizing.requiredAllocationBytes, config)
+        var candidate = pool.takeOrCreateCanonical(sizing.requiredAllocationBytes, config)
         val decoded = try {
             decodeFile(file.absolutePath, config, sizing, candidate)
         } catch (_: IllegalArgumentException) {
@@ -521,7 +569,7 @@ private fun orient(
     val width = bounds.width().roundToInt().coerceAtLeast(1)
     val height = bounds.height().roundToInt().coerceAtLeast(1)
     val requiredBytes = width.toLong() * height.toLong() * config.bytesPerPixel()
-    val candidate = pool.take(requiredBytes, config)
+    val candidate = pool.takeOrCreateCanonical(requiredBytes, config)
     val output = candidate?.let { reusable ->
         runCatching { reusable.reconfigure(width, height, config) }
             .fold(
