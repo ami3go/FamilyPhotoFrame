@@ -2,7 +2,12 @@ package com.example.familyphotoframe.ui.slideshow
 
 import android.graphics.Bitmap
 import coil.size.Scale
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -17,199 +22,108 @@ import org.robolectric.annotation.Config
 class LegacyBitmapReuseTest {
 
     @Test
-    fun poolReturnsSmallestCompatibleRetiredBitmap() {
-        val pool = LegacyBitmapReusePool(enabled = true, maxCount = 4, maxBytes = 4_000_000)
-        val large = Bitmap.createBitmap(800, 600, Bitmap.Config.RGB_565)
-        val small = Bitmap.createBitmap(400, 300, Bitmap.Config.RGB_565)
-        assertTrue(pool.offer(large))
-        assertTrue(pool.offer(small))
-
-        val reused = pool.take(200_000, Bitmap.Config.RGB_565)
-
-        assertSame(small, reused)
-        assertEquals(1, pool.snapshot().hits)
-        assertEquals(1, pool.snapshot().count)
-    }
-
-    @Test
-    fun poolRejectsWrongConfigAndDisabledTier() {
-        val enabled = LegacyBitmapReusePool(enabled = true)
-        enabled.offer(Bitmap.createBitmap(100, 100, Bitmap.Config.RGB_565))
-        assertNull(enabled.take(10_000, Bitmap.Config.ARGB_8888))
-
-        val disabled = LegacyBitmapReusePool(enabled = false)
-        val bitmap = Bitmap.createBitmap(100, 100, Bitmap.Config.RGB_565)
-        assertTrue(!disabled.offer(bitmap))
-        assertNull(disabled.take(1, Bitmap.Config.RGB_565))
-    }
-
-    @Test
-    fun poolEvictsSmallestAllocationWhenByteBudgetIsFull() {
-        val large = Bitmap.createBitmap(300, 100, Bitmap.Config.RGB_565)
-        val medium = Bitmap.createBitmap(250, 100, Bitmap.Config.RGB_565)
-        val small = Bitmap.createBitmap(100, 100, Bitmap.Config.RGB_565)
-        val retainedBytes = large.allocationByteCount.toLong() + medium.allocationByteCount
-        val pool = LegacyBitmapReusePool(
-            enabled = true,
-            maxCount = 4,
-            maxBytes = retainedBytes,
-        )
-
-        assertTrue(pool.offer(large))
-        assertTrue(pool.offer(small))
-        assertTrue(pool.offer(medium))
-
-        val snapshot = pool.snapshot()
-        assertEquals(2, snapshot.count)
-        assertEquals(retainedBytes, snapshot.bytes)
-        assertEquals(1, snapshot.evictions)
-        assertTrue(small.isRecycled)
-        assertSame(large, pool.take(55_000, Bitmap.Config.RGB_565))
-        assertSame(medium, pool.take(45_000, Bitmap.Config.RGB_565))
-    }
-
-    @Test
-    fun poolDoesNotEvictTheOnlyBufferForANewConfig() {
-        val large565 = Bitmap.createBitmap(300, 100, Bitmap.Config.RGB_565)
-        val small565 = Bitmap.createBitmap(100, 100, Bitmap.Config.RGB_565)
-        val argb = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)
-        val retainedBytes = large565.allocationByteCount.toLong() + argb.allocationByteCount
-        val pool = LegacyBitmapReusePool(
-            enabled = true,
-            maxCount = 4,
-            maxBytes = retainedBytes,
-        )
-
-        assertTrue(pool.offer(large565))
-        assertTrue(pool.offer(small565))
-        assertTrue(pool.offer(argb))
-
-        assertTrue(small565.isRecycled)
-        assertSame(argb, pool.take(1, Bitmap.Config.ARGB_8888))
-        assertSame(large565, pool.take(1, Bitmap.Config.RGB_565))
-    }
-
-    @Test
-    fun warmedPoolRetainsDemandWeightedSizeClassesWithinTheSameByteCap() {
-        val small = Bitmap.createBitmap(512, 256, Bitmap.Config.ARGB_8888)
-        val medium = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
-        val large = Bitmap.createBitmap(512, 768, Bitmap.Config.ARGB_8888)
-        val retainedBytes = small.allocationByteCount.toLong() +
-            medium.allocationByteCount.toLong()
-        assertEquals(retainedBytes, large.allocationByteCount.toLong())
-        val pool = LegacyBitmapReusePool(
-            enabled = true,
-            maxCount = 4,
-            maxBytes = retainedBytes,
-        )
-        repeat(100) {
-            assertNull(pool.take(small.allocationByteCount.toLong(), Bitmap.Config.ARGB_8888))
+    fun arenaCreatesOnlySixStableSlotsAndSeventhDecodeWaitsForRetirement() = runBlocking {
+        val arena = LegacyBitmapReusePool(enabled = true)
+        val leased = List(6) {
+            checkNotNull(arena.acquire(1_000_000L, Bitmap.Config.RGB_565))
         }
-        repeat(28) {
-            assertNull(pool.take(medium.allocationByteCount.toLong(), Bitmap.Config.ARGB_8888))
+        val full = arena.snapshot()
+        assertEquals(6, full.arenaAllocatedSlots)
+        assertEquals(6, full.arenaActiveSlots)
+        assertEquals(4, full.arenaStandardSlots)
+        assertEquals(2, full.arenaLargeSlots)
+
+        val seventh = async(start = CoroutineStart.UNDISPATCHED) {
+            arena.acquire(1_000_000L, Bitmap.Config.RGB_565)
         }
+        yield()
+        assertFalse(seventh.isCompleted)
+        assertEquals(1L, arena.snapshot().arenaWaits)
 
-        assertTrue(pool.offer(small))
-        assertTrue(pool.offer(medium))
-        assertTrue(!pool.offer(large))
-
-        val snapshot = pool.snapshot()
-        assertEquals(2, snapshot.count)
-        assertEquals(retainedBytes, snapshot.bytes)
-        assertEquals(1, snapshot.adaptiveTrims)
-        assertEquals(128, snapshot.requestBuckets.split('+').sumOf(String::toLong))
-        assertSame(
-            medium,
-            pool.take(medium.allocationByteCount.toLong(), Bitmap.Config.ARGB_8888),
-        )
-        assertSame(
-            small,
-            pool.take(small.allocationByteCount.toLong(), Bitmap.Config.ARGB_8888),
-        )
-        assertTrue(large.isRecycled)
+        assertTrue(arena.offer(leased.first()))
+        assertSame(leased.first(), seventh.await())
+        val resumed = arena.snapshot()
+        assertEquals(6, resumed.arenaAllocatedSlots)
+        assertEquals(6, resumed.arenaActiveSlots)
+        assertEquals(6L, resumed.canonicalAllocations)
     }
 
     @Test
-    fun defaultPoolRetainsSixCommonCollageBuffersWithinExpandedByteBudget() {
-        val pool = LegacyBitmapReusePool(enabled = true)
-        val buffers = List(6) {
-            Bitmap.createBitmap(750, 800, Bitmap.Config.RGB_565)
-        }
+    fun arenaUsesTwoAndFourMiBCapacityClasses() = runBlocking {
+        val arena = LegacyBitmapReusePool(enabled = true)
 
-        buffers.forEach { assertTrue(pool.offer(it)) }
+        val standard = arena.acquire(1_100_000L, Bitmap.Config.RGB_565)
+        val large = arena.acquire(2_500_000L, Bitmap.Config.RGB_565)
 
-        val snapshot = pool.snapshot()
-        assertEquals(6, snapshot.count)
-        assertEquals(7_200_000L, snapshot.bytes)
-        assertEquals(0, snapshot.evictions)
-        buffers.forEach { assertTrue(!it.isRecycled) }
+        assertNotNull(standard)
+        assertNotNull(large)
+        assertEquals(2L * 1024L * 1024L, standard!!.allocationByteCount.toLong())
+        assertEquals(4L * 1024L * 1024L, large!!.allocationByteCount.toLong())
+        assertEquals(2, arena.snapshot().arenaAllocatedSlots)
+        assertEquals(16L * 1024L * 1024L, arena.snapshot().budgetBytes)
     }
 
     @Test
-    fun defaultPoolStillEnforcesSixBufferBound() {
-        val pool = LegacyBitmapReusePool(enabled = true)
-        val buffers = List(7) {
-            Bitmap.createBitmap(750, 800, Bitmap.Config.RGB_565)
-        }
+    fun arenaNeverAdmitsForeignExactSizeBitmap() {
+        val arena = LegacyBitmapReusePool(enabled = true)
+        val foreign = Bitmap.createBitmap(100, 100, Bitmap.Config.RGB_565)
 
-        buffers.forEach(pool::offer)
-
-        val snapshot = pool.snapshot()
-        assertEquals(6, snapshot.count)
-        assertTrue(snapshot.bytes <= 8L * 1024L * 1024L)
-        assertEquals(1, snapshot.evictions)
-        assertEquals(1, buffers.count(Bitmap::isRecycled))
+        assertFalse(arena.offer(foreign))
+        assertEquals(0, arena.snapshot().arenaAllocatedSlots)
+        assertFalse(foreign.isRecycled)
     }
 
     @Test
-    fun pressureImmediatelyShrinksExpandedPoolAndKeepsStickyBudget() {
-        val pool = LegacyBitmapReusePool(enabled = true)
-        val buffers = List(6) {
-            Bitmap.createBitmap(750, 800, Bitmap.Config.RGB_565)
-        }
-        buffers.forEach { assertTrue(pool.offer(it)) }
+    fun retiredSlotCanChangePixelConfigWithoutChangingIdentityOrCapacity() = runBlocking {
+        val arena = LegacyBitmapReusePool(enabled = true)
+        val rgb = checkNotNull(arena.acquire(1_000_000L, Bitmap.Config.RGB_565))
+        val capacity = rgb.allocationByteCount
+        assertTrue(arena.offer(rgb))
 
-        pool.setMemoryPressureConstrained(true)
+        val argb = arena.acquire(1_000_000L, Bitmap.Config.ARGB_8888)
 
-        val pressured = pool.snapshot()
-        assertEquals(4L * 1024L * 1024L, pressured.budgetBytes)
-        assertTrue(pressured.bytes <= pressured.budgetBytes)
-        assertEquals(1L, pressured.pressureTrims)
-        assertTrue(buffers.any(Bitmap::isRecycled))
-
-        pool.setMemoryPressureConstrained(false)
-
-        val recovered = pool.snapshot()
-        assertEquals(4L * 1024L * 1024L, recovered.budgetBytes)
-        assertEquals(pressured.bytes, recovered.bytes)
-        assertEquals(1L, recovered.pressureTrims)
-        assertTrue(recovered.pressureConstrained)
+        assertSame(rgb, argb)
+        assertEquals(Bitmap.Config.ARGB_8888, argb!!.config)
+        assertEquals(capacity, argb.allocationByteCount)
+        assertEquals(1, arena.snapshot().arenaAllocatedSlots)
     }
 
     @Test
-    fun canonicalMissAllocationUsesStableSizeClassWithoutChangingRequestedDimensions() {
-        val pool = LegacyBitmapReusePool(enabled = true)
-        val minimum = 1_100_000L
+    fun oversizedRequestFailsWithoutCreatingUnboundedBitmap() = runBlocking {
+        val arena = LegacyBitmapReusePool(enabled = true)
 
-        val first = pool.takeOrCreateCanonical(minimum, Bitmap.Config.RGB_565)
-        assertNotNull(first)
-        first!!
-        assertTrue(first.allocationByteCount.toLong() >= minimum)
-        assertTrue(first.allocationByteCount.toLong() >= 1_500_000L)
-        assertTrue(first.allocationByteCount.toLong() < 1_600_000L)
-        assertTrue(pool.offer(first))
+        assertNull(arena.acquire(4L * 1024L * 1024L + 1L, Bitmap.Config.RGB_565))
 
-        val reused = pool.takeOrCreateCanonical(1_050_000L, Bitmap.Config.RGB_565)
-        assertSame(first, reused)
-        val snapshot = pool.snapshot()
-        assertEquals(1L, snapshot.canonicalAllocations)
-        assertEquals(0L, snapshot.canonicalAllocationFailures)
-        assertEquals(1L, snapshot.hits)
-        assertEquals(1L, snapshot.misses)
+        val snapshot = arena.snapshot()
+        assertEquals(0, snapshot.arenaAllocatedSlots)
+        assertEquals(1L, snapshot.arenaOversizedRequests)
+        assertEquals(0L, snapshot.canonicalAllocations)
     }
 
     @Test
-    fun sizingUsesPowerOfTwoSampleAndReservesPreDensityStorage() {
+    fun pressureStateIsStickyWithoutReallocatingArena() = runBlocking {
+        val arena = LegacyBitmapReusePool(enabled = true)
+        val first = checkNotNull(arena.acquire(1_000_000L, Bitmap.Config.RGB_565))
+        assertTrue(arena.offer(first))
+
+        arena.setMemoryPressureConstrained(true)
+        arena.setMemoryPressureConstrained(false)
+
+        val snapshot = arena.snapshot()
+        assertTrue(snapshot.pressureConstrained)
+        assertEquals(1, snapshot.arenaAllocatedSlots)
+        assertEquals(0L, snapshot.pressureTrims)
+    }
+
+    @Test
+    fun disabledTierDoesNotAllocateArenaSlots() = runBlocking {
+        val arena = LegacyBitmapReusePool(enabled = false)
+        assertNull(arena.acquire(1L, Bitmap.Config.RGB_565))
+        assertEquals(0, arena.snapshot().arenaAllocatedSlots)
+    }
+
+    @Test
+    fun sizingUsesPowerOfTwoSampleAndReservesScaledOutputStorage() {
         val sizing = LegacyBitmapDecodeSizing.calculate(
             sourceWidth = 4000,
             sourceHeight = 3000,
@@ -222,7 +136,7 @@ class LegacyBitmapReuseTest {
 
         assertEquals(4, sizing.sampleSize)
         assertEquals(0.8, sizing.densityScale, 0.0001)
-        assertEquals(1_500_000L, sizing.requiredAllocationBytes)
+        assertEquals(960_000L, sizing.requiredAllocationBytes)
     }
 
     @Test
@@ -237,9 +151,9 @@ class LegacyBitmapReuseTest {
             bytesPerPixel = 2,
         )
 
-        assertNotNull(sizing)
         assertEquals(4, sizing.sampleSize)
         assertEquals(0.8, sizing.densityScale, 0.0001)
+        assertEquals(960_000L, sizing.requiredAllocationBytes)
     }
 
     @Test

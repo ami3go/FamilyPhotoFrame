@@ -18,7 +18,9 @@ import coil.request.Options
 import coil.size.Dimension
 import coil.size.Scale
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
@@ -45,6 +47,12 @@ internal data class LegacyBitmapPoolSnapshot(
     val canonicalAllocations: Long,
     val canonicalAllocationFailures: Long,
     val pressureConstrained: Boolean,
+    val arenaAllocatedSlots: Int,
+    val arenaActiveSlots: Int,
+    val arenaWaits: Long,
+    val arenaOversizedRequests: Long,
+    val arenaStandardSlots: Int,
+    val arenaLargeSlots: Int,
     val requestBuckets: String,
     val hitBuckets: String,
     val missBuckets: String,
@@ -52,22 +60,28 @@ internal data class LegacyBitmapPoolSnapshot(
 )
 
 /**
- * Small process-local pool for fully retired slide bitmaps on API 21-25.
+ * Fixed process-local decoded-pixel arena for API 21-25.
  *
- * The V80 evidence showed balanced logical ownership but nearly four thousand fresh
- * BitmapFactory allocations in one soak. Old ART kept their Dalvik pages committed even
- * after every bitmap was retired. Reusing the pixel storage after the existing display-list
- * grace period removes that allocation churn without retaining a slide, photo, drawable,
+ * A buffer can be FREE in [bitmaps] or leased to one PreparedSlide/decode operation. The
+ * total of both states can never exceed six. A decoder that arrives while every compatible
+ * slot is leased suspends until the existing display-list grace period returns one; it never
+ * creates a seventh exact-size bitmap. Four 2 MiB standard slots and two 4 MiB large slots
+ * cover the observed full-screen/collage workload without retaining a photo, drawable,
  * Compose object, or source identity.
  */
 internal class LegacyBitmapReusePool(
     private val enabled: Boolean,
-    private val maxCount: Int = DEFAULT_MAX_COUNT,
-    private val maxBytes: Long = DEFAULT_MAX_BYTES,
-    private val pressureMaxBytes: Long = minOf(DEFAULT_PRESSURE_MAX_BYTES, maxBytes),
+    private val standardSlotCount: Int = DEFAULT_STANDARD_SLOT_COUNT,
+    private val largeSlotCount: Int = DEFAULT_LARGE_SLOT_COUNT,
+    private val standardSlotBytes: Long = DEFAULT_STANDARD_SLOT_BYTES,
+    private val largeSlotBytes: Long = DEFAULT_LARGE_SLOT_BYTES,
 ) {
+    private enum class SlotClass { STANDARD, LARGE }
+
     private val lock = Any()
     private val bitmaps = ArrayList<Bitmap>()
+    private val ownedSlots = java.util.IdentityHashMap<Bitmap, SlotClass>()
+    private val available = Channel<Unit>(capacity = Channel.CONFLATED)
     private var pooledBytes = 0L
     private var hits = 0L
     private var misses = 0L
@@ -80,7 +94,10 @@ internal class LegacyBitmapReusePool(
     private var canonicalAllocations = 0L
     private var canonicalAllocationFailures = 0L
     private var pressureConstrained = false
-    private var retainedByteLimit = maxBytes
+    private var standardSlotsAllocated = 0
+    private var largeSlotsAllocated = 0
+    private var arenaWaits = 0L
+    private var arenaOversizedRequests = 0L
     private var totalRequests = 0L
     private var requestsSinceDemandDecay = 0
     private val recentDemand = LongArray(TELEMETRY_BUCKET_COUNT)
@@ -90,88 +107,132 @@ internal class LegacyBitmapReusePool(
     private val evictionBuckets = LongArray(TELEMETRY_BUCKET_COUNT)
 
     fun take(minAllocationBytes: Long, config: Bitmap.Config): Bitmap? = synchronized(lock) {
-        if (!enabled) return@synchronized null
+        takeLocked(minAllocationBytes, config, recordRequest = true)
+    }
+
+    private fun takeLocked(
+        minAllocationBytes: Long,
+        config: Bitmap.Config,
+        recordRequest: Boolean,
+    ): Bitmap? {
+        if (!enabled) return null
         val requestBucket = telemetryBucket(minAllocationBytes, config)
-        recordDemandLocked(requestBucket)
+        if (recordRequest) recordDemandLocked(requestBucket)
         var bestIndex = -1
         var bestBytes = Long.MAX_VALUE
         bitmaps.forEachIndexed { index, bitmap ->
             val bytes = bitmap.reuseAllocationBytes()
-            if (!bitmap.isRecycled && bitmap.isMutable && bitmap.config == config &&
+            if (!bitmap.isRecycled && bitmap.isMutable &&
                 bytes >= minAllocationBytes && bytes < bestBytes
             ) {
                 bestIndex = index
                 bestBytes = bytes
             }
         }
-        if (bestIndex < 0) {
-            misses++
-            missBuckets[requestBucket]++
+        return if (bestIndex < 0) {
+            if (recordRequest) {
+                misses++
+                missBuckets[requestBucket]++
+            }
             null
         } else {
             val bitmap = bitmaps.removeAt(bestIndex)
             pooledBytes = (pooledBytes - bestBytes).coerceAtLeast(0L)
-            hits++
-            hitBuckets[requestBucket]++
+            if (recordRequest) {
+                hits++
+                hitBuckets[requestBucket]++
+            }
             bitmap
         }
     }
 
     /**
-     * Returns a pooled buffer or creates one allocation-size-class buffer on a miss.
-     *
-     * BitmapFactory otherwise allocates the exact output size, producing thousands of
-     * slightly different managed allocations that old ART cannot reuse efficiently. A
-     * bucket-ceiling backing store is still reconfigured by BitmapFactory to the requested
-     * image dimensions, so this changes allocation capacity only, never visible resolution.
+     * Lease a stable-capacity arena slot. Once all six slots exist, this function can only
+     * return one of those identities. Waiting is cancellation-safe and does not block a
+     * thread; the preparation watchdog remains authoritative if display retirement stalls.
      */
-    fun takeOrCreateCanonical(minAllocationBytes: Long, config: Bitmap.Config): Bitmap? {
-        take(minAllocationBytes, config)?.let { return it }
-        val limit = synchronized(lock) {
-            if (!enabled || minAllocationBytes <= 0L || minAllocationBytes > retainedByteLimit) {
+    suspend fun acquire(minAllocationBytes: Long, config: Bitmap.Config): Bitmap? {
+        if (!enabled || minAllocationBytes <= 0L) return null
+        var recorded = false
+        var waited = false
+        while (true) {
+            var reservation: SlotClass? = null
+            val reused = synchronized(lock) {
+                val taken = takeLocked(
+                    minAllocationBytes = minAllocationBytes,
+                    config = config,
+                    recordRequest = !recorded,
+                )
+                recorded = true
+                if (taken != null) return@synchronized taken
+                reservation = reserveSlotLocked(minAllocationBytes)
+                if (reservation == null && minAllocationBytes > largeSlotBytes) {
+                    arenaOversizedRequests++
+                } else if (reservation == null && !waited) {
+                    arenaWaits++
+                    waited = true
+                }
+                null
+            }
+            if (reused != null) {
+                if (reused.config == config || reconfigureSlot(reused, config)) return reused
+                // A vendor bitmap implementation refused a legal API-19+ config change.
+                // Return the identity and fail this preparation without allocating around
+                // the arena; a later request using its original config can still reuse it.
+                offer(reused)
+                synchronized(lock) { canonicalAllocationFailures++ }
                 return null
             }
-            retainedByteLimit
+            if (reservation == null) {
+                if (minAllocationBytes > largeSlotBytes) return null
+                available.receive()
+                continue
+            }
+            val slotClass = checkNotNull(reservation)
+            val capacity = if (slotClass == SlotClass.STANDARD) {
+                standardSlotBytes
+            } else {
+                largeSlotBytes
+            }
+            val created = createSlot(capacity, config)
+            synchronized(lock) {
+                if (created == null) {
+                    releaseReservationLocked(slotClass)
+                    canonicalAllocationFailures++
+                    available.trySend(Unit)
+                } else {
+                    ownedSlots[created] = slotClass
+                    canonicalAllocations++
+                }
+            }
+            return created
         }
-        val bucketBytes = ceilToBucket(minAllocationBytes)
-        if (bucketBytes > limit) return null
-        val bytesPerPixel = config.bytesPerPixel().coerceAtLeast(1)
-        val pixels = (bucketBytes + bytesPerPixel - 1L) / bytesPerPixel
-        // Every 512 KiB class is exactly divisible by this row width for supported
-        // one-, two-, and four-byte configs, so allocationByteCount stays at the class
-        // ceiling rather than exceeding the active pool budget through row rounding.
-        val width = minOf(CANONICAL_ROW_PIXELS.toLong(), pixels).toInt().coerceAtLeast(1)
-        val height = ((pixels + width - 1L) / width).toInt().coerceAtLeast(1)
-        return runCatching { Bitmap.createBitmap(width, height, config) }
-            .onSuccess { synchronized(lock) { canonicalAllocations++ } }
-            .onFailure { synchronized(lock) { canonicalAllocationFailures++ } }
-            .getOrNull()
     }
 
-    /** Returns true when the pool took ownership; false means the caller must recycle. */
+    /** Return a leased arena slot. Foreign/exact-size bitmaps are never admitted. */
     fun offer(bitmap: Bitmap): Boolean = synchronized(lock) {
-        if (!enabled || bitmap.isRecycled || !bitmap.isMutable) {
+        if (!enabled || bitmap.isRecycled || !bitmap.isMutable || ownedSlots[bitmap] == null) {
             rejectedOffers++
             return@synchronized false
         }
         if (bitmaps.any { it === bitmap }) return@synchronized true
         val bytes = bitmap.reuseAllocationBytes()
-        if (bytes <= 0L || bytes > retainedByteLimit) {
+        if (bytes <= 0L) {
             rejectedOffers++
             return@synchronized false
         }
         offers++
         bitmaps += bitmap
         pooledBytes += bytes
-        trimLocked()
-        bitmaps.any { it === bitmap }
+        available.trySend(Unit)
+        true
     }
 
     fun snapshot(): LegacyBitmapPoolSnapshot = synchronized(lock) {
         LegacyBitmapPoolSnapshot(
             count = bitmaps.size,
             bytes = pooledBytes,
-            budgetBytes = retainedByteLimit,
+            budgetBytes = arenaBudgetBytes(),
             hits = hits,
             misses = misses,
             offers = offers,
@@ -183,6 +244,12 @@ internal class LegacyBitmapReusePool(
             canonicalAllocations = canonicalAllocations,
             canonicalAllocationFailures = canonicalAllocationFailures,
             pressureConstrained = pressureConstrained,
+            arenaAllocatedSlots = ownedSlots.size,
+            arenaActiveSlots = (ownedSlots.size - bitmaps.size).coerceAtLeast(0),
+            arenaWaits = arenaWaits,
+            arenaOversizedRequests = arenaOversizedRequests,
+            arenaStandardSlots = standardSlotsAllocated,
+            arenaLargeSlots = largeSlotsAllocated,
             requestBuckets = requestBuckets.joinToString("+"),
             hitBuckets = hitBuckets.joinToString("+"),
             missBuckets = missBuckets.joinToString("+"),
@@ -195,114 +262,55 @@ internal class LegacyBitmapReusePool(
     }
 
     /**
-     * Keep the expanded working set only until this process first sees pressure. Under
-     * pressure, immediately return the extra four MiB to ART and keep the contracted cap
-     * for the rest of the process lifetime. Re-expanding after each recovery made API-22
-     * recommit new Dalvik pages while the prior high-water remained resident.
+     * Pressure is sticky telemetry for this fixed arena. Unlike the former elastic pool,
+     * there is no recovery expansion and no free-slot eviction/reallocation cycle.
      */
     fun setMemoryPressureConstrained(constrained: Boolean) = synchronized(lock) {
         if (!enabled) return@synchronized
         if (constrained) pressureConstrained = true
-        val newLimit = if (pressureConstrained) pressureMaxBytes else maxBytes
-        if (newLimit == retainedByteLimit) return@synchronized
-        retainedByteLimit = newLimit
-        if (pooledBytes > retainedByteLimit) {
-            pressureTrims++
-            trimLocked()
+    }
+
+    private fun reserveSlotLocked(minAllocationBytes: Long): SlotClass? {
+        if (minAllocationBytes <= standardSlotBytes &&
+            standardSlotsAllocated < standardSlotCount
+        ) {
+            standardSlotsAllocated++
+            return SlotClass.STANDARD
+        }
+        if (minAllocationBytes <= largeSlotBytes && largeSlotsAllocated < largeSlotCount) {
+            largeSlotsAllocated++
+            return SlotClass.LARGE
+        }
+        return null
+    }
+
+    private fun releaseReservationLocked(slotClass: SlotClass) {
+        if (slotClass == SlotClass.STANDARD) {
+            standardSlotsAllocated = (standardSlotsAllocated - 1).coerceAtLeast(0)
+        } else {
+            largeSlotsAllocated = (largeSlotsAllocated - 1).coerceAtLeast(0)
         }
     }
 
-    private fun trimLocked() {
-        if (bitmaps.size <= maxCount && pooledBytes <= retainedByteLimit) return
-        if (totalRequests >= ADAPTIVE_MIN_REQUESTS && bitmaps.size <= MAX_ENUMERATED_BUFFERS) {
-            adaptiveTrimLocked()
-        }
-        while (bitmaps.size > maxCount || pooledBytes > retainedByteLimit) {
-            // A larger allocation can satisfy every request that a smaller allocation of
-            // the same config can satisfy. Keeping FIFO order therefore discards the most
-            // reusable buffers whenever varying photo dimensions fill the byte budget. The
-            // V80 build-73 soak made that failure mode visible: nearly every pool miss was
-            // paired with an eviction even though the pool stayed at its fixed 4 MiB cap.
-            // Prefer the smallest buffer dominated by another buffer of the same config.
-            // Fall back to the oldest entry only when every retained config/size is unique.
-            val dominated = bitmaps.indices.filter { candidateIndex ->
-                val candidate = bitmaps[candidateIndex]
-                val candidateBytes = candidate.reuseAllocationBytes()
-                bitmaps.indices.any { otherIndex ->
-                    otherIndex != candidateIndex &&
-                        bitmaps[otherIndex].config == candidate.config &&
-                        bitmaps[otherIndex].reuseAllocationBytes() >= candidateBytes
-                }
-            }
-            val removalIndex = dominated.minByOrNull { index ->
-                bitmaps[index].reuseAllocationBytes()
-            } ?: 0
-            evictLocked(removalIndex)
-        }
+    private fun createSlot(capacityBytes: Long, config: Bitmap.Config): Bitmap? {
+        val bytesPerPixel = config.bytesPerPixel().coerceAtLeast(1)
+        val pixels = capacityBytes / bytesPerPixel
+        val width = minOf(CANONICAL_ROW_PIXELS.toLong(), pixels).toInt().coerceAtLeast(1)
+        val height = (pixels / width).toInt().coerceAtLeast(1)
+        return runCatching { Bitmap.createBitmap(width, height, config) }.getOrNull()
     }
 
-    private fun adaptiveTrimLocked() {
-        val candidateCount = bitmaps.size
-        if (candidateCount == 0) return
-        val limit = 1 shl candidateCount
-        var bestMask = -1
-        var bestScore = Long.MIN_VALUE
-        var bestBytes = Long.MAX_VALUE
-        for (mask in 1 until limit) {
-            if (Integer.bitCount(mask) > maxCount) continue
-            var bytes = 0L
-            for (index in 0 until candidateCount) {
-                if (mask and (1 shl index) != 0) {
-                    bytes += bitmaps[index].reuseAllocationBytes()
-                    if (bytes > retainedByteLimit) break
-                }
-            }
-            if (bytes > retainedByteLimit) continue
-            val score = subsetDemandScoreLocked(mask, candidateCount)
-            if (score > bestScore ||
-                (score == bestScore && bytes < bestBytes) ||
-                (score == bestScore && bytes == bestBytes && (bestMask < 0 || mask < bestMask))
-            ) {
-                bestMask = mask
-                bestScore = score
-                bestBytes = bytes
-            }
-        }
-        if (bestMask < 0) return
-        adaptiveTrims++
-        for (index in candidateCount - 1 downTo 0) {
-            if (bestMask and (1 shl index) == 0) evictLocked(index)
-        }
+    private fun reconfigureSlot(bitmap: Bitmap, config: Bitmap.Config): Boolean {
+        val capacityBytes = bitmap.reuseAllocationBytes()
+        val bytesPerPixel = config.bytesPerPixel().coerceAtLeast(1)
+        val pixels = capacityBytes / bytesPerPixel
+        val width = minOf(CANONICAL_ROW_PIXELS.toLong(), pixels).toInt().coerceAtLeast(1)
+        val height = (pixels / width).toInt().coerceAtLeast(1)
+        return runCatching { bitmap.reconfigure(width, height, config) }.isSuccess
     }
 
-    private fun subsetDemandScoreLocked(mask: Int, candidateCount: Int): Long {
-        var score = 0L
-        for (configIndex in 0 until CONFIG_COUNT) {
-            for (sizeBucket in 0 until REUSABLE_SIZE_BUCKET_COUNT) {
-                val demand = recentDemand[configIndex * BUCKETS_PER_CONFIG + sizeBucket]
-                if (demand <= 0L) continue
-                var coverage = 0
-                for (index in 0 until candidateCount) {
-                    if (mask and (1 shl index) == 0) continue
-                    val bitmap = bitmaps[index]
-                    if (bitmapConfigIndex(bitmap.config) == configIndex &&
-                        reusableSizeBucket(bitmap.reuseAllocationBytes()) >= sizeBucket
-                    ) {
-                        coverage++
-                    }
-                }
-                for (rank in 0 until coverage) {
-                    score += demand * when (rank) {
-                        0 -> 100L
-                        1 -> 35L
-                        2 -> 10L
-                        else -> 3L
-                    }
-                }
-            }
-        }
-        return score
-    }
+    private fun arenaBudgetBytes(): Long =
+        standardSlotCount * standardSlotBytes + largeSlotCount * largeSlotBytes
 
     private fun recordDemandLocked(bucket: Int) {
         if (requestsSinceDemandDecay >= DEMAND_DECAY_INTERVAL) {
@@ -315,15 +323,6 @@ internal class LegacyBitmapReusePool(
         requestBuckets[bucket]++
         totalRequests++
         requestsSinceDemandDecay++
-    }
-
-    private fun evictLocked(index: Int) {
-        val removed = bitmaps.removeAt(index)
-        val removedBytes = removed.reuseAllocationBytes()
-        pooledBytes = (pooledBytes - removedBytes).coerceAtLeast(0L)
-        evictions++
-        evictionBuckets[telemetryBucket(removedBytes, removed.config)]++
-        if (!removed.isRecycled) runCatching { removed.recycle() }
     }
 
     private fun telemetryBucket(bytes: Long, config: Bitmap.Config?): Int {
@@ -339,33 +338,21 @@ internal class LegacyBitmapReusePool(
             .toInt()
     }
 
-    private fun ceilToBucket(bytes: Long): Long {
-        val safe = bytes.coerceAtLeast(1L)
-        return ((safe - 1L) / SIZE_BUCKET_BYTES + 1L) * SIZE_BUCKET_BYTES
-    }
-
     private fun bitmapConfigIndex(config: Bitmap.Config?): Int =
         if (config == Bitmap.Config.RGB_565) 0 else 1
 
     private companion object {
-        const val DEFAULT_MAX_COUNT = 6
-        // Build-76 V80 evidence showed that the former 4 MiB byte cap, rather than the
-        // six-entry cap, was the binding limit: the pool normally held only one or two
-        // 1-2 MiB buffers while three-photo collage bursts continued to allocate. Keep
-        // the same strict entry bound, but allow the common working set to remain reusable.
-        // The extra 4 MiB is bounded process lifetime storage and is well below the
-        // observed 100 MiB managed-heap budget; pressure recovery and GC policy are unchanged.
-        const val DEFAULT_MAX_BYTES = 8L * 1024L * 1024L
-        const val DEFAULT_PRESSURE_MAX_BYTES = 4L * 1024L * 1024L
+        const val DEFAULT_STANDARD_SLOT_COUNT = 4
+        const val DEFAULT_LARGE_SLOT_COUNT = 2
+        const val DEFAULT_STANDARD_SLOT_BYTES = 2L * 1024L * 1024L
+        const val DEFAULT_LARGE_SLOT_BYTES = 4L * 1024L * 1024L
         const val SIZE_BUCKET_BYTES = 512L * 1024L
         const val REUSABLE_SIZE_BUCKET_COUNT = 8
         const val OVERFLOW_SIZE_BUCKET = REUSABLE_SIZE_BUCKET_COUNT
         const val BUCKETS_PER_CONFIG = REUSABLE_SIZE_BUCKET_COUNT + 1
         const val CONFIG_COUNT = 2
         const val TELEMETRY_BUCKET_COUNT = CONFIG_COUNT * BUCKETS_PER_CONFIG
-        const val ADAPTIVE_MIN_REQUESTS = 128L
         const val DEMAND_DECAY_INTERVAL = 256
-        const val MAX_ENUMERATED_BUFFERS = 12
         const val CANONICAL_ROW_PIXELS = 1024
     }
 }
@@ -404,11 +391,12 @@ internal data class LegacyBitmapDecodeSizing(
             val densityScale = if (scale == Scale.FILL) max(widthScale, heightScale)
             else min(widthScale, heightScale)
 
-            // A candidate at the sampled (pre-density) size is always large enough for
-            // BitmapFactory's scaled output and avoids device-specific rounding failures.
+            // Reserve the actual density-scaled decoder output rather than the larger
+            // pre-density intermediate. The arena class ceiling supplies 0.5-2 MiB of
+            // rounding headroom, while avoiding false 4+ MiB requests for a 1 MiB tile.
             val sampledRawWidth = ceil(sourceWidth.toDouble() / sample).toLong().coerceAtLeast(1L)
             val sampledRawHeight = ceil(sourceHeight.toDouble() / sample).toLong().coerceAtLeast(1L)
-            val allocationScale = densityScale.coerceAtLeast(1.0)
+            val allocationScale = densityScale.coerceAtLeast(MIN_OUTPUT_SCALE)
             val required = ceil(sampledRawWidth * allocationScale).toLong()
                 .coerceAtMost(MAX_DIMENSION_FOR_SAFE_MULTIPLY)
                 .times(
@@ -420,6 +408,7 @@ internal data class LegacyBitmapDecodeSizing(
         }
 
         private const val MAX_DIMENSION_FOR_SAFE_MULTIPLY = 1_000_000L
+        private const val MIN_OUTPUT_SCALE = 0.01
     }
 }
 
@@ -431,54 +420,85 @@ internal class LegacyBitmapReuseDecoder private constructor(
     private val pool: LegacyBitmapReusePool,
 ) : Decoder {
 
-    override suspend fun decode(): DecodeResult = withContext(Dispatchers.IO) {
-        val file = sourceResult.source.file().toFile()
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(file.absolutePath, bounds)
-        check(bounds.outWidth > 0 && bounds.outHeight > 0) {
-            "BitmapFactory could not read image bounds"
-        }
+    override suspend fun decode(): DecodeResult {
+        // withContext has prompt cancellation. Keep the final arena lease here until the
+        // DecodeResult is actually delivered to Coil so cancellation on the dispatcher return
+        // hop cannot permanently remove one of the six fixed identities from the arena.
+        val undelivered = AtomicReference<Bitmap?>(null)
+        try {
+            val result = withContext(Dispatchers.IO) {
+                val file = sourceResult.source.file().toFile()
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(file.absolutePath, bounds)
+                check(bounds.outWidth > 0 && bounds.outHeight > 0) {
+                    "BitmapFactory could not read image bounds"
+                }
 
-        val config = options.config.toReusableSoftwareConfig()
-        val targetWidth = (options.size.width as? Dimension.Pixels)?.px ?: bounds.outWidth
-        val targetHeight = (options.size.height as? Dimension.Pixels)?.px ?: bounds.outHeight
-        val exifOrientation = request.exifOrientation.takeIf { it in 1..8 }
-            ?: runCatching {
-                ExifInterface(file.absolutePath).getAttributeInt(
-                    ExifInterface.TAG_ORIENTATION,
-                    ExifInterface.ORIENTATION_NORMAL,
+                val config = options.config.toReusableSoftwareConfig()
+                val targetWidth = (options.size.width as? Dimension.Pixels)?.px ?: bounds.outWidth
+                val targetHeight = (options.size.height as? Dimension.Pixels)?.px ?: bounds.outHeight
+                val exifOrientation = request.exifOrientation.takeIf { it in 1..8 }
+                    ?: runCatching {
+                        ExifInterface(file.absolutePath).getAttributeInt(
+                            ExifInterface.TAG_ORIENTATION,
+                            ExifInterface.ORIENTATION_NORMAL,
+                        )
+                    }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+                val rotated = exifOrientation in 5..8
+                val sizing = LegacyBitmapDecodeSizing.calculate(
+                    sourceWidth = bounds.outWidth,
+                    sourceHeight = bounds.outHeight,
+                    targetWidth = targetWidth,
+                    targetHeight = targetHeight,
+                    rotated = rotated,
+                    scale = options.scale,
+                    bytesPerPixel = config.bytesPerPixel(),
                 )
-            }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
-        val rotated = exifOrientation in 5..8
-        val sizing = LegacyBitmapDecodeSizing.calculate(
-            sourceWidth = bounds.outWidth,
-            sourceHeight = bounds.outHeight,
-            targetWidth = targetWidth,
-            targetHeight = targetHeight,
-            rotated = rotated,
-            scale = options.scale,
-            bytesPerPixel = config.bytesPerPixel(),
-        )
 
-        var candidate = pool.takeOrCreateCanonical(sizing.requiredAllocationBytes, config)
-        val decoded = try {
-            decodeFile(file.absolutePath, config, sizing, candidate)
-        } catch (_: IllegalArgumentException) {
-            // A few vendor decoders impose stricter inBitmap rules than API 19. Return
-            // the untouched candidate and retry once without reuse rather than failing a slide.
-            if (candidate != null) pool.recordDecoderReuseRejection()
-            candidate?.let(pool::offer)
-            candidate = null
-            decodeFile(file.absolutePath, config, sizing, null)
+                val candidate = checkNotNull(pool.acquire(sizing.requiredAllocationBytes, config)) {
+                    "legacy bitmap arena cannot represent requested output"
+                }
+                var owned: Bitmap? = candidate
+                try {
+                    val decoded = try {
+                        decodeFile(file.absolutePath, config, sizing, candidate)
+                    } catch (error: IllegalArgumentException) {
+                        // Never fall back to an exact-size seventh allocation. A transient
+                        // decode failure keeps the current presentation visible and leaves
+                        // the arena bounded.
+                        pool.recordDecoderReuseRejection()
+                        throw error
+                    }
+                    if (decoded !== candidate) {
+                        pool.offer(candidate)
+                        owned = decoded
+                    }
+
+                    // orient assumes ownership of decoded and returns the one surviving lease.
+                    // It returns every lease itself if rotation fails or is cancelled.
+                    owned = null
+                    val oriented = orient(decoded, exifOrientation, pool, config)
+                    owned = oriented
+                    oriented.setDensity(options.context.resources.displayMetrics.densityDpi)
+                    undelivered.set(oriented)
+                    DecodeResult(
+                        drawable = BitmapDrawable(options.context.resources, oriented),
+                        isSampled = sizing.sampleSize > 1 || sizing.densityScale != 1.0,
+                    )
+                } catch (error: Throwable) {
+                    owned?.let { bitmap ->
+                        if (!pool.offer(bitmap) && !bitmap.isRecycled) bitmap.recycle()
+                    }
+                    throw error
+                }
+            }
+            undelivered.set(null)
+            return result
+        } finally {
+            undelivered.getAndSet(null)?.let { bitmap ->
+                if (!pool.offer(bitmap) && !bitmap.isRecycled) bitmap.recycle()
+            }
         }
-        if (candidate != null && decoded !== candidate) pool.offer(candidate!!)
-
-        val oriented = orient(decoded, exifOrientation, pool, config)
-        oriented.setDensity(options.context.resources.displayMetrics.densityDpi)
-        DecodeResult(
-            drawable = BitmapDrawable(options.context.resources, oriented),
-            isSampled = sizing.sampleSize > 1 || sizing.densityScale != 1.0,
-        )
     }
 
     private fun decodeFile(
@@ -545,7 +565,7 @@ private fun Bitmap.Config.bytesPerPixel(): Int = when (this) {
 private fun Bitmap.reuseAllocationBytes(): Long =
     runCatching { allocationByteCount.toLong() }.getOrElse { byteCount.toLong() }
 
-private fun orient(
+private suspend fun orient(
     source: Bitmap,
     orientation: Int,
     pool: LegacyBitmapReusePool,
@@ -569,23 +589,26 @@ private fun orient(
     val width = bounds.width().roundToInt().coerceAtLeast(1)
     val height = bounds.height().roundToInt().coerceAtLeast(1)
     val requiredBytes = width.toLong() * height.toLong() * config.bytesPerPixel()
-    val candidate = pool.takeOrCreateCanonical(requiredBytes, config)
-    val output = candidate?.let { reusable ->
-        runCatching { reusable.reconfigure(width, height, config) }
-            .fold(
-                onSuccess = { reusable },
-                onFailure = {
-                    pool.offer(reusable)
-                    null
-                },
-            )
-    } ?: Bitmap.createBitmap(width, height, config)
-    output.eraseColor(Color.TRANSPARENT)
-    Canvas(output).drawBitmap(
-        source,
-        matrix,
-        Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG),
-    )
-    if (!pool.offer(source) && !source.isRecycled) source.recycle()
-    return output
+    var output: Bitmap? = null
+    return try {
+        output = checkNotNull(pool.acquire(requiredBytes, config)) {
+            "legacy bitmap arena cannot represent oriented output"
+        }
+        val target = checkNotNull(output)
+        target.reconfigure(width, height, config)
+        target.eraseColor(Color.TRANSPARENT)
+        Canvas(target).drawBitmap(
+            source,
+            matrix,
+            Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG),
+        )
+        if (!pool.offer(source) && !source.isRecycled) source.recycle()
+        target
+    } catch (error: Throwable) {
+        output?.let { bitmap ->
+            if (!pool.offer(bitmap) && !bitmap.isRecycled) bitmap.recycle()
+        }
+        if (!pool.offer(source) && !source.isRecycled) source.recycle()
+        throw error
+    }
 }

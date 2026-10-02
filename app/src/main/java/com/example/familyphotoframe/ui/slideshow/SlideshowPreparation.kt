@@ -525,6 +525,7 @@ internal suspend fun prepareSlide(
     localThumbnailCacheProtectedStableIds: Set<String> = emptySet(),
     bitmapLifecycleTracker: BitmapLifecycleTracker,
     nativeStageTracker: NativeAllocationStageTracker,
+    legacyBitmapReusePool: LegacyBitmapReusePool? = null,
     onRecoverableOom: (DecodeFailure) -> Unit,
     onCollageCandidateFailure: (DecodeFailure) -> Unit,
     onCollageEvent: (
@@ -596,14 +597,22 @@ internal suspend fun prepareSlide(
         uncommitted.keys.toList().forEach { bitmap ->
             val kind = uncommitted.remove(bitmap) ?: return@forEach
             bitmapLifecycleTracker.recordRelease(kind, bitmap.safeAllocationBytes())
-            if (!bitmap.isRecycled) bitmap.recycle()
+            if (!bitmap.isRecycled) {
+                val returned = kind == BitmapLifecycleTracker.Kind.DECODED &&
+                    legacyBitmapReusePool?.offer(bitmap) == true
+                if (!returned) bitmap.recycle()
+            }
         }
     }
 
     fun discard(tile: PreparedTile) {
         val kind = uncommitted.remove(tile.bitmap) ?: return
         bitmapLifecycleTracker.recordRelease(kind, tile.bitmap.safeAllocationBytes())
-        if (!tile.bitmap.isRecycled) tile.bitmap.recycle()
+        if (!tile.bitmap.isRecycled) {
+            val returned = kind == BitmapLifecycleTracker.Kind.DECODED &&
+                legacyBitmapReusePool?.offer(tile.bitmap) == true
+            if (!returned) tile.bitmap.recycle()
+        }
     }
 
     fun emit(

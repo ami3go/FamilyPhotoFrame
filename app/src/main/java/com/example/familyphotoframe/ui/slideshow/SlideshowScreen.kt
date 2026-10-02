@@ -636,6 +636,7 @@ private fun PlayingContent(
                         setOfNotNull(selected?.stableId, next?.stableId),
                     bitmapLifecycleTracker = bitmapLifecycleTracker,
                     nativeStageTracker = nativeStageTracker,
+                    legacyBitmapReusePool = legacyBitmapReusePool,
                     onRecoverableOom = { failure ->
                         onRecoverableOom(
                             photo,
