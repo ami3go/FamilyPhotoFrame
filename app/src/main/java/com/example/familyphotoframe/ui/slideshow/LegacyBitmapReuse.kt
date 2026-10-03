@@ -48,6 +48,7 @@ internal data class LegacyBitmapPoolSnapshot(
     val canonicalAllocationFailures: Long,
     val pressureConstrained: Boolean,
     val arenaAllocatedSlots: Int,
+    val arenaPretouchedSlots: Int,
     val arenaActiveSlots: Int,
     val arenaWaits: Long,
     val arenaOversizedRequests: Long,
@@ -96,6 +97,7 @@ internal class LegacyBitmapReusePool(
     private var pressureConstrained = false
     private var standardSlotsAllocated = 0
     private var largeSlotsAllocated = 0
+    private var arenaPretouchedSlots = 0
     private var arenaWaits = 0L
     private var arenaOversizedRequests = 0L
     private var totalRequests = 0L
@@ -202,6 +204,10 @@ internal class LegacyBitmapReusePool(
                     available.trySend(Unit)
                 } else {
                     ownedSlots[created] = slotClass
+                    // createSlot returns only after every backing-pixel page has been written.
+                    // Keep this separate from canonicalAllocations so device telemetry can
+                    // prove that no lazily committed arena identity entered service.
+                    arenaPretouchedSlots++
                     canonicalAllocations++
                 }
             }
@@ -245,6 +251,7 @@ internal class LegacyBitmapReusePool(
             canonicalAllocationFailures = canonicalAllocationFailures,
             pressureConstrained = pressureConstrained,
             arenaAllocatedSlots = ownedSlots.size,
+            arenaPretouchedSlots = arenaPretouchedSlots,
             arenaActiveSlots = (ownedSlots.size - bitmaps.size).coerceAtLeast(0),
             arenaWaits = arenaWaits,
             arenaOversizedRequests = arenaOversizedRequests,
@@ -297,7 +304,22 @@ internal class LegacyBitmapReusePool(
         val pixels = capacityBytes / bytesPerPixel
         val width = minOf(CANONICAL_ROW_PIXELS.toLong(), pixels).toInt().coerceAtLeast(1)
         val height = (pixels / width).toInt().coerceAtLeast(1)
-        return runCatching { Bitmap.createBitmap(width, height, config) }.getOrNull()
+        var slot: Bitmap? = null
+        return try {
+            val created = Bitmap.createBitmap(width, height, config)
+            slot = created
+            // API 21-25 stores bitmap pixels in the managed/Dalvik allocation. createBitmap
+            // can reserve virtual capacity backed by shared zero pages, then progressively
+            // dirty private pages as later decodes reach new portions of the buffer. That
+            // delayed commitment produced build 80's false steady-state PSS slope even though
+            // the arena identity count was fixed. Touch the complete capacity once, off-main,
+            // while the slot is created so all fixed arena cost belongs to startup warm-up.
+            created.eraseColor(Color.BLACK)
+            created
+        } catch (_: Throwable) {
+            slot?.let { bitmap -> if (!bitmap.isRecycled) bitmap.recycle() }
+            null
+        }
     }
 
     private fun reconfigureSlot(bitmap: Bitmap, config: Bitmap.Config): Boolean {

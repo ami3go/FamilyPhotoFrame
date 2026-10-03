@@ -316,6 +316,8 @@ class ServiceLocator(private val appContext: Context) {
                         legacyBitmapPool.pressureConstrained.toString(),
                     "legacyBitmapArenaAllocatedSlots" to
                         legacyBitmapPool.arenaAllocatedSlots.toString(),
+                    "legacyBitmapArenaPretouchedSlots" to
+                        legacyBitmapPool.arenaPretouchedSlots.toString(),
                     "legacyBitmapArenaActiveSlots" to
                         legacyBitmapPool.arenaActiveSlots.toString(),
                     "legacyBitmapArenaWaits" to legacyBitmapPool.arenaWaits.toString(),

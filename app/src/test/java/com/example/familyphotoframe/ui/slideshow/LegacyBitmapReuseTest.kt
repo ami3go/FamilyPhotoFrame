@@ -29,6 +29,7 @@ class LegacyBitmapReuseTest {
         }
         val full = arena.snapshot()
         assertEquals(6, full.arenaAllocatedSlots)
+        assertEquals(6, full.arenaPretouchedSlots)
         assertEquals(6, full.arenaActiveSlots)
         assertEquals(4, full.arenaStandardSlots)
         assertEquals(2, full.arenaLargeSlots)
@@ -60,6 +61,7 @@ class LegacyBitmapReuseTest {
         assertEquals(2L * 1024L * 1024L, standard!!.allocationByteCount.toLong())
         assertEquals(4L * 1024L * 1024L, large!!.allocationByteCount.toLong())
         assertEquals(2, arena.snapshot().arenaAllocatedSlots)
+        assertEquals(2, arena.snapshot().arenaPretouchedSlots)
         assertEquals(16L * 1024L * 1024L, arena.snapshot().budgetBytes)
     }
 
@@ -70,6 +72,7 @@ class LegacyBitmapReuseTest {
 
         assertFalse(arena.offer(foreign))
         assertEquals(0, arena.snapshot().arenaAllocatedSlots)
+        assertEquals(0, arena.snapshot().arenaPretouchedSlots)
         assertFalse(foreign.isRecycled)
     }
 
@@ -86,6 +89,7 @@ class LegacyBitmapReuseTest {
         assertEquals(Bitmap.Config.ARGB_8888, argb!!.config)
         assertEquals(capacity, argb.allocationByteCount)
         assertEquals(1, arena.snapshot().arenaAllocatedSlots)
+        assertEquals(1, arena.snapshot().arenaPretouchedSlots)
     }
 
     @Test
