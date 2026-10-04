@@ -10,8 +10,9 @@ import kotlinx.coroutines.launch
 
 /**
  * Receives BOOT_COMPLETED and hands off to [BootStartupCoordinator]. Uses goAsync()
- * so the (suspend) settings read completes before the broadcast is released. Enabled
- * only when the user turns on auto-start; the coordinator re-checks the setting anyway.
+ * so the (suspend) settings read completes before the broadcast is released. The receiver
+ * remains enabled so it can read the persisted preference; the coordinator launches only
+ * when the user has turned on auto-start.
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {

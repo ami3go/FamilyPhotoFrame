@@ -9,7 +9,6 @@ import android.hardware.SensorManager
 import android.content.res.Configuration
 import android.os.Bundle
 import android.view.KeyEvent
-import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -30,6 +29,7 @@ import com.example.familyphotoframe.ui.slideshow.SlideshowScreen
 import com.example.familyphotoframe.ui.slideshow.SlideshowUiState
 import com.example.familyphotoframe.ui.slideshow.SlideshowViewModel
 import com.example.familyphotoframe.ui.theme.FamilyPhotoFrameTheme
+import com.example.familyphotoframe.platform.FrameWindowPolicy
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -139,7 +139,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         activityDiagnostics.onCreated(resources.configuration)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        FrameWindowPolicy.apply(window)
         immersiveMode.install()
         immersiveMode.recover("ACTIVITY_CREATED")
 
