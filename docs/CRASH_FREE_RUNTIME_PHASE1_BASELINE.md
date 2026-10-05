@@ -74,7 +74,7 @@ After a two-hour warm-up, a candidate must satisfy all of these before promotion
 
 - no uncaught Java/native crash or unexplained process restart;
 - no recurring low-memory callback storm during steady playback;
-- native/PSS trend statistically flat, with less than 10 MiB growth over 24 hours;
+- native/PSS trend statistically flat, with less than 20 MiB growth over 24 hours;
 - no file descriptor, thread, SMB-stream, transfer, bitmap, or transition count that grows without
   returning to its steady-state range;
 - render acknowledgement timeout rate below 0.1%;

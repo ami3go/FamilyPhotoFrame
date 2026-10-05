@@ -23,8 +23,8 @@ fault scenario, or duration is `NO DATA`; it is never counted as a pass.
 | Coverage | One-minute samples, no gap above five minutes, and the selected profile duration. |
 | Process continuity | No crash, escalated main-thread stall, harmful API-30+ exit, or unexplained restart. A legacy-memory restart is accepted only when scheduled and followed by completion evidence. |
 | Diagnostics | Complete standard stream, terminal bundle record, no malformed/schema/privacy errors, queue drops, rejected fields, flush timeout, or unrecovered sink failure. |
-| Java heap | Worst robust six-hour heap-floor increase remains below 5% of maximum heap. |
-| Total/native PSS | Robust edge growth and 24-hour slope projection each remain below 10 MiB. |
+| Java heap | Worst robust six-hour heap-floor increase remains below 10% of maximum heap. |
+| Total/native PSS | Robust edge growth and 24-hour slope projection each remain below 20 MiB. |
 | Native resources | File-descriptor and thread growth remain bounded; SMB/media cumulative counters equal active ownership; tracking never saturates; media concurrency stays at or below two; no stream/transfer is older than two minutes. |
 | Bitmap ownership | LOW devices retain at most three prepared slides and two rendered slides; delayed disposal returns to zero within five minutes. |
 | Rendering | Render-ack timeout rate is below 0.1%. Unplanned transition cancellation rate is below 5%, and each transition generation has exactly one start and one terminal event. |

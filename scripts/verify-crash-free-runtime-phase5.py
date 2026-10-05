@@ -11,7 +11,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from crash_free_qualification import FAIL, NO_DATA, PASS, qualify  # noqa: E402
+from crash_free_qualification import (  # noqa: E402
+    FAIL,
+    HEAP_GROWTH_LIMIT_FRACTION,
+    NO_DATA,
+    PASS,
+    PSS_GROWTH_LIMIT_KB,
+    _heap_gate,
+    _memory_metric_gate,
+    qualify,
+)
 from diagnostics_analysis import load_bundle  # noqa: E402
 
 
@@ -124,6 +133,37 @@ def require(value: bool, message: str) -> None:
         errors.append(message)
 
 
+def memory_sample(at_ms: int, **fields: float) -> dict:
+    return {
+        "atEpochMs": at_ms,
+        "fields": {key: str(value) for key, value in fields.items()},
+    }
+
+
+def heap_boundary_samples(growth_kb: float) -> list[dict]:
+    baseline_kb = 30_000.0
+    heap_max_kb = 100.0 * 1024.0
+    return [
+        memory_sample(
+            index * 30 * 60_000,
+            heapUsedKb=baseline_kb + (growth_kb if index >= 11 else 0.0),
+            heapMaxKb=heap_max_kb,
+        )
+        for index in range(13)
+    ]
+
+
+def pss_boundary_samples(field: str, growth_kb: float) -> list[dict]:
+    baseline_kb = 80_000.0
+    return [
+        memory_sample(
+            index * 15 * 60_000,
+            **{field: baseline_kb + growth_kb * index / 96.0},
+        )
+        for index in range(97)
+    ]
+
+
 with tempfile.TemporaryDirectory(prefix="fpf-phase5-") as temporary:
     temp = Path(temporary)
     healthy_path = temp / "healthy.jsonl"
@@ -159,6 +199,55 @@ with tempfile.TemporaryDirectory(prefix="fpf-phase5-") as temporary:
     legacy = qualify(load_bundle(legacy_path), "accelerated")
     require(legacy["status"] in {FAIL, "INCOMPLETE"}, "legacy/no-data bundle incorrectly passed")
     require(any(gate["status"] == NO_DATA for gate in legacy["gates"]), "legacy bundle did not retain NO DATA")
+
+heap_limit_kb = 100.0 * 1024.0 * HEAP_GROWTH_LIMIT_FRACTION
+require(
+    _heap_gate(heap_boundary_samples(heap_limit_kb - 1.0), 0).status == PASS,
+    "heap growth immediately below the 10% limit did not pass",
+)
+require(
+    _heap_gate(heap_boundary_samples(heap_limit_kb), 0).status == FAIL,
+    "heap growth equal to the 10% limit did not fail",
+)
+require(
+    _heap_gate(heap_boundary_samples(heap_limit_kb + 1.0), 0).status == FAIL,
+    "heap growth above the 10% limit did not fail",
+)
+
+for field, gate_key, label in (
+    ("pssKb", "pss", "Total-PSS growth"),
+    ("nativePssKb", "native_pss", "Native-PSS growth"),
+):
+    require(
+        _memory_metric_gate(
+            pss_boundary_samples(field, PSS_GROWTH_LIMIT_KB - 1.0),
+            0,
+            field,
+            gate_key,
+            label,
+        ).status == PASS,
+        f"{label} immediately below the 20 MiB limit did not pass",
+    )
+    require(
+        _memory_metric_gate(
+            pss_boundary_samples(field, PSS_GROWTH_LIMIT_KB),
+            0,
+            field,
+            gate_key,
+            label,
+        ).status == FAIL,
+        f"{label} equal to the 20 MiB limit did not fail",
+    )
+    require(
+        _memory_metric_gate(
+            pss_boundary_samples(field, PSS_GROWTH_LIMIT_KB + 1.0),
+            0,
+            field,
+            gate_key,
+            label,
+        ).status == FAIL,
+        f"{label} above the 20 MiB limit did not fail",
+    )
 
 build = (ROOT / "app/build.gradle.kts").read_text(encoding="utf-8")
 notes = (ROOT / "docs/CRASH_FREE_RUNTIME_PHASE5_QUALIFICATION.md").read_text(encoding="utf-8")

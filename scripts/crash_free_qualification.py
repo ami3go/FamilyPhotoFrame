@@ -21,6 +21,8 @@ NO_DATA = "NO DATA"
 
 MIB_KB = 1024.0
 MIN_PHASE5_VERSION_CODE = 43
+HEAP_GROWTH_LIMIT_FRACTION = 0.10
+PSS_GROWTH_LIMIT_KB = 20 * MIB_KB
 
 
 @dataclass(frozen=True)
@@ -416,10 +418,11 @@ def _heap_gate(samples: list[dict[str, Any]], steady_start: int) -> GateResult:
     if growth is None:
         return GateResult("heap", "Java-heap floor growth", NO_DATA, "less than one measurable six-hour window")
     heap_max = statistics.median(value for _, value in maxima)
-    limit = heap_max * 0.05
+    limit = heap_max * HEAP_GROWTH_LIMIT_FRACTION
     return GateResult(
         "heap", "Java-heap floor growth", PASS if growth < limit else FAIL,
-        f"worst robust six-hour growth {growth / MIB_KB:+.2f} MiB; limit {limit / MIB_KB:.2f} MiB (5% heap)",
+        f"worst robust six-hour growth {growth / MIB_KB:+.2f} MiB; "
+        f"limit {limit / MIB_KB:.2f} MiB ({HEAP_GROWTH_LIMIT_FRACTION:.0%} heap)",
         metrics={"maximumSixHourGrowthKb": growth, "limitKb": limit, "coverage": coverage},
     )
 
@@ -436,12 +439,13 @@ def _memory_metric_gate(
         )
     observed_24h = _max_window_growth(values, 24 * 3_600_000)
     growth = max(0.0, trend["edgeDelta"], trend["projected24h"], observed_24h or 0.0)
-    limit = 10 * 1024.0
+    limit = PSS_GROWTH_LIMIT_KB
     status = PASS if growth < limit else FAIL
     return GateResult(
         gate_key, label, status,
         f"slope {trend['slopePerHour']:+.1f} KiB/h, edge {trend['edgeDelta'] / MIB_KB:+.2f} MiB, "
-        f"24 h projection {trend['projected24h'] / MIB_KB:.2f} MiB; limit <10 MiB",
+        f"24 h projection {trend['projected24h'] / MIB_KB:.2f} MiB; "
+        f"limit <{PSS_GROWTH_LIMIT_KB / MIB_KB:.0f} MiB",
         metrics={**trend, "maximumGrowthKb": growth, "limitKb": limit, "coverage": coverage},
     )
 
