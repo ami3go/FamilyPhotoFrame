@@ -178,7 +178,9 @@ class ServiceLocator(private val appContext: Context) {
     /**
      * High-volume slide stream, kept apart from the evidence stream above so it can never
      * rotate the gate evidence away. Given a larger budget because it is the only stream
-     * that realistically ages out during a long run.
+     * that realistically ages out during a long run. Repeated folder-skip evidence is
+     * aggregated before it reaches the standard sink so one unhealthy source cannot rotate
+     * memory, lifecycle, or controller evidence out of an endurance window.
      */
     val diagnosticsBulkSink: FileDiagnosticsSink by lazy {
         FileDiagnosticsSink(

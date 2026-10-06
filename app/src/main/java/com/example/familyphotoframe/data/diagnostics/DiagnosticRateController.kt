@@ -29,6 +29,16 @@ class DiagnosticRateController(
         var lastSummaryMs: Long = firstMs,
     )
 
+    private data class FolderSkipBucket(
+        val signatureFields: Map<String, String>,
+        val firstMs: Long,
+        var lastMs: Long,
+        var total: Long = 0L,
+        var sinceSummary: Long = 0L,
+        var individualEvents: Int = 0,
+        var lastSummaryMs: Long = firstMs,
+    )
+
     private data class PreviewBucket(
         val firstMs: Long,
         var lastMs: Long,
@@ -40,6 +50,7 @@ class DiagnosticRateController(
     private var brightness: BrightnessState? = null
     private val scanBuckets = LinkedHashMap<String, String>()
     private val decodeBuckets = LinkedHashMap<String, DecodeBucket>(16, 0.75f, true)
+    private val folderSkipBuckets = LinkedHashMap<String, FolderSkipBucket>(8, 0.75f, true)
     private var preview = PreviewBucket(0L, 0L)
 
     fun evaluate(
@@ -54,6 +65,7 @@ class DiagnosticRateController(
                 Decision(true, spec.code, fields)
             DiagnosticRatePolicy.BRIGHTNESS_CHANGE -> brightness(fields, now)
             DiagnosticRatePolicy.SCAN_PROGRESS -> scanProgress(spec.code, fields, context)
+            DiagnosticRatePolicy.FOLDER_SKIP_AGGREGATE -> folderSkip(fields, now)
             DiagnosticRatePolicy.DECODE_FAILURE_AGGREGATE -> decode(spec, fields, now)
             DiagnosticRatePolicy.PREVIEW_HIT_AGGREGATE -> preview(fields, now)
         }
@@ -61,6 +73,7 @@ class DiagnosticRateController(
 
     fun stateSize(): Int = synchronized(lock) {
         (if (brightness == null) 0 else 1) + scanBuckets.size + decodeBuckets.size +
+            folderSkipBuckets.size +
             (if (preview.firstMs == 0L) 0 else 1)
     }
 
@@ -68,6 +81,7 @@ class DiagnosticRateController(
         brightness = null
         scanBuckets.clear()
         decodeBuckets.clear()
+        folderSkipBuckets.clear()
         preview = PreviewBucket(0L, 0L)
     }
 
@@ -149,6 +163,41 @@ class DiagnosticRateController(
         return Decision(false, spec.code, fields)
     }
 
+    private fun folderSkip(fields: Map<String, String>, now: Long): Decision {
+        val signatureFields = listOf("sourceKind", "reason")
+            .mapNotNull { key -> fields[key]?.let { key to it } }
+            .toMap()
+        val signature = signatureFields.entries.joinToString("|") { "${it.key}=${it.value}" }
+            .ifEmpty { "unspecified" }
+        val bucket = folderSkipBuckets.getOrPut(signature) {
+            FolderSkipBucket(signatureFields, now, now)
+        }
+        trim(folderSkipBuckets)
+        bucket.lastMs = now
+        bucket.total++
+        bucket.sinceSummary++
+        if (bucket.individualEvents < FIRST_FOLDER_SKIP_EVENTS) {
+            bucket.individualEvents++
+            return Decision(true, "FOLDER_SKIPPED", fields)
+        }
+        if (now - bucket.lastSummaryMs >= SUMMARY_INTERVAL_MS) {
+            val count = bucket.sinceSummary
+            bucket.sinceSummary = 0L
+            bucket.lastSummaryMs = now
+            return Decision(
+                true,
+                "FOLDER_SKIP_SUMMARY",
+                bucket.signatureFields + mapOf(
+                    "count" to count.toString(),
+                    "failures" to bucket.total.toString(),
+                    "firstEpochMs" to bucket.firstMs.toString(),
+                    "lastEpochMs" to bucket.lastMs.toString(),
+                ),
+            )
+        }
+        return Decision(false, "FOLDER_SKIPPED", fields)
+    }
+
     private fun preview(fields: Map<String, String>, now: Long): Decision {
         if (preview.firstMs == 0L) preview = PreviewBucket(now, now)
         preview.lastMs = now
@@ -169,7 +218,9 @@ class DiagnosticRateController(
 
     private fun expire(now: Long) {
         decodeBuckets.entries.removeAll { now - it.value.lastMs >= BUCKET_EXPIRY_MS }
+        folderSkipBuckets.entries.removeAll { now - it.value.lastMs >= BUCKET_EXPIRY_MS }
         trim(decodeBuckets)
+        trim(folderSkipBuckets)
     }
 
     private fun <K, V> trim(map: MutableMap<K, V>) {
@@ -181,6 +232,7 @@ class DiagnosticRateController(
         const val SUMMARY_INTERVAL_MS = 60_000L
         const val BUCKET_EXPIRY_MS = 15L * 60L * 1_000L
         const val FIRST_DECODE_EVENTS = 3
+        const val FIRST_FOLDER_SKIP_EVENTS = 3
         const val DEFAULT_CAPACITY = 64
     }
 }

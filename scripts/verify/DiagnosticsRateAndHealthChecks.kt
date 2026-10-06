@@ -59,6 +59,47 @@ fun runDiagnosticsRateAndHealthChecks() {
         log.logEvent("SCAN_PROGRESS", progress + ("progressBucket" to "20"), operation)
         check("scan bucket logged once", 2, log.snapshot().count { it.code == "SCAN_PROGRESS" })
 
+        val folderSkip = mapOf(
+            "scope" to "private-shuffle-scope",
+            "reason" to "source_retry_exhausted",
+        )
+        repeat(1_000) {
+            log.log(DiagnosticsLog.Category.ENGINE, "FOLDER_SKIPPED", "", folderSkip)
+        }
+        check(
+            "first three identical folder skips retained",
+            3,
+            log.snapshot().count { it.code == "FOLDER_SKIPPED" },
+        )
+        val retainedSkip = log.snapshot().first { it.code == "FOLDER_SKIPPED" }
+        check("raw shuffle scope removed", false, retainedSkip.fields.containsKey("scope"))
+        check("shuffle scope tokenized", true, retainedSkip.fields["scopeToken"]?.startsWith("scope_") == true)
+        check("scope normalization does not reject fields", 0L, log.totalDroppedFields())
+        check("pre-tokenized scope needs no privacy transform", 0L, log.totalTransformedFields())
+
+        val retainedShuffleFields = mapOf(
+            "PRESENTATION_PREPARED_COMMIT" to mapOf("photoCount" to "3"),
+            "SHUFFLE_SELECTION_TIMING" to mapOf("result" to "SELECTED", "targetMs" to "100"),
+            "PHOTO_RESERVED" to mapOf("photoCycle" to "4"),
+            "PRESENTATION_RESERVED" to mapOf("reservation" to "8"),
+            "PHOTO_CONSUMED" to mapOf("photoCount" to "3", "photoCycle" to "4"),
+            "FOLDER_PRESENTED" to mapOf("folderCycle" to "5"),
+            "PRESENTATION_COMMITTED" to mapOf("photoCount" to "3", "sequence" to "9"),
+            "SHUFFLE_SCOPE_RESTORED" to mapOf("folderCycle" to "5"),
+            "FOLDER_CYCLE_STARTED" to mapOf("folders" to "12"),
+        )
+        retainedShuffleFields.forEach { (code, fields) ->
+            val sanitized = DiagnosticsJsonl.sanitizeForEvent(
+                DiagnosticEventCatalog.require(code), fields, "",
+            )
+            check("$code retains its bounded fields", 0, sanitized.dropped)
+        }
+        clock.addAndGet(DiagnosticRateController.SUMMARY_INTERVAL_MS)
+        log.log(DiagnosticsLog.Category.ENGINE, "FOLDER_SKIPPED", "", folderSkip)
+        val skipSummary = log.snapshot().last { it.code == "FOLDER_SKIP_SUMMARY" }
+        check("folder skip summary count is exact", "1001", skipSummary.fields["count"])
+        check("folder skip summary retains reason", "source_retry_exhausted", skipSummary.fields["reason"])
+
         repeat(200) { index ->
             log.log(
                 DiagnosticsLog.Category.DECODE,
@@ -67,7 +108,7 @@ fun runDiagnosticsRateAndHealthChecks() {
                 decode + mapOf("format" to "F$index", "errorCode" to "E$index"),
             )
         }
-        check("aggregation state remains bounded", true, log.rateStateSize() <= 67)
+        check("aggregation state remains bounded", true, log.rateStateSize() <= 131)
     }
 
     println("-- writer failure, recovery, and health snapshot --")
@@ -174,7 +215,7 @@ fun runDiagnosticsRateAndHealthChecks() {
         val standardText = standard.openRetainedStream().bufferedReader().use { it.readText() }
         check("bulk endurance cannot rotate session evidence", true, standardText.contains("SESSION_START"))
         check("in-memory ring remains bounded", true, log.snapshot(1_000).size <= 128)
-        check("rate maps remain bounded after endurance", true, log.rateStateSize() <= 67)
+        check("rate maps remain bounded after endurance", true, log.rateStateSize() <= 131)
         check("retained test streams remain bounded", true, log.durableBytes() <= 6L * 2L * 1024L)
         log.detachSink()
         root.deleteRecursively()

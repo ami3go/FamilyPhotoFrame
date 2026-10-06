@@ -62,7 +62,8 @@ fun runPrivacyChecks() {
         check("private fixture absent from bundle: ${seed.take(18)}", false, bundle.contains(seed))
         check("private fixture absent from rotated files: ${seed.take(18)}", false, rotated.contains(seed))
     }
-    check("privacy transformations counted", true, log.totalDroppedFields() >= privateValues.size * 2L)
+    check("privacy transformations counted separately", true, log.totalTransformedFields() >= privateValues.size)
+    check("forbidden keys and messages still rejected", true, log.totalDroppedFields() >= privateValues.size * 2L)
     check("safe category survives privacy policy", true, bundle.contains("\"sourceKind\":\"SMB\""))
 
     println("-- crash envelope privacy boundary --")

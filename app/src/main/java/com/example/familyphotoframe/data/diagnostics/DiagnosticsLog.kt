@@ -55,6 +55,7 @@ class DiagnosticsLog(
     private val totalDroppedDurableWrites = AtomicLong(0L)
     private val droppedSinceHealthReport = AtomicLong(0L)
     private val fieldsDropped = AtomicLong(0L)
+    private val fieldsTransformed = AtomicLong(0L)
     private val sequence = AtomicLong(0L)
     private val lastElapsed = AtomicLong(0L)
     private val rateController = DiagnosticRateController(nowMs = nowMs)
@@ -145,8 +146,15 @@ class DiagnosticsLog(
         } else {
             fields
         }
-        val initial = DiagnosticsJsonl.sanitizeForEvent(spec, candidateFields, message)
+        // Older engine call sites used the raw internal shuffle scope key. Normalize it at
+        // the single diagnostics boundary so it is neither leaked nor counted as a rejected
+        // field. This keeps durable-bundle health meaningful while preserving correlation.
+        val normalizedFields = candidateFields["scope"]?.let { rawScope ->
+            candidateFields - "scope" + ("scopeToken" to diagnosticToken(rawScope, "scope"))
+        } ?: candidateFields
+        val initial = DiagnosticsJsonl.sanitizeForEvent(spec, normalizedFields, message)
         fieldsDropped.addAndGet(initial.dropped.toLong())
+        fieldsTransformed.addAndGet(initial.transformed.toLong())
         val decision = rateController.evaluate(spec, initial.fields, context)
         val effectiveSpec = if (decision.code == spec.code) spec
             else DiagnosticEventCatalog.require(decision.code)
@@ -155,6 +163,7 @@ class DiagnosticsLog(
         } else {
             DiagnosticsJsonl.sanitizeForEvent(effectiveSpec, decision.fields, "").also {
                 fieldsDropped.addAndGet(it.dropped.toLong())
+                fieldsTransformed.addAndGet(it.transformed.toLong())
             }
         }
         if (!decision.emit) {
@@ -280,6 +289,7 @@ class DiagnosticsLog(
         val spec = DiagnosticEventCatalog.require(code)
         val sanitized = DiagnosticsJsonl.sanitizeForEvent(spec, fields, "")
         fieldsDropped.addAndGet(sanitized.dropped.toLong())
+        fieldsTransformed.addAndGet(sanitized.transformed.toLong())
         addToBuffer(
             createEntry(
                 spec,
@@ -378,6 +388,7 @@ class DiagnosticsLog(
 
     fun totalDroppedEvents(): Long = totalDroppedDurableWrites.get()
     fun totalDroppedFields(): Long = fieldsDropped.get()
+    fun totalTransformedFields(): Long = fieldsTransformed.get()
     fun lastSequence(): Long = sequence.get()
     fun writerQueueDepth(): Int = writer.queueDepth()
     fun writerQueueCapacity(): Int = writer.queueCapacity()
@@ -421,6 +432,7 @@ class DiagnosticsLog(
             droppedTotal = totalDroppedEvents(),
             droppedSinceLastReport = dropDelta,
             fieldsDropped = totalDroppedFields(),
+            fieldsTransformed = totalTransformedFields(),
             standard = standard,
             bulk = bulk,
             lastSuccessfulWriteEpochMs = maxOf(
@@ -442,7 +454,8 @@ class DiagnosticsLog(
         appendLine("# session: $sessionId")
         appendLine(
             "# writer: queue ${health.queueDepth}/${health.queueCapacity}; " +
-                "dropped events ${health.droppedTotal}; dropped fields ${health.fieldsDropped}",
+                "dropped events ${health.droppedTotal}; dropped fields ${health.fieldsDropped}; " +
+                    "privacy-transformed fields ${health.fieldsTransformed}",
         )
         appendLine(
             "# retention: standard ${health.standard.retainedBytes} B/${health.standard.retainedGenerations} files; " +
@@ -474,6 +487,7 @@ class DiagnosticsLog(
         totalDroppedDurableWrites.set(0L)
         droppedSinceHealthReport.set(0L)
         fieldsDropped.set(0L)
+        fieldsTransformed.set(0L)
         rateController.clear()
         clear()
     }

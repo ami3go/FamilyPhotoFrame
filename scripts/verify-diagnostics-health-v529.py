@@ -35,6 +35,7 @@ def main() -> int:
         failures.append("hard-coded high-volume routing remains")
     for marker in (
         "BRIGHTNESS_HEARTBEAT_MS = 15L", "FIRST_DECODE_EVENTS = 3",
+        "FIRST_FOLDER_SKIP_EVENTS = 3", '"FOLDER_SKIP_SUMMARY"',
         '"DECODE_FAILURE_SUMMARY"', '"PREVIEW_HIT_SUMMARY"', "DEFAULT_CAPACITY = 64",
     ):
         need(rate, marker, "bounded aggregation contract")

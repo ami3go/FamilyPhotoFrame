@@ -51,6 +51,10 @@ python3 scripts/verify-crash-free-runtime-phase4.py || exit 1
 echo "==> Crash-free runtime Phase 5 qualification contracts"
 python3 scripts/verify-crash-free-runtime-phase5.py || exit 1
 
+echo "==> Build 85 diagnostics closure contracts"
+python3 scripts/verify-build85-diagnostics-closure.py || exit 1
+python3 scripts/verify-phase4-snapshot-merge.py || exit 1
+
 # Runs before the parse step below on purpose: it catches statements accidentally joined
 # onto the previous line, which parse cleanly and are only rejected by the type checker —
 # invisible here, where the Android/Compose compiler cannot run.

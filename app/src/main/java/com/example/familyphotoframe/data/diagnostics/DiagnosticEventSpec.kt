@@ -17,6 +17,7 @@ enum class DiagnosticRatePolicy {
     STATE_CHANGE,
     SCAN_PROGRESS,
     BRIGHTNESS_CHANGE,
+    FOLDER_SKIP_AGGREGATE,
     DECODE_FAILURE_AGGREGATE,
     PREVIEW_HIT_AGGREGATE,
 }
@@ -104,7 +105,7 @@ object DiagnosticEventCatalog {
 
     private val engineFields = setOf(
         "action", "reason", "trigger", "outcome", "sourceKind", "sourceToken",
-        "folderToken", "presentationToken", "playlistToken", "photoToken", "anchorToken",
+        "folderToken", "scopeToken", "presentationToken", "playlistToken", "photoToken", "anchorToken",
         "layout", "transitionCode", "selectionMode", "poolSize", "primaryCount",
         "fallbackCount", "count", "found", "active", "paused", "asleep", "favorite",
         "cachedOnly", "renderAck", "failures", "stage", "durationMs", "elapsedMs", "decodeMs",
@@ -137,6 +138,9 @@ object DiagnosticEventCatalog {
         "mediaTransferExpectedBytes", "mediaTransferAgeMs", "mediaTransferProgressAgeMs",
         "mediaTransferDeadlineMs", "mediaTransferStreamCloseRequested",
         "mediaTransferStreamCloseSucceeded", "mediaTransferSlotReleased",
+        "firstEpochMs", "lastEpochMs",
+        "photoCount", "photoCycle", "folderCycle", "folders", "reservation",
+        "sequence", "targetMs", "result",
     )
 
     private val sourceFields = setOf(
@@ -306,7 +310,7 @@ object DiagnosticEventCatalog {
         "FOLDER_CYCLE_STARTED", "FOLDER_DEFERRED", "FOLDER_DEFERRED_RELEASED",
         "FOLDER_INSERTED", "FOLDER_PRESENTED", "FOLDER_PREVIEW_ONCE",
         "FOLDER_PREVIEW_REJECTED", "FOLDER_PREVIEW_REQUESTED", "FOLDER_PREVIEW_RETURNED",
-        "FOLDER_REMOVED", "FOLDER_RESERVED", "FOLDER_SKIPPED", "PANEL_MOTION",
+        "FOLDER_REMOVED", "FOLDER_RESERVED", "FOLDER_SKIPPED", "FOLDER_SKIP_SUMMARY", "PANEL_MOTION",
         "PERF_SAMPLE", "PHOTOS_UNHIDDEN", "PHOTO_CONSUMED", "PHOTO_CYCLE_STARTED",
         "PHOTO_EXCLUDED", "PHOTO_EXCLUSION_UNDONE", "PHOTO_HIDDEN",
         "PHOTO_IDENTITY_RECONCILED", "PHOTO_INSERTED", "PHOTO_REMOVED", "PHOTO_RESERVED",
@@ -448,6 +452,7 @@ object DiagnosticEventCatalog {
         }, {
             when (it) {
                 "BRIGHTNESS_LEVEL_APPLIED" -> DiagnosticRatePolicy.BRIGHTNESS_CHANGE
+                "FOLDER_SKIPPED" -> DiagnosticRatePolicy.FOLDER_SKIP_AGGREGATE
                 else -> DiagnosticRatePolicy.NONE
             }
         })

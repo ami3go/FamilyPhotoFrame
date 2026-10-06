@@ -10,6 +10,7 @@ object DiagnosticsJsonl {
         val fields: Map<String, String>,
         val message: String,
         val dropped: Int,
+        val transformed: Int,
     )
 
     private val bannedKeys = setOf(
@@ -54,9 +55,10 @@ object DiagnosticsJsonl {
         fields: Map<String, String>,
         message: String,
     ): Sanitized {
-        if (fields.isEmpty() && message.isEmpty()) return Sanitized(emptyMap(), "", 0)
+        if (fields.isEmpty() && message.isEmpty()) return Sanitized(emptyMap(), "", 0, 0)
         val out = LinkedHashMap<String, String>(fields.size)
         var dropped = 0
+        var transformed = 0
         for ((rawKey, rawValue) in fields) {
             val key = sanitizeKey(rawKey)
             if (key.lowercase() in bannedKeys || key !in spec.permittedFields) {
@@ -65,11 +67,13 @@ object DiagnosticsJsonl {
             }
             val protected = DiagnosticPrivacyPolicy.protect(key, rawValue)
             out[key] = redactValue(protected.value)
-            if (protected.transformed) dropped++
+            if (protected.transformed) transformed++
         }
         val protectedMessage = DiagnosticPrivacyPolicy.protectMessage(message)
+        // A variable message is removed. Structured field transformations remain present
+        // as privacy-safe tokens and therefore are not rejected fields.
         if (protectedMessage.transformed) dropped++
-        return Sanitized(out, protectedMessage.value, dropped)
+        return Sanitized(out, protectedMessage.value, dropped, transformed)
     }
 
     /** Backward-compatible helper used by the existing pure security harness. */
