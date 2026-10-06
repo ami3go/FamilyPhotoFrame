@@ -56,6 +56,8 @@ class DiagnosticsLog(
     private val droppedSinceHealthReport = AtomicLong(0L)
     private val fieldsDropped = AtomicLong(0L)
     private val fieldsTransformed = AtomicLong(0L)
+    private val rejectionLock = Any()
+    private val fieldRejections = linkedMapOf<String, Long>()
     private val sequence = AtomicLong(0L)
     private val lastElapsed = AtomicLong(0L)
     private val rateController = DiagnosticRateController(nowMs = nowMs)
@@ -153,7 +155,7 @@ class DiagnosticsLog(
             candidateFields - "scope" + ("scopeToken" to diagnosticToken(rawScope, "scope"))
         } ?: candidateFields
         val initial = DiagnosticsJsonl.sanitizeForEvent(spec, normalizedFields, message)
-        fieldsDropped.addAndGet(initial.dropped.toLong())
+        recordRejectedFields(spec.code, initial)
         fieldsTransformed.addAndGet(initial.transformed.toLong())
         val decision = rateController.evaluate(spec, initial.fields, context)
         val effectiveSpec = if (decision.code == spec.code) spec
@@ -162,7 +164,7 @@ class DiagnosticsLog(
             initial.copy(fields = decision.fields)
         } else {
             DiagnosticsJsonl.sanitizeForEvent(effectiveSpec, decision.fields, "").also {
-                fieldsDropped.addAndGet(it.dropped.toLong())
+                recordRejectedFields(effectiveSpec.code, it)
                 fieldsTransformed.addAndGet(it.transformed.toLong())
             }
         }
@@ -190,7 +192,10 @@ class DiagnosticsLog(
 
         // A category mismatch is counted as a dropped contract field rather than stored
         // as variable text. Static release verification identifies the exact call site.
-        if (callerCategory != null && callerCategory != effectiveSpec.category) fieldsDropped.incrementAndGet()
+        if (callerCategory != null && callerCategory != effectiveSpec.category) {
+            fieldsDropped.incrementAndGet()
+            recordRejection(effectiveSpec.code, "@category")
+        }
 
         addToBuffer(entry)
         if (!enqueue(entry, effectiveSpec.stream)) {
@@ -220,6 +225,28 @@ class DiagnosticsLog(
         operationId = context.operationId,
         parentOperationId = context.parentOperationId,
     )
+
+    private fun recordRejectedFields(code: String, sanitized: DiagnosticsJsonl.Sanitized) {
+        if (sanitized.dropped <= 0) return
+        fieldsDropped.addAndGet(sanitized.dropped.toLong())
+        sanitized.rejectedKeys.forEach { key -> recordRejection(code, key) }
+    }
+
+    private fun recordRejection(code: String, key: String) {
+        val safeCode = code.filter { it.isLetterOrDigit() || it == '_' }.take(64)
+        val safeKey = key.filter { it.isLetterOrDigit() || it == '_' || it == '@' }.take(64)
+        val signature = "$safeCode:$safeKey"
+        synchronized(rejectionLock) {
+            if (signature in fieldRejections || fieldRejections.size < MAX_REJECTION_SIGNATURES) {
+                fieldRejections[signature] = (fieldRejections[signature] ?: 0L) + 1L
+            }
+        }
+    }
+
+    private fun fieldRejectionSummary(): String = synchronized(rejectionLock) {
+        fieldRejections.entries.joinToString("|") { (signature, count) -> "$signature=$count" }
+            .take(MAX_REJECTION_SUMMARY_LENGTH)
+    }
 
     private fun monotonicElapsed(): Long {
         while (true) {
@@ -433,6 +460,7 @@ class DiagnosticsLog(
             droppedSinceLastReport = dropDelta,
             fieldsDropped = totalDroppedFields(),
             fieldsTransformed = totalTransformedFields(),
+            fieldRejectionSummary = fieldRejectionSummary(),
             standard = standard,
             bulk = bulk,
             lastSuccessfulWriteEpochMs = maxOf(
@@ -488,12 +516,15 @@ class DiagnosticsLog(
         droppedSinceHealthReport.set(0L)
         fieldsDropped.set(0L)
         fieldsTransformed.set(0L)
+        synchronized(rejectionLock) { fieldRejections.clear() }
         rateController.clear()
         clear()
     }
 
     private companion object {
         const val DEFAULT_WRITER_QUEUE_CAPACITY = 1024
+        const val MAX_REJECTION_SIGNATURES = 64
+        const val MAX_REJECTION_SUMMARY_LENGTH = 4_096
     }
 }
 

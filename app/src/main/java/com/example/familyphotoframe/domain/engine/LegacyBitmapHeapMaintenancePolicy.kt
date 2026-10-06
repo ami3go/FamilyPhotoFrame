@@ -63,12 +63,14 @@ object LegacyBitmapHeapMaintenancePolicy {
     const val REQUIRED_HIGH_SAMPLES = 3
     const val MAX_ACTIVE_BITMAP_COUNT = 4
     const val MAX_ACTIVE_BITMAP_BYTES = 4L * 1024L * 1024L
+    const val MAX_CRITICAL_HEAP_OCCUPANCY_PERCENT = 70
 
     fun evaluate(
         previous: LegacyBitmapHeapMaintenanceState,
         sdkInt: Int,
         lowMemoryTier: Boolean,
         memoryLevel: PlaybackMemoryLevel,
+        memoryPressureSource: PlaybackMemoryPressureSource,
         oomCount: Long,
         nowElapsedMs: Long,
         heapUsedBytes: Long,
@@ -115,10 +117,19 @@ object LegacyBitmapHeapMaintenancePolicy {
         } else {
             0
         }
-        val safeBoundary = (
-            memoryLevel == PlaybackMemoryLevel.NORMAL ||
-                memoryLevel == PlaybackMemoryLevel.GUARDED
-            ) &&
+        // A native-growth latch can legitimately remain CRITICAL while old ART's managed
+        // heap is still well below danger.  Build-85 V80 evidence showed exactly that:
+        // native PSS had flattened, but the retained CRITICAL latch blocked every eligible
+        // maintenance collection while Dalvik PSS grew.  Permit that one source only when
+        // managed-heap occupancy is comfortably below 70%; OOM and ownership fences still
+        // apply. Other CRITICAL causes remain ineligible.
+        val heapOccupancyPercent = ((used * 100L) / heapMaxBytes).coerceIn(0L, 100L).toInt()
+        val safeMemoryLevel = memoryLevel == PlaybackMemoryLevel.NORMAL ||
+            memoryLevel == PlaybackMemoryLevel.GUARDED ||
+            (memoryLevel == PlaybackMemoryLevel.CRITICAL &&
+                memoryPressureSource == PlaybackMemoryPressureSource.NATIVE_PSS_GROWTH &&
+                heapOccupancyPercent <= MAX_CRITICAL_HEAP_OCCUPANCY_PERCENT)
+        val safeBoundary = safeMemoryLevel &&
             activeBitmapCount in 0..MAX_ACTIVE_BITMAP_COUNT &&
             activeBitmapBytes in 0L..MAX_ACTIVE_BITMAP_BYTES &&
             pendingDisposals == 0 &&

@@ -11,6 +11,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DiagnosticsLogTest {
+    @Test fun rejectedCatalogFieldsExposeOnlyBoundedCodeAndKeyDiagnostics() {
+        val log = DiagnosticsLog()
+
+        log.log(
+            DiagnosticsLog.Category.APP,
+            "BOOT_AUTOSTART",
+            "device" to "must-not-be-retained",
+        )
+
+        val health = log.healthSnapshot()
+        assertEquals(1L, health.fieldsDropped)
+        assertEquals("BOOT_AUTOSTART:device=1", health.fieldRejectionSummary)
+        assertFalse(health.fieldRejectionSummary.contains("must-not-be-retained"))
+    }
+
     @Test fun bitmapPoolBucketTelemetryRemainsNumericAndVisible() {
         val encoded = "0+12+345+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0"
 

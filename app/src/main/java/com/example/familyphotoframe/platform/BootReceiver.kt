@@ -22,7 +22,7 @@ class BootReceiver : BroadcastReceiver() {
             com.example.familyphotoframe.data.diagnostics.DiagnosticsLog.Category.APP,
             "BOOT_AUTOSTART",
             "sdkInt" to android.os.Build.VERSION.SDK_INT.toString(),
-            "device" to "${android.os.Build.MANUFACTURER}/${android.os.Build.MODEL}",
+            "deviceModel" to "${android.os.Build.MANUFACTURER}_${android.os.Build.MODEL}",
         )
         val pending = goAsync()
         CoroutineScope(Dispatchers.Default).launch {

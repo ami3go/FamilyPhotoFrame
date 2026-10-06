@@ -140,13 +140,14 @@ object DiagnosticEventCatalog {
         "mediaTransferStreamCloseSucceeded", "mediaTransferSlotReleased",
         "firstEpochMs", "lastEpochMs",
         "photoCount", "photoCycle", "folderCycle", "folders", "reservation",
-        "sequence", "targetMs", "result",
+        "sequence", "targetMs", "result", "retryCount",
     )
 
     private val sourceFields = setOf(
         "sourceKind", "sourceToken", "trigger", "configRevision", "refreshToken",
         "stage", "durationMs", "outcome", "errorClass", "errorCode", "reason",
         "healthState", "timeoutMs", "attempt", "waitMs", "cached", "poolSize",
+        "maxWaitMs", "networkConnected", "waitedMs",
         "found", "recoveryState", "completionState", "cancellationReason",
         "supersededByOperationId", "coalescedWithOperationId", "isChosen",
         "credentialChanged", "certificateState",
@@ -261,7 +262,8 @@ object DiagnosticEventCatalog {
         "SOURCE_POOL_CONFIGURED", "SOURCE_REFRESH_COMPLETED", "SOURCE_REFRESH_CANCELLED",
         "SOURCE_REFRESH_FAILED", "SOURCE_TEST_STARTED", "SOURCE_TEST_COMPLETED",
         "SOURCE_TEST_FAILED", "SOURCE_HEALTH_CHECK_STARTED", "SOURCE_HEALTH_CHECK_COMPLETED",
-        "SOURCE_HEALTH_CHECK_FAILED", "SOURCE_RECOVERY_STARTED", "SOURCE_RECOVERED",
+        "SOURCE_HEALTH_CHECK_FAILED", "SOURCE_HEALTH_DEFERRED_NETWORK",
+        "SOURCE_HEALTH_NETWORK_GATE_RELEASED", "SOURCE_RECOVERY_STARTED", "SOURCE_RECOVERED",
         "SOURCE_RECOVERY_CANCELLED", "SOURCE_RECOVERY_PROMOTION_ABORTED",
         "SOURCE_UNAVAILABLE", "SOURCE_BACKOFF", "SOURCE_BACKOFF_EXHAUSTED",
         "SOURCE_RECOVERY_REQUIRED", "SOURCE_EARLY_PLAYBACK_STARTED",

@@ -151,6 +151,7 @@ object DiagnosticsBundleJson {
                 "droppedSinceLastReport" to health.droppedSinceLastReport,
                 "fieldsDropped" to health.fieldsDropped,
                 "fieldsTransformed" to health.fieldsTransformed,
+                "fieldRejectionSummary" to health.fieldRejectionSummary,
                 "lastSuccessfulWriteEpochMs" to health.lastSuccessfulWriteEpochMs,
                 "lastSuccessfulFlushEpochMs" to health.lastSuccessfulFlushEpochMs,
                 "lastFlushTimeoutMs" to health.lastFlushTimeoutMs,

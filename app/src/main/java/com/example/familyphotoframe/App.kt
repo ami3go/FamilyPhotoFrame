@@ -672,6 +672,7 @@ class App : Application() {
             sdkInt = Build.VERSION.SDK_INT,
             lowMemoryTier = protection.lowMemoryTier,
             memoryLevel = protection.level,
+            memoryPressureSource = protection.pressureSource,
             oomCount = protection.totalOomCount,
             nowElapsedMs = elapsedMs,
             heapUsedBytes = reading.usedBytes,

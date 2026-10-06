@@ -1227,6 +1227,7 @@ class WebServerController(
         put("droppedTotal", health.droppedTotal)
         put("droppedSinceLastReport", health.droppedSinceLastReport)
         put("fieldsDropped", health.fieldsDropped)
+        put("fieldRejectionSummary", health.fieldRejectionSummary)
         put("fieldsTransformed", health.fieldsTransformed)
         put("lastSuccessfulWriteEpochMs", health.lastSuccessfulWriteEpochMs)
         put("lastSuccessfulFlushEpochMs", health.lastSuccessfulFlushEpochMs)

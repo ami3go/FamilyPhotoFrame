@@ -136,6 +136,42 @@ class LegacyBitmapHeapMaintenancePolicyTest {
         assertEquals(LegacyBitmapHeapMaintenanceAction.NONE, oom.action)
     }
 
+    @Test fun nativeGrowthCriticalLatchAllowsSafeManagedHeapMaintenance() {
+        val request = sample(
+            seededHighState().copy(consecutiveHighSamples = 3),
+            now = LegacyBitmapHeapMaintenancePolicy.WARMUP_MS + 120_000L,
+            heapMiB = 45,
+            releasedMiB = 400,
+            memoryLevel = PlaybackMemoryLevel.CRITICAL,
+            pressureSource = PlaybackMemoryPressureSource.NATIVE_PSS_GROWTH,
+        )
+
+        assertEquals(LegacyBitmapHeapMaintenanceAction.REQUEST_GC, request.action)
+    }
+
+    @Test fun unrelatedOrHighOccupancyCriticalStateStillBlocksMaintenance() {
+        val state = seededHighState().copy(consecutiveHighSamples = 3)
+        val unrelated = sample(
+            state,
+            now = LegacyBitmapHeapMaintenancePolicy.WARMUP_MS + 120_000L,
+            heapMiB = 45,
+            releasedMiB = 400,
+            memoryLevel = PlaybackMemoryLevel.CRITICAL,
+            pressureSource = PlaybackMemoryPressureSource.PROCESS_PSS,
+        )
+        val highOccupancy = sample(
+            state,
+            now = LegacyBitmapHeapMaintenancePolicy.WARMUP_MS + 120_000L,
+            heapMiB = 71,
+            releasedMiB = 400,
+            memoryLevel = PlaybackMemoryLevel.CRITICAL,
+            pressureSource = PlaybackMemoryPressureSource.NATIVE_PSS_GROWTH,
+        )
+
+        assertEquals(LegacyBitmapHeapMaintenanceAction.NONE, unrelated.action)
+        assertEquals(LegacyBitmapHeapMaintenanceAction.NONE, highOccupancy.action)
+    }
+
     private fun seededHighState(): LegacyBitmapHeapMaintenanceState {
         var state = LegacyBitmapHeapMaintenanceState()
         state = sample(state, now = 0L, heapMiB = 24, releasedMiB = 0).state
@@ -156,11 +192,14 @@ class LegacyBitmapHeapMaintenancePolicyTest {
         sdkInt: Int = 22,
         lowMemoryTier: Boolean = true,
         oomCount: Long = 0L,
+        memoryLevel: PlaybackMemoryLevel = PlaybackMemoryLevel.NORMAL,
+        pressureSource: PlaybackMemoryPressureSource = PlaybackMemoryPressureSource.NONE,
     ): LegacyBitmapHeapMaintenanceDecision = LegacyBitmapHeapMaintenancePolicy.evaluate(
         previous = state,
         sdkInt = sdkInt,
         lowMemoryTier = lowMemoryTier,
-        memoryLevel = PlaybackMemoryLevel.NORMAL,
+        memoryLevel = memoryLevel,
+        memoryPressureSource = pressureSource,
         oomCount = oomCount,
         nowElapsedMs = now,
         heapUsedBytes = heapMiB * mib,

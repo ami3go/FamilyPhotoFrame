@@ -8,6 +8,7 @@ data class DiagnosticsHealthSnapshot(
     val droppedSinceLastReport: Long,
     val fieldsDropped: Long,
     val fieldsTransformed: Long,
+    val fieldRejectionSummary: String,
     val standard: Stream,
     val bulk: Stream,
     val lastSuccessfulWriteEpochMs: Long,
