@@ -40,7 +40,7 @@ class DiagnosticEventCatalogTest {
             "evaluatedTwoPhotoCombinations", "evaluatedThreePhotoCombinations",
             "evaluatedLayoutCount", "folderTier", "orientationTier", "screenCoverage",
             "averageCropLoss", "maximumCropLoss", "timeDistanceScore", "recentPenalty",
-            "decisionReason",
+            "decisionReason", "collageFillWithOtherOrientations",
         ).forEach { field -> assertTrue(field in spec.permittedFields) }
     }
 

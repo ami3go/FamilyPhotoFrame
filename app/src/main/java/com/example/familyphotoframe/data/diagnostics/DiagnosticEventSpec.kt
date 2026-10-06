@@ -125,6 +125,7 @@ object DiagnosticEventCatalog {
         "configuredMaxCollagePhotos", "memoryMaxCollagePhotos",
         "effectiveMaxCollagePhotos", "threePhotoEvaluationAllowed",
         "threePhotoEvaluationPerformed", "threePhotoSkipReason", "rawCandidateCount",
+        "collageFillWithOtherOrientations",
         "metadataCandidateCount", "localProbeCount", "localProbeBudgetSkippedCount",
         "remoteProbeCount", "remoteProbeSuccessCount", "remoteProbeFailureCount",
         "remoteProbeBudgetSkippedCount", "remoteProbeByteLimit", "remoteUnknownSkippedCount",
