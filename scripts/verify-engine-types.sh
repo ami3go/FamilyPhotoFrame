@@ -251,6 +251,7 @@ copy domain/engine/RecoveryPolicy.kt
 copy domain/engine/PlaybackMemoryPolicy.kt
 copy domain/engine/PlaybackMemoryGuard.kt
 copy domain/engine/PlaybackPoolCachePolicy.kt
+copy domain/engine/PlaybackPoolProbePolicy.kt
 copy domain/engine/RenderAckRecoveryPolicy.kt
 copy domain/engine/RenderAckTimeoutPolicy.kt
 copy domain/engine/OnThisDayPlaybackPolicy.kt

@@ -1506,9 +1506,7 @@ class SlideshowEngine(
 
     /** Prefer a displayable primary photo; fall back to the fallback pool (spec §9.3 on_empty). */
     private suspend fun pick(): Pick? {
-        if (primaryIds.isNotEmpty() ||
-            (selectionMode == SelectionMode.FOLDER_BALANCED_SHUFFLE && unavailableSourceIds.isNotEmpty())
-        ) {
+        if (PlaybackPoolProbePolicy.shouldProbePrimary(primaryIds.size)) {
             pickFrom(
                 sourceIds = primaryIds,
                 queue = primaryQueue,
