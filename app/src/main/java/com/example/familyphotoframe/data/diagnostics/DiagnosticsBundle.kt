@@ -28,8 +28,7 @@ object DiagnosticsBundleJson {
     ): ByteArray {
         val retentionStatus = when {
             !durableStreamsAttached -> "MEMORY_ONLY"
-            health.standard.rotations > 0L || health.bulk.rotations > 0L ||
-                health.standard.retainedGenerations > 1 || health.bulk.retainedGenerations > 1 -> "PARTIAL_RETENTION"
+            health.standard.evictedGenerations > 0L || health.bulk.evictedGenerations > 0L -> "PARTIAL_RETENTION"
             health.standard.retainedBytes + health.bulk.retainedBytes == 0L -> "EMPTY"
             else -> "COMPLETE"
         }
@@ -37,8 +36,7 @@ object DiagnosticsBundleJson {
             health.bulk.lastAppendErrorClass.isNotEmpty()
         val evidenceIncomplete = !flushSucceeded || !durableStreamsAttached ||
             health.droppedTotal > 0L || sinkFailed || health.crashEnvelopePresent ||
-            health.standard.rotations > 0L || health.bulk.rotations > 0L ||
-            health.standard.retainedGenerations > 1 || health.bulk.retainedGenerations > 1
+            health.standard.evictedGenerations > 0L || health.bulk.evictedGenerations > 0L
         val runtime = context.runtime
         return buildString(2_048) {
             record(
@@ -187,6 +185,7 @@ object DiagnosticsBundleJson {
                 "retainedBytes" to stream.retainedBytes,
                 "retainedGenerations" to stream.retainedGenerations,
                 "rotations" to stream.rotations,
+                "evictedGenerations" to stream.evictedGenerations,
                 "oldestKnownSessionId" to stream.oldestKnownSessionId,
                 "oldestKnownSequence" to stream.oldestKnownSequence,
                 "newestKnownSessionId" to stream.newestKnownSessionId,
@@ -195,7 +194,7 @@ object DiagnosticsBundleJson {
                 "lastAppendErrorClass" to stream.lastAppendErrorClass,
                 "retentionStatus" to when {
                     stream.retainedBytes == 0L -> "EMPTY"
-                    stream.rotations > 0L || stream.retainedGenerations > 1 -> "PARTIAL_RETENTION"
+                    stream.evictedGenerations > 0L -> "PARTIAL_RETENTION"
                     else -> "COMPLETE"
                 },
             ),

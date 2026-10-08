@@ -268,6 +268,8 @@ class SlideshowViewModel(
     private val scanFlights = mutableMapOf<String, ScanFlight>()
     /** One cancellable low-priority content-hash indexer per source. */
     private val contentHashJobs = mutableMapOf<String, Job>()
+    private var cachedHashUpdatesPending = 0
+    private var cachedHashReconcileTimer: Job? = null
     private data class PendingPartialResume(
         val item: PhotoItem,
         val source: PhotoSource,
@@ -362,6 +364,9 @@ class SlideshowViewModel(
                 publishDiagnosticPlayback(_state.value)
             }
         }
+        viewModelScope.launch {
+            services.mediaCache.contentHashUpdates.collect { noteCachedContentHashUpdate() }
+        }
         // Single source of truth for config; react to changes.
         settingsCollectorJob = viewModelScope.launch {
             services.settings.settings.collect { s -> onSettings(s) }
@@ -404,6 +409,9 @@ class SlideshowViewModel(
         recoveryRuntimes.clear()
         contentHashJobs.values.forEach { it.cancel() }
         contentHashJobs.clear()
+        cachedHashReconcileTimer?.cancel()
+        cachedHashReconcileTimer = null
+        cachedHashUpdatesPending = 0
         partialResumeJob?.cancel()
         slowLinkExitJob?.cancel()
         pendingPartialResumes.clear()
@@ -610,6 +618,7 @@ class SlideshowViewModel(
             healthJob,
             exifJob,
             contentHashJob,
+            cachedHashReconcileTimer,
         )
         backgroundJobs.forEach { it.cancel() }
         backgroundJobs.forEach { it.join() }
@@ -619,6 +628,8 @@ class SlideshowViewModel(
         healthJob = null
         exifJob = null
         contentHashJob = null
+        cachedHashReconcileTimer = null
+        cachedHashUpdatesPending = 0
         partialResumeJob?.cancelAndJoin()
         partialResumeJob = null
         slowLinkExitJob?.cancelAndJoin()
@@ -4276,12 +4287,17 @@ class SlideshowViewModel(
         _state.update { it.copy(currentPhotoExif = null) }
 
         contentHashJob?.cancel()
-        if (lastHashPhotoId != current.id) {
+        if (!current.needsCache && lastHashPhotoId != current.id) {
             lastHashPhotoId = current.id
             contentHashJob = launchSourceConsumer {
                 val hash = services.contentHashBackfiller.backfill(current.id, ::resolveSourceById)
                 if (hash != null) engine.reconcileShuffle()
             }
+        } else if (current.needsCache) {
+            // MediaCache hashes the verified local file after commit/cache hit. Opening
+            // the remote source here would duplicate every full NAS read.
+            lastHashPhotoId = current.id
+            contentHashJob = null
         }
 
         exifJob?.cancel()
@@ -4295,6 +4311,28 @@ class SlideshowViewModel(
             // Warm the next photo so its overlay is ready when it appears.
             model.next?.let { services.exifBackfiller.backfill(it.id, ::resolveSourceById) }
         }
+    }
+
+    private fun noteCachedContentHashUpdate() {
+        cachedHashUpdatesPending++
+        if (cachedHashUpdatesPending >= CONTENT_HASH_RECONCILE_BATCH_SIZE) {
+            flushCachedHashReconciliation()
+            return
+        }
+        if (cachedHashReconcileTimer == null) {
+            cachedHashReconcileTimer = viewModelScope.launch {
+                delay(CONTENT_HASH_RECONCILE_MAX_DELAY_MS)
+                flushCachedHashReconciliation()
+            }
+        }
+    }
+
+    private fun flushCachedHashReconciliation() {
+        if (cachedHashUpdatesPending <= 0) return
+        cachedHashUpdatesPending = 0
+        cachedHashReconcileTimer?.cancel()
+        cachedHashReconcileTimer = null
+        engine.reconcileShuffle()
     }
 
     /** Tracks superseded per-slide jobs until completion, not just until replacement. */
@@ -5704,6 +5742,8 @@ class SlideshowViewModel(
         const val INITIAL_REMOTE_NETWORK_POLL_MS = 500L
         const val SLOW_LINK_RESUME_IDLE_GRACE_MS = 2_000L
         const val MAX_PENDING_PARTIAL_RESUMES = 32
+        const val CONTENT_HASH_RECONCILE_BATCH_SIZE = 32
+        const val CONTENT_HASH_RECONCILE_MAX_DELAY_MS = 5L * 60_000L
         const val WEATHER_KEY_REF = CredentialPolicy.WEATHER_API_KEY_REF
     }
 

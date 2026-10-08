@@ -478,6 +478,9 @@ class ServiceLocator(private val appContext: Context) {
 
                 override suspend fun clearAllCacheKeys() = photoDao.clearAllCacheKeys()
 
+                override suspend fun needsContentHash(stableId: String): Boolean =
+                    photoDao.needsContentHash(stableId)
+
                 override suspend fun setContentHash(
                     stableId: String,
                     sha256: String,

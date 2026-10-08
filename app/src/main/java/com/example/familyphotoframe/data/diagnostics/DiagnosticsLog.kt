@@ -357,9 +357,8 @@ class DiagnosticsLog(
         val durableStreamsAttached = sink != null || bulkSink != null
         val incomplete = !flushSucceeded || !durableStreamsAttached || health.droppedTotal > 0L ||
             health.crashEnvelopePresent || health.standard.lastAppendErrorClass.isNotEmpty() ||
-            health.bulk.lastAppendErrorClass.isNotEmpty() || health.standard.rotations > 0L ||
-            health.bulk.rotations > 0L || health.standard.retainedGenerations > 1 ||
-            health.bulk.retainedGenerations > 1
+            health.bulk.lastAppendErrorClass.isNotEmpty() ||
+            health.standard.evictedGenerations > 0L || health.bulk.evictedGenerations > 0L
         val streams = arrayListOf<InputStream>(
             ByteArrayInputStream(
                 DiagnosticsBundleJson.prelude(
@@ -439,6 +438,7 @@ class DiagnosticsLog(
             retainedBytes = sinkSnapshot?.retainedBytes ?: 0L,
             retainedGenerations = sinkSnapshot?.retainedGenerations ?: 0,
             rotations = sinkSnapshot?.rotations ?: 0L,
+            evictedGenerations = sinkSnapshot?.evictedGenerations ?: 0L,
             oldestKnownSessionId = tracker.oldestSessionId,
             oldestKnownSequence = tracker.oldestSequence,
             newestKnownSessionId = tracker.newestSessionId,

@@ -776,6 +776,13 @@ class ShuffleRepository(
             entry.folderPhotoKey
         }.mapIndexed { position, entry -> entry.copy(position = position) }
 
+        val queueIdentityChanged = existing.size != rebuilt.size ||
+            existing.zip(rebuilt).any { (before, after) ->
+                before.position != after.position ||
+                    before.folderPhotoKey != after.folderPhotoKey ||
+                    before.photoId != after.photoId
+            }
+
         dao.deletePhotoCycleEntries(scope.scopeKey, folderKey, current.activePhotoCycle)
         if (rebuilt.isNotEmpty()) dao.insertPhotoEntries(rebuilt)
         val canonicalLastConsumed = existing.firstOrNull {
@@ -794,7 +801,7 @@ class ShuffleRepository(
             DiagnosticsLog.Category.ENGINE, "PHOTO_REMOVED",
             "scope" to scope.scopeKey, "count" to removed.size.toString(),
         )
-        if (canonicalGroups.any { (key, rows) -> rows.size > 1 || rows.any { it.folderPhotoKey != key } }) {
+        if (queueIdentityChanged) {
             diagnostics.log(
                 DiagnosticsLog.Category.ENGINE, "PHOTO_IDENTITY_RECONCILED",
                 "scope" to scope.scopeKey,

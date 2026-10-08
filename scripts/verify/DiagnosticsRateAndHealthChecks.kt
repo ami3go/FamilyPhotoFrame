@@ -159,6 +159,22 @@ fun runDiagnosticsRateAndHealthChecks() {
         root.deleteRecursively()
     }
 
+    println("-- rotation is complete until retained history is actually evicted --")
+    run {
+        val root = java.nio.file.Files.createTempDirectory("fpf-retention-semantics").toFile()
+        val sink = FileDiagnosticsSink(root, maxBytes = 1, keepGenerations = 2)
+        sink.append("one")
+        sink.append("two")
+        sink.append("three")
+        val retained = sink.snapshot()
+        check("lossless rotations are counted", 2L, retained.rotations)
+        check("lossless rotations do not imply eviction", 0L, retained.evictedGenerations)
+        check("all retained generations are visible", 3, retained.retainedGenerations)
+        sink.append("four")
+        check("oldest-generation deletion is explicit", 1L, sink.snapshot().evictedGenerations)
+        root.deleteRecursively()
+    }
+
     println("-- queue saturation and flush timeout --")
     run {
         val entered = CountDownLatch(1)

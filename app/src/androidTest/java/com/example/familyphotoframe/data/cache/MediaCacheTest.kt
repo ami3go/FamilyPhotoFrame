@@ -15,12 +15,14 @@ import com.example.familyphotoframe.data.source.SourceHealth
 import com.example.familyphotoframe.data.source.SourceId
 import com.example.familyphotoframe.data.source.SourceType
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -129,6 +131,35 @@ class MediaCacheTest {
         }
         assertTrue(results.all { it?.exists() == true })
         assertEquals(1, source.opens.get())
+    }
+
+    @Test fun remoteHashUsesCommittedCacheBytesWithoutSecondSourceRead() = runBlocking {
+        val source = CountingSource()
+        val hashPersisted = CompletableDeferred<Unit>()
+        val hashWrites = AtomicInteger(0)
+        val cache = MediaCache(
+            ApplicationProvider.getApplicationContext(),
+            db.cacheIndexDao(),
+            Dispatchers.IO,
+            photoIndex = object : MediaCache.PhotoCacheIndexWriter {
+                override suspend fun setCacheKey(stableId: String, cacheKey: String?) = Unit
+                override suspend fun clearCacheKey(cacheKey: String) = Unit
+                override suspend fun clearAllCacheKeys() = Unit
+                override suspend fun needsContentHash(stableId: String) = true
+                override suspend fun setContentHash(stableId: String, sha256: String, scannedAtEpochMs: Long) {
+                    hashWrites.incrementAndGet()
+                    hashPersisted.complete(Unit)
+                }
+            },
+            maxBytesProvider = { 10L * 1024 * 1024 },
+        )
+
+        assertNotNull(cache.get(item("cache-hash"), source, emptySet()))
+        withTimeout(5_000L) { hashPersisted.await() }
+        assertNotNull(cache.get(item("cache-hash"), source, emptySet()))
+
+        assertEquals(1, source.opens.get())
+        assertEquals(1, hashWrites.get())
     }
 
     @Test fun firstAccessRemovesCrashLeftoverPartFiles() = runBlocking {

@@ -24,6 +24,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
@@ -76,6 +80,7 @@ class MediaCache(
         suspend fun setCacheKey(stableId: String, cacheKey: String?)
         suspend fun clearCacheKey(cacheKey: String)
         suspend fun clearAllCacheKeys()
+        suspend fun needsContentHash(stableId: String): Boolean = false
         suspend fun setContentHash(stableId: String, sha256: String, scannedAtEpochMs: Long) {}
     }
 
@@ -150,6 +155,13 @@ class MediaCache(
     private val dir: File = File(context.filesDir, "mediacache").apply { mkdirs() }
     private val maintenanceScope = CoroutineScope(SupervisorJob() + io)
     private val activePartialNames = ConcurrentHashMap.newKeySet<String>()
+    private val contentHashInFlight = ConcurrentHashMap.newKeySet<String>()
+    private val mutableContentHashUpdates = MutableSharedFlow<String>(
+        extraBufferCapacity = CONTENT_HASH_UPDATE_BUFFER,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    /** Stable ids whose missing hash was persisted from already-verified local bytes. */
+    val contentHashUpdates: SharedFlow<String> = mutableContentHashUpdates.asSharedFlow()
     private class KeyLock {
         val mutex = Mutex()
         var users = 0
@@ -192,6 +204,7 @@ class MediaCache(
                         if (f.exists() && existing.verifiedDecodeOk) {
                             dao.touch(key, System.currentTimeMillis())
                             mirrorCacheKey(item.stableId, key)
+                            scheduleLocalContentHash(item, f)
                             return@withLock ResolveResult.Ready(f, cacheHit = true)
                         }
                         // Stale/missing entry — drop it and re-download.
@@ -279,6 +292,8 @@ class MediaCache(
                     val f = File(existing.localFilePathPrivate)
                     if (f.exists() && existing.verifiedDecodeOk) {
                         dao.touch(key, System.currentTimeMillis())
+                        mirrorCacheKey(item.stableId, key)
+                        scheduleLocalContentHash(item, f)
                         return@withLock ResolveResult.Ready(f, cacheHit = true)
                     }
                     dao.delete(key)
@@ -470,15 +485,7 @@ class MediaCache(
                 indexCommitted = true
                 mirrorCacheKey(item.stableId, key)
             }
-            maintenanceScope.launch {
-                runCatching {
-                    photoIndex?.setContentHash(
-                        item.stableId,
-                        sha256(target),
-                        System.currentTimeMillis(),
-                    )
-                }
-            }
+            scheduleLocalContentHash(item, target)
             ResolveResult.Ready(target, cacheHit = false)
         } catch (deadline: SelectedTransferDeadlineException) {
             onTransferTelemetry(
@@ -652,6 +659,32 @@ class MediaCache(
         }
         return digest.digest().joinToString("") { byte ->
             "%02x".format(byte.toInt() and 0xff)
+        }
+    }
+
+    /** Hash verified app-owned cache bytes without opening the remote source again. */
+    private fun scheduleLocalContentHash(
+        item: PhotoItem,
+        file: File,
+    ) {
+        val index = photoIndex ?: return
+        if (!file.isFile || !contentHashInFlight.add(item.stableId)) return
+        maintenanceScope.launch {
+            try {
+                if (!index.needsContentHash(item.stableId)) return@launch
+                index.setContentHash(
+                    item.stableId,
+                    sha256(file),
+                    System.currentTimeMillis(),
+                )
+                mutableContentHashUpdates.tryEmit(item.stableId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Playback does not depend on the optional hash; a later cache hit retries.
+            } finally {
+                contentHashInFlight.remove(item.stableId)
+            }
         }
     }
 
@@ -867,6 +900,7 @@ class MediaCache(
         private const val MAX_CONCURRENT_TRANSFERS = 2
         private const val EVICTION_BATCH_SIZE = 64
         private const val RECONCILIATION_BATCH_SIZE = 256
+        private const val CONTENT_HASH_UPDATE_BUFFER = 64
         private const val EMPTY_PROTECTED_SENTINEL = "__never_a_cache_key__"
         private const val MAX_ENTRY_BYTES = 256L * MB
         private const val RESERVED_FREE_BYTES = 512L * MB

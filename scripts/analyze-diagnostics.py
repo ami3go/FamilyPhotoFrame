@@ -276,6 +276,9 @@ def main(argv=None):
     write_reports(rich_report, json_out, markdown_out)
     codes = by_code(events)
     truncated, trunc_note = detect_truncation(events, codes)
+    metadata = next((item for item in bundle.metadata if item.get("recordType") == "bundleMetadata"), {})
+    partial_evidence = bool(metadata.get("evidenceIncomplete")) or \
+        metadata.get("retentionStatus") == "PARTIAL_RETENTION"
 
     times = [event.get("t", 0) for event in events]
     span = hours(max(times) - min(times)) if len(times) > 1 else 0
@@ -301,6 +304,24 @@ def main(argv=None):
         ("Auto-start on >= 2 API levels", check_autostart(codes)),
         ("No secrets in the log (§17.2)", check_secrets_absent(events)),
     ]
+    if partial_evidence:
+        # Absence-based conclusions are unknowable after retained history was evicted.
+        # Preserve positive failures (crash markers, measured heap growth, secrets), but
+        # do not turn missing source/slide/boot/runtime history into a false FAIL.
+        absence_sensitive = {
+            "Randomized slideshow, SAF + SMB merged",
+            "Photos actually vary (randomization)",
+            "Room-indexed, no per-slide enumeration",
+            "Primary/fallback transitions",
+            "No permanent blank after a loss",
+            "24 h continuous coverage",
+            "Auto-start on >= 2 API levels",
+        }
+        checks = [
+            (name, (NODATA, detail + " (retained history is partial)")
+             if name in absence_sensitive and status == FAIL else (status, detail))
+            for name, (status, detail) in checks
+        ]
     for name, (status, detail) in checks:
         print(fmt(status, name, detail))
 

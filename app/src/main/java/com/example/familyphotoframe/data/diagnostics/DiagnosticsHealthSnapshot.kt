@@ -22,6 +22,7 @@ data class DiagnosticsHealthSnapshot(
         val retainedBytes: Long = 0L,
         val retainedGenerations: Int = 0,
         val rotations: Long = 0L,
+        val evictedGenerations: Long = 0L,
         val oldestKnownSessionId: String = "",
         val oldestKnownSequence: Long = 0L,
         val newestKnownSessionId: String = "",

@@ -323,7 +323,10 @@ def _integrity_gate(bundle: BundleData, events: list[dict[str, Any]]) -> GateRes
         if fields_dropped:
             failures.append(f"{fields_dropped} field(s) rejected by catalog")
         if standard_status != "COMPLETE":
-            failures.append(f"standard evidence retention is {standard_status}")
+            # Retained-history loss means the criterion cannot be judged; it is not
+            # itself measured evidence that the app violated a runtime bound. Required
+            # NO DATA gates still keep release qualification non-passing.
+            missing.append(f"standard evidence retention is {standard_status}")
     codes = _by_code(events)
     for code in ("DIAGNOSTICS_QUEUE_OVERFLOW", "DIAGNOSTICS_FLUSH_TIMEOUT"):
         if codes.get(code):

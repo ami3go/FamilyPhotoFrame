@@ -51,8 +51,8 @@ python3 scripts/verify-crash-free-runtime-phase4.py || exit 1
 echo "==> Crash-free runtime Phase 5 qualification contracts"
 python3 scripts/verify-crash-free-runtime-phase5.py || exit 1
 
-echo "==> Build 88 Phase 4 closure contracts"
-python3 scripts/verify-build88-phase4-closure.py || exit 1
+echo "==> Build 89 Phase 4 fix contracts"
+python3 scripts/verify-build89-phase4-fix.py || exit 1
 python3 scripts/verify-phase4-snapshot-merge.py || exit 1
 
 # Runs before the parse step below on purpose: it catches statements accidentally joined

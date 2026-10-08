@@ -40,12 +40,15 @@ class FileDiagnosticsSink(
         val retainedBytes: Long,
         val retainedGenerations: Int,
         val rotations: Long,
+        /** Number of retained files actually discarded after the retention set filled. */
+        val evictedGenerations: Long,
         val lastSuccessfulWriteEpochMs: Long,
         val lastAppendErrorClass: String?,
     )
 
     private val lock = Any()
     private var rotations: Long = 0L
+    private var evictedGenerations: Long = 0L
 
     @Volatile var lastSuccessfulWriteEpochMs: Long = 0L
         private set
@@ -108,6 +111,7 @@ class FileDiagnosticsSink(
             retainedBytes = totalBytesLocked(),
             retainedGenerations = retainedFileCountLocked(),
             rotations = rotations,
+            evictedGenerations = evictedGenerations,
             lastSuccessfulWriteEpochMs = lastSuccessfulWriteEpochMs,
             lastAppendErrorClass = lastError,
         )
@@ -134,6 +138,7 @@ class FileDiagnosticsSink(
         active.delete()
         for (i in 1..keepGenerations) File(dir, "$BASE.$i.jsonl").delete()
         rotations = 0L
+        evictedGenerations = 0L
         lastSuccessfulWriteEpochMs = 0L
         lastError = null
         Unit
@@ -142,7 +147,8 @@ class FileDiagnosticsSink(
     /** Shift generations up and start a new active file; drops the oldest. */
     private fun rotate() {
         rotations++
-        File(dir, "$BASE.$keepGenerations.jsonl").delete()
+        val oldest = File(dir, "$BASE.$keepGenerations.jsonl")
+        if (oldest.exists() && oldest.delete()) evictedGenerations++
         for (i in keepGenerations - 1 downTo 1) {
             val from = File(dir, "$BASE.$i.jsonl")
             if (from.exists()) from.renameTo(File(dir, "$BASE.${i + 1}.jsonl"))

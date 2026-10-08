@@ -532,6 +532,9 @@ interface PhotoDao {
     )
     suspend fun updateContentHashByStableId(stableId: String, sha256: String, scannedAt: Long)
 
+    @Query("SELECT EXISTS(SELECT 1 FROM photos WHERE stableId = :stableId AND contentSha256 IS NULL)")
+    suspend fun needsContentHash(stableId: String): Boolean
+
     @Query("UPDATE photos SET contentHashScannedAtEpochMs = :attemptedAt WHERE id = :id")
     suspend fun markContentHashAttempt(id: Long, attemptedAt: Long)
 

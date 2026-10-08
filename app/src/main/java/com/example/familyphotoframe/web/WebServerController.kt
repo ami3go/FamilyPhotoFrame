@@ -1215,6 +1215,7 @@ class WebServerController(
                 put("retainedBytes", value.retainedBytes)
                 put("retainedGenerations", value.retainedGenerations)
                 put("rotations", value.rotations)
+                put("evictedGenerations", value.evictedGenerations)
                 put("oldestKnownSessionId", value.oldestKnownSessionId)
                 put("oldestKnownSequence", value.oldestKnownSequence)
                 put("newestKnownSessionId", value.newestKnownSessionId)
@@ -1251,9 +1252,9 @@ class WebServerController(
         if (health.droppedTotal > 0L) warning("DIAGNOSTICS_EVENTS_DROPPED", "${health.droppedTotal} durable events were dropped")
         if (health.standard.lastAppendErrorClass.isNotEmpty()) warning("DIAGNOSTICS_STANDARD_SINK_FAILED", health.standard.lastAppendErrorClass)
         if (health.bulk.lastAppendErrorClass.isNotEmpty()) warning("DIAGNOSTICS_BULK_SINK_FAILED", health.bulk.lastAppendErrorClass)
-        if (health.standard.rotations > 0L || health.bulk.rotations > 0L ||
-            health.standard.retainedGenerations > 1 || health.bulk.retainedGenerations > 1
-        ) warning("DIAGNOSTICS_HISTORY_ROTATED", "Older retained history may be incomplete")
+        if (health.standard.evictedGenerations > 0L || health.bulk.evictedGenerations > 0L) {
+            warning("DIAGNOSTICS_HISTORY_EVICTED", "Older diagnostic history was evicted")
+        }
         if (health.lastFlushTimeoutMs > 0L) warning("DIAGNOSTICS_FLUSH_INCOMPLETE", "Last flush timed out")
         if (health.crashEnvelopePresent) warning("CRASH_ENVELOPE_PENDING", "Crash evidence is present in protected recovery storage")
         if (android.os.Build.VERSION.SDK_INT < 30) warning("PROCESS_EXIT_EVIDENCE_UNSUPPORTED", "Detailed historical process-exit reasons require Android 11 or newer")
@@ -1317,8 +1318,7 @@ class WebServerController(
             health.bulk.lastAppendErrorClass,
         ).count { it.isNotEmpty() }
         val retentionStatus = when {
-            health.standard.rotations > 0L || health.bulk.rotations > 0L ||
-                health.standard.retainedGenerations > 1 || health.bulk.retainedGenerations > 1 -> "PARTIAL_RETENTION"
+            health.standard.evictedGenerations > 0L || health.bulk.evictedGenerations > 0L -> "PARTIAL_RETENTION"
             health.standard.retainedBytes + health.bulk.retainedBytes == 0L -> "EMPTY"
             else -> "COMPLETE"
         }
