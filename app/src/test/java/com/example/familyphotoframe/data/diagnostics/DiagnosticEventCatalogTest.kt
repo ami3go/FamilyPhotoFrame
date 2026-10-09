@@ -79,4 +79,12 @@ class DiagnosticEventCatalogTest {
         assertEquals(DiagnosticsLog.Category.ENGINE, cancellation.category)
         assertTrue("cancellationInitiator" in cancellation.permittedFields)
     }
+
+    @Test fun startupReservationRecovery_preservesIntegrityFields() {
+        val recovered = DiagnosticEventCatalog.require("RESERVATION_RECOVERED")
+        val startup = DiagnosticEventCatalog.require("SHUFFLE_STARTUP_RECOVERY")
+
+        assertTrue("ageMs" in recovered.permittedFields)
+        assertTrue("reservations" in startup.permittedFields)
+    }
 }

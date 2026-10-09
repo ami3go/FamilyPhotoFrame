@@ -17,12 +17,15 @@ def main() -> int:
     catalog = (ROOT / "app/src/main/java/com/example/familyphotoframe/data/diagnostics/DiagnosticEventSpec.kt").read_text()
 
     checks = {
-        "install-distinct versionCode 89": "val buildNumber = 89" in build,
+        "install-distinct versionCode 90": "val buildNumber = 90" in build,
         "cache exposes bounded hash updates": "val contentHashUpdates: SharedFlow<String>" in cache,
         "cache hashes verified local file": "scheduleLocalContentHash(item, target)" in cache,
         "remote display avoids direct backfill": "if (!current.needsCache && lastHashPhotoId != current.id)" in vm,
         "hash reconciliation is batched": "CONTENT_HASH_RECONCILE_BATCH_SIZE = 32" in vm,
         "deferred remote hash event is registered": '"REMOTE_CONTENT_HASH_DEFERRED_TO_CACHE"' in catalog,
+        "reservation recovery fields are retained": all(
+            field in catalog for field in ('"reservations"', '"ageMs"')
+        ),
         "actual evidence eviction is tracked": "evictedGenerations" in sink,
         "bundle partial status uses eviction": "stream.evictedGenerations > 0L" in bundle,
     }

@@ -141,7 +141,7 @@ object DiagnosticEventCatalog {
         "mediaTransferStreamCloseSucceeded", "mediaTransferSlotReleased",
         "firstEpochMs", "lastEpochMs",
         "photoCount", "photoCycle", "folderCycle", "folders", "reservation",
-        "sequence", "targetMs", "result", "retryCount",
+        "reservations", "ageMs", "sequence", "targetMs", "result", "retryCount",
     )
 
     private val sourceFields = setOf(
