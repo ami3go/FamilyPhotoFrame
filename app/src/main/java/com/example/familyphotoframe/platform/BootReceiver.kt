@@ -26,6 +26,7 @@ class BootReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(Dispatchers.Default).launch {
             try {
+                app.evaluateBatteryProtection("boot")
                 BootStartupCoordinator(app).onBootCompleted()
             } finally {
                 pending.finish()

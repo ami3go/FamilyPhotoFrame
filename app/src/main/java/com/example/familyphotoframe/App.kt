@@ -33,6 +33,7 @@ import com.example.familyphotoframe.domain.engine.MemorySelfRecoveryState
 import com.example.familyphotoframe.domain.engine.MemorySelfRecoveryTrigger
 import com.example.familyphotoframe.domain.engine.TrimMemoryPolicy
 import com.example.familyphotoframe.domain.engine.TrimMemoryResponse
+import com.example.familyphotoframe.platform.power.BatteryProtectionCoordinator
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -55,6 +56,7 @@ class App : Application() {
     private var memorySelfRecoveryState = MemorySelfRecoveryState()
     private lateinit var crashEnvelopeStore: CrashEnvelopeStore
     private lateinit var processSessionId: String
+    private lateinit var batteryProtectionCoordinator: BatteryProtectionCoordinator
     private var stallWatchdog: MainThreadStallWatchdog? = null
 
     override fun onCreate() {
@@ -164,6 +166,12 @@ class App : Application() {
             mapOf("appVersion" to BuildConfig.VERSION_NAME),
             DiagnosticContext(origin = DiagnosticOrigin.APP),
         )
+        batteryProtectionCoordinator = BatteryProtectionCoordinator(
+            context = this,
+            settings = services.settings,
+            diagnostics = services.diagnostics,
+            scope = appScope,
+        ).also { it.start() }
         startMainThreadWatchdog()
         appScope.launch {
             reportCompletedMemoryProcessRecovery()
@@ -240,6 +248,11 @@ class App : Application() {
         }
         // Start/stop the embedded web server to match settings (spec §15.1).
         services.webServer.observe(appScope)
+    }
+
+    /** Called only by the explicit in-app alarm/boot receivers. */
+    internal suspend fun evaluateBatteryProtection(trigger: String) {
+        batteryProtectionCoordinator.evaluateAndSchedule(trigger)
     }
 
     /** Persist a bounded crash envelope before delegating to the platform handler. */

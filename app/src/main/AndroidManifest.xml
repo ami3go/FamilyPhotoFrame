@@ -3,9 +3,10 @@
 
     <!--
       Permission posture: SAF folder access, keep-screen-on, and app-private fallback
-      need no permissions. The only permissions declared are the network ones below,
-      which map to the shipped SMB/NAS feature. No broad media/storage permissions are
-      ever declared (enforced by the merged-manifest audit in app/build.gradle.kts).
+      need no storage permissions. Network permissions map to SMB/NAS, boot permission
+      maps to optional auto-start, and the legacy SuperSU declaration maps to the optional
+      rooted battery-care control. No broad media/storage permissions are ever declared
+      (enforced by the merged-manifest audit in app/build.gradle.kts).
     -->
 
     <!--
@@ -19,6 +20,12 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Auto-start on boot when the user enables it (spec §13.3). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!--
+      Declares the optional rooted V80 battery-care integration to legacy SuperSU.
+      SuperSU 2.78 can silently deny an otherwise valid app-originated request when the
+      caller omits this historical permission; it grants no capability by itself.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_SUPERUSER" />
 
     <!-- Operable without a touchscreen (spec §12.2, §21.4). -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
@@ -63,6 +70,11 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".platform.power.BatteryProtectionReceiver"
+            android:exported="false"
+            android:enabled="true" />
     </application>
 
 </manifest>

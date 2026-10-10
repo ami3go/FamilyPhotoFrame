@@ -14,6 +14,31 @@ import android.os.BatteryManager
  * OEMs may omit those optional properties, in which case the fields are simply absent.
  */
 internal class BatteryTelemetry(private val appContext: Context) {
+    data class Snapshot(
+        val levelPercent: Int?,
+        val temperatureDeciC: Int?,
+        val plugged: Boolean?,
+        val status: String,
+    )
+
+    fun snapshot(): Snapshot {
+        val battery = runCatching {
+            appContext.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        }.getOrNull() ?: return Snapshot(null, null, null, "UNAVAILABLE")
+        val level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+        val temperature = battery.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
+        val plugged = battery.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1)
+        return Snapshot(
+            levelPercent = if (level >= 0 && scale > 0) {
+                ((level * 100) / scale).coerceIn(0, 100)
+            } else null,
+            temperatureDeciC = temperature.takeUnless { it == Int.MIN_VALUE },
+            plugged = plugged.takeIf { it >= 0 }?.let { it != 0 },
+            status = "OK",
+        )
+    }
+
     fun fields(): Map<String, String> {
         val battery = runCatching {
             appContext.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))

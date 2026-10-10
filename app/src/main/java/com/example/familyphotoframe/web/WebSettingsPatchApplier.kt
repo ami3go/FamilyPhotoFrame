@@ -433,6 +433,9 @@ internal class WebSettingsPatchApplier(
                 )
             }
             bool("autoStartOnBoot")?.let { next = next.copy(autoStartOnBoot = it) }
+            bool("batteryProtectionEnabled")?.let {
+                next = next.copy(batteryProtectionEnabled = it)
+            }
 
             // Non-secret SMB fields only; the password stays device-only (§15.6).
             // If the endpoint/account changes, clear the credential reference so an

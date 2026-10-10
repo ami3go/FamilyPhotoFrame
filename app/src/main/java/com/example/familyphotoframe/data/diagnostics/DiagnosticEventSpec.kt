@@ -100,6 +100,8 @@ object DiagnosticEventCatalog {
         "breadcrumbOperation", "breadcrumbStage", "breadcrumbActive",
         "breadcrumbPresentationToken", "breadcrumbSourceKind",
         "breadcrumbUpdatedEpochMs", "breadcrumbElapsedRealtimeMs", "breadcrumbAgeMs",
+        "batteryTelemetryStatus", "batteryLevelPct", "batteryTempDeciC",
+        "powerConnected", "chargingEnabled", "appOwnsDisabledState",
     )
 
     private val engineFields = setOf(
@@ -283,6 +285,8 @@ object DiagnosticEventCatalog {
         "CONFIG_EXPORTED", "CONFIG_EXPORT_FAILED", "CONFIG_IMPORT_READ_FAILED",
         "CONFIG_IMPORT_TOO_LARGE", "WEB_PREVIEW_REQUEST_RESULT",
         "PREVIEW_HIT_SUMMARY",
+        "BATTERY_PROTECTION_EVALUATED", "BATTERY_PROTECTION_UNAVAILABLE",
+        "BATTERY_PROTECTION_FAILED", "BATTERY_CHARGING_PAUSED", "BATTERY_CHARGING_RESUMED",
     )
 
     private val engineCodes = setOf(
@@ -366,6 +370,7 @@ object DiagnosticEventCatalog {
         "SOURCE_REFRESH_FAILED", "SOURCE_TEST_FAILED", "SOURCE_HEALTH_CHECK_FAILED",
         "UNCAUGHT_EXCEPTION", "WEB_FACTORY_RESET_FAILED", "WEB_START_FAILED",
         "WEATHER_FETCH_FAILED", "DECODE_FAILED", "MEMORY_PROCESS_RESTART_FAILED",
+        "BATTERY_PROTECTION_FAILED",
     )
 
     private val fatalCodes = setOf(
@@ -383,6 +388,7 @@ object DiagnosticEventCatalog {
         "PREPARATION_WATCHDOG_TIMEOUT", "PREPARATION_CANCELLED_RECOVERED",
         "WEB_CONNECTION_REJECTED", "MEMORY_PROCESS_RESTART_SCHEDULED",
         "MEMORY_PROCESS_RESTART_SUPPRESSED",
+        "BATTERY_PROTECTION_UNAVAILABLE",
     )
 
     private val specs: Map<String, DiagnosticEventSpec> = buildMap {
