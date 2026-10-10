@@ -157,6 +157,8 @@ class WebUiContractTest {
         assertEquals(1, Regex("toggleControl\\('autoStartOnBoot'").findAll(js).count())
         assertTrue(js.contains("toggleControl('batteryProtectionEnabled'"))
         assertEquals(1, Regex("toggleControl\\('batteryProtectionEnabled'").findAll(js).count())
+        assertTrue(js.contains("device-pause-timeout-card"))
+        assertTrue(js.contains("doubleTapPauseTimeoutMinutes"))
         // Web-only cards must not remain on the Device tab.
         assertFalse(js.contains("el('tab-device').innerHTML=pageTitle('Web control'"))
         // Source indicator: which source is set up, which one is playing, and the

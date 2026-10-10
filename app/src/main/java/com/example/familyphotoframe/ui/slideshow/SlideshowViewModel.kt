@@ -677,6 +677,7 @@ class SlideshowViewModel(
                 nativeMemoryHilMode = s.nativeMemoryHilMode,
                 memoryTier = services.memoryTier,
                 autoStartOnBoot = s.autoStartOnBoot,
+                doubleTapPauseTimeoutMinutes = s.doubleTapPauseTimeoutMinutes,
                 batteryProtectionEnabled = s.batteryProtectionEnabled,
                 web = s.web,
                 schedule = s.schedule,
@@ -718,6 +719,7 @@ class SlideshowViewModel(
         }
         engine.setCachePlaybackPool(s.cachePlaybackPool)
         engine.setTiming(effectiveInterval, s.temporarilySuppressAfterDecodeFailures)
+        engine.setDoubleTapPauseTimeoutMinutes(s.doubleTapPauseTimeoutMinutes)
         // Applied without a reselect: the pools are unchanged, so the photo on screen
         // stays up and only the *next* pick follows the new rule.
         engine.setPlayback(effectiveSelection, effectiveFavorites, effectiveFolders.toList())
@@ -4766,6 +4768,12 @@ class SlideshowViewModel(
 
     fun setAutoStartOnBoot(value: Boolean) {
         viewModelScope.launch { services.settings.update { it.copy(autoStartOnBoot = value) } }
+    }
+
+    fun setDoubleTapPauseTimeoutMinutes(minutes: Int) {
+        viewModelScope.launch {
+            services.settings.update { it.copy(doubleTapPauseTimeoutMinutes = minutes) }
+        }
     }
 
     fun setBatteryProtectionEnabled(value: Boolean) {

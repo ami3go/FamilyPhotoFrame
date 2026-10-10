@@ -28,11 +28,15 @@ class WebSettingsJsonTest {
     @Test
     fun batteryProtectionIsProjectedForWebParity() {
         val json = WebSettingsJson.redactedConfig(
-            AppSettings(batteryProtectionEnabled = true),
+            AppSettings(
+                batteryProtectionEnabled = true,
+                doubleTapPauseTimeoutMinutes = 15,
+            ),
             nextScheduleAction = "none",
         )
 
         assertEquals("true", json.getValue("batteryProtectionEnabled").jsonPrimitive.content)
+        assertEquals("15", json.getValue("doubleTapPauseTimeoutMinutes").jsonPrimitive.content)
     }
 
     @Test

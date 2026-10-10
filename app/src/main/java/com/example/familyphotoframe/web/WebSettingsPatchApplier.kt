@@ -28,6 +28,7 @@ import com.example.familyphotoframe.data.settings.UploadDuplicatePolicy
 import com.example.familyphotoframe.data.source.BuiltInSourceIds
 import com.example.familyphotoframe.data.source.SynologyApi
 import com.example.familyphotoframe.domain.engine.SourceStatusPolicy
+import com.example.familyphotoframe.domain.engine.DoubleTapPauseTimeoutPolicy
 import com.example.familyphotoframe.domain.schedule.RescanSchedule
 import com.example.familyphotoframe.domain.schedule.SleepSchedule
 import com.example.familyphotoframe.util.Glob
@@ -85,6 +86,11 @@ internal class WebSettingsPatchApplier(
         }?.take(12)
 
         int("intervalSeconds")?.let { if (it !in 3..600) return "intervalSeconds must be 3-600" }
+        int("doubleTapPauseTimeoutMinutes")?.let {
+            if (it !in DoubleTapPauseTimeoutPolicy.optionsMinutes) {
+                return "doubleTapPauseTimeoutMinutes must be 0, 1, 5, 10, 15, 30, or 60"
+            }
+        }
         str("aspectMode")?.let { v ->
             if (AspectMode.entries.none { it.name == v }) return "Unknown aspectMode"
         }
@@ -433,6 +439,9 @@ internal class WebSettingsPatchApplier(
                 )
             }
             bool("autoStartOnBoot")?.let { next = next.copy(autoStartOnBoot = it) }
+            int("doubleTapPauseTimeoutMinutes")?.let {
+                next = next.copy(doubleTapPauseTimeoutMinutes = it)
+            }
             bool("batteryProtectionEnabled")?.let {
                 next = next.copy(batteryProtectionEnabled = it)
             }

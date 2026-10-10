@@ -84,6 +84,7 @@ data class SlideshowUiState(
     /** Result text of the last "Test connection" action, or null. */
     val smbTestResult: String? = null,
     val autoStartOnBoot: Boolean = false,
+    val doubleTapPauseTimeoutMinutes: Int = 5,
     val batteryProtectionEnabled: Boolean = false,
     /** Embedded web setup server settings (spec §15). */
     val web: com.example.familyphotoframe.data.settings.WebSettings =

@@ -53,6 +53,10 @@
     <string name="settings_diagnostics">Diagnostics</string>
     <string name="settings_device">Device</string>
     <string name="settings_autostart">Start on boot (needs OEM auto-start allowed)</string>
+    <string name="settings_pause_timeout_title">Double-tap pause timeout</string>
+    <string name="settings_pause_timeout_hint">Automatically resume after a double-tap pause so the frame cannot remain paused accidentally. Key and web pauses remain manual.</string>
+    <string name="settings_pause_timeout_never">Never</string>
+    <string name="settings_pause_timeout_minutes">%1$d min</string>
     <string name="settings_battery_protection_title">Battery care</string>
     <string name="settings_battery_protection">Protect battery while always plugged in</string>
     <string name="settings_battery_protection_hint" formatted="false">Rooted V80 only. Pauses charging at 75% and resumes at 60%; also pauses above 42°C. Charging is restored if the option is turned off or external power is removed.</string>

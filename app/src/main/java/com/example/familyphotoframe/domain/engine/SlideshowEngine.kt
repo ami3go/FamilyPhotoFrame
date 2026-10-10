@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -51,7 +52,8 @@ class SlideshowEngine(
     private sealed interface Command {
         data object Next : Command
         data object Previous : Command
-        data object TogglePause : Command
+        data class TogglePause(val source: String) : Command
+        data class TimedResume(val pauseGeneration: Long) : Command
         data object Reselect : Command   // content/source changed; re-pick from index
         data object SleepChanged : Command
         /** Restart the dwell timer after the selected bitmap is actually on screen. */
@@ -74,6 +76,8 @@ class SlideshowEngine(
     @Volatile private var playingFallback: Boolean = false
     @Volatile private var intervalMs: Long = 15_000
     @Volatile private var maxFailures: Int = 3
+    @Volatile private var doubleTapPauseTimeoutMinutes: Int =
+        DoubleTapPauseTimeoutPolicy.DEFAULT_MINUTES
     @Volatile private var asleep: Boolean = false
     /** Temporary UI hold: pauses only the automatic dwell timer, not playback state. */
     @Volatile private var interactionHold: Boolean = false
@@ -314,6 +318,10 @@ class SlideshowEngine(
         this.maxFailures = maxFailures
     }
 
+    fun setDoubleTapPauseTimeoutMinutes(minutes: Int) {
+        doubleTapPauseTimeoutMinutes = DoubleTapPauseTimeoutPolicy.normalize(minutes)
+    }
+
     /**
      * Enter or leave quiet hours (spec §20). While asleep the loop stops advancing and
      * blocks on the command channel, so no timers, decodes, or network work happen; the
@@ -451,11 +459,8 @@ class SlideshowEngine(
      * leaving it to be inferred.
      */
     fun togglePause(source: String = "unknown") {
-        pauseRequestSource = source
-        commands.trySend(Command.TogglePause)
+        commands.trySend(Command.TogglePause(source))
     }
-
-    @Volatile private var pauseRequestSource: String = "unknown"
 
     /**
      * Curation actions (spec §9.4).
@@ -887,6 +892,9 @@ class SlideshowEngine(
     private var loopScope: CoroutineScope? = null
     private var loopJob: Job? = null
     private var loopOwner = 0L
+    private var pauseTimeoutJob: Job? = null
+    private var armedPauseTimeoutMinutes = DoubleTapPauseTimeoutPolicy.NEVER
+    private val pauseTimeoutState = DoubleTapPauseTimeoutState()
 
     /** Start exactly one loop and return an owner token safe across ViewModel overlap. */
     fun start(scope: CoroutineScope): Long {
@@ -910,6 +918,7 @@ class SlideshowEngine(
             reselectPending = false
             advance(forward = true)
             while (isActive) {
+                if (applyPendingTimedResume()) continue
                 if (reselectPending && hostActive && !surfaceObscured) {
                     applyPendingReselect()
                     continue
@@ -1003,6 +1012,10 @@ class SlideshowEngine(
         synchronized(loopOwnerLock) {
             if (loopOwner != owner) return
             loopJob?.cancel()
+            pauseTimeoutJob?.cancel()
+            pauseTimeoutJob = null
+            armedPauseTimeoutMinutes = DoubleTapPauseTimeoutPolicy.NEVER
+            pauseTimeoutState.cancel()
             loopScope = null
             hostActive = false
             surfaceObscured = false
@@ -1037,18 +1050,53 @@ class SlideshowEngine(
                     )
                 }
             }
-            Command.TogglePause -> {
-                val nowPaused = !_ui.value.paused
-                _ui.value = _ui.value.copy(
-                    paused = nowPaused,
-                    state = currentState(paused = nowPaused),
-                )
-                diagnostics.log(
-                    DiagnosticsLog.Category.ENGINE, if (nowPaused) "PAUSE" else "RESUME",
-                    "trigger" to pauseRequestSource,
-                )
-            }
+            is Command.TogglePause -> applyPauseToggle(cmd.source)
+            is Command.TimedResume -> applyPendingTimedResume(cmd.pauseGeneration)
         }
+    }
+
+    private fun applyPauseToggle(source: String) {
+        pauseTimeoutJob?.cancel()
+        pauseTimeoutJob = null
+        armedPauseTimeoutMinutes = DoubleTapPauseTimeoutPolicy.NEVER
+
+        val nowPaused = !_ui.value.paused
+        _ui.value = _ui.value.copy(
+            paused = nowPaused,
+            state = currentState(paused = nowPaused),
+        )
+        val arm = pauseTimeoutState.onToggle(nowPaused, source, doubleTapPauseTimeoutMinutes)
+        val timeoutMinutes = arm?.timeoutMinutes ?: DoubleTapPauseTimeoutPolicy.NEVER
+        armedPauseTimeoutMinutes = timeoutMinutes
+        diagnostics.log(
+            DiagnosticsLog.Category.ENGINE,
+            if (nowPaused) "PAUSE" else "RESUME",
+            "trigger" to source,
+            "timeoutMinutes" to timeoutMinutes.toString(),
+        )
+        if (arm == null) return
+        pauseTimeoutJob = loopScope?.launch {
+            delay(arm.delayMillis)
+            if (!pauseTimeoutState.markElapsed(arm.generation)) return@launch
+            // The command wakes the paused loop. The separate pending generation keeps
+            // the timeout durable even if this conflated wake-up races another command.
+            commands.trySend(Command.TimedResume(arm.generation))
+        }
+    }
+
+    private fun applyPendingTimedResume(commandGeneration: Long? = null): Boolean {
+        if (!pauseTimeoutState.consumePending(commandGeneration, _ui.value.paused)) return false
+        pauseTimeoutJob = null
+        val timeoutMinutes = armedPauseTimeoutMinutes
+        armedPauseTimeoutMinutes = DoubleTapPauseTimeoutPolicy.NEVER
+        _ui.value = _ui.value.copy(paused = false, state = currentState(paused = false))
+        diagnostics.log(
+            DiagnosticsLog.Category.ENGINE,
+            "RESUME",
+            "trigger" to "double_tap_timeout",
+            "timeoutMinutes" to timeoutMinutes.toString(),
+        )
+        return true
     }
 
     private suspend fun applyPendingReselect() {

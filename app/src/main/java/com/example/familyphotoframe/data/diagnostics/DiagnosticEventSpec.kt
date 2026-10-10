@@ -110,7 +110,7 @@ object DiagnosticEventCatalog {
         "layout", "transitionCode", "selectionMode", "poolSize", "primaryCount",
         "fallbackCount", "count", "found", "active", "paused", "asleep", "favorite",
         "cachedOnly", "renderAck", "failures", "stage", "durationMs", "elapsedMs", "decodeMs",
-        "renderMs", "intervalMs", "members", "candidateCount", "reducedMotion",
+        "renderMs", "intervalMs", "timeoutMinutes", "members", "candidateCount", "reducedMotion",
         "performanceClass", "frameCount", "slowFrames", "frozenFrames", "p50Ms",
         "p95Ms", "p99Ms", "maxMs", "cycle", "remaining", "eligible", "inserted",
         "removed", "deferred", "recovered", "exhausted", "attempt", "errorClass",

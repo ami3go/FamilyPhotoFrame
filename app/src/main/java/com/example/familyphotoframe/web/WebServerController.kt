@@ -392,6 +392,7 @@ class WebServerController(
                 put("fallbackPhotos", fallbackPhotos)
                 put("intervalSeconds", s.intervalSecondsClamped)
                 put("autoStartOnBoot", s.autoStartOnBoot)
+                put("doubleTapPauseTimeoutMinutes", s.doubleTapPauseTimeoutMinutes)
                 put("batteryProtectionEnabled", s.batteryProtectionEnabled)
                 put("androidSdk", android.os.Build.VERSION.SDK_INT)
                 put("deviceModel", android.os.Build.MODEL)

@@ -36,6 +36,7 @@ Format: `capability | evidence` where evidence is `path::symbol` or `path`.
 | Source recovery with backoff | `app/src/main/java/com/example/familyphotoframe/domain/engine/RecoveryPolicy.kt` |
 | Scheduled automatic index refresh | `app/src/main/java/com/example/familyphotoframe/domain/schedule/RescanSchedule.kt` |
 | Quiet hours / sleep schedule | `app/src/main/java/com/example/familyphotoframe/domain/schedule/SleepSchedule.kt` |
+| Double-tap pause auto-resume | `app/src/main/java/com/example/familyphotoframe/domain/engine/DoubleTapPauseTimeoutPolicy.kt` |
 | Weather overlay | `app/src/main/java/com/example/familyphotoframe/data/weather/WeatherRepository.kt` |
 | On-device web control panel | `app/src/main/java/com/example/familyphotoframe/web/WebServerController.kt` |
 | Web pairing QR code | `app/src/main/java/com/example/familyphotoframe/web/QrCodes.kt` |

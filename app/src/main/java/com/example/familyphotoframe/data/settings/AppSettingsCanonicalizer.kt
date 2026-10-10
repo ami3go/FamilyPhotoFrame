@@ -1,5 +1,7 @@
 package com.example.familyphotoframe.data.settings
 
+import com.example.familyphotoframe.domain.engine.DoubleTapPauseTimeoutPolicy
+
 /**
  * Single compatibility/canonicalization boundary for persisted settings.
  *
@@ -56,6 +58,9 @@ internal object AppSettingsCanonicalizer {
             portraitCollage = settings.portraitCollage.normalized(),
             temporarilySuppressAfterDecodeFailures =
                 settings.temporarilySuppressAfterDecodeFailures.coerceAtLeast(1),
+            doubleTapPauseTimeoutMinutes = DoubleTapPauseTimeoutPolicy.normalize(
+                settings.doubleTapPauseTimeoutMinutes,
+            ),
             brightnessAutomationMigrationVersion = BRIGHTNESS_AUTOMATION_MIGRATION_V1,
             schedule = migratedSchedule,
             filters = settings.filters.withCurrentDefaultFormats(),

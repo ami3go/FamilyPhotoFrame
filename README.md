@@ -33,6 +33,7 @@ Most "digital photo frame" apps depend on a cloud account, subscription, or broa
 - **Schedules** for quiet hours, brightness timelines, and automatic re-scan intervals.
 - **On-device web control panel** for setup and remote control from a phone or laptop, including QR-code pairing, live status, settings, diagnostics, and encrypted backup/restore.
 - **Boot auto-start** for dedicated photo-frame devices (best effort; newer Android versions impose background-start restrictions).
+- **Pause safety timer** that can resume an accidental double-tap pause after 1, 5, 10, 15, 30, or 60 minutes, while key and web pauses remain manual.
 - **Optional rooted V80 battery care** for an always-powered test frame, using a conservative 60-75% charge band and thermal cutoff; off by default and device-gated.
 - **D-pad friendly** operation for Android TV and set-top boxes as well as touch devices.
 

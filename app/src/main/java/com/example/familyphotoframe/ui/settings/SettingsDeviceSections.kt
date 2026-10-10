@@ -69,6 +69,7 @@ import com.example.familyphotoframe.domain.schedule.RescanSchedule
 import com.example.familyphotoframe.data.settings.DecodeColorDepth
 import com.example.familyphotoframe.data.settings.DecodeResolution
 import com.example.familyphotoframe.data.settings.NativeMemoryHilMode
+import com.example.familyphotoframe.domain.engine.DoubleTapPauseTimeoutPolicy
 import com.example.familyphotoframe.ui.slideshow.SlideshowUiState
 import com.example.familyphotoframe.ui.slideshow.SlideshowViewModel
 import com.example.familyphotoframe.web.QrCodes
@@ -79,6 +80,33 @@ import kotlin.math.roundToInt
 internal fun DeviceSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     SettingsSectionCard("Startup") {
         ToggleRow(stringResource(R.string.settings_autostart), state.autoStartOnBoot, vm::setAutoStartOnBoot)
+    }
+
+    SettingsSectionCard(stringResource(R.string.settings_pause_timeout_title)) {
+        Text(
+            stringResource(R.string.settings_pause_timeout_hint),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            fontSize = 14.sp,
+        )
+        DoubleTapPauseTimeoutPolicy.optionsMinutes.chunked(3).forEach { rowOptions ->
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                rowOptions.forEach { minutes ->
+                    FilterChip(
+                        selected = state.doubleTapPauseTimeoutMinutes == minutes,
+                        onClick = { vm.setDoubleTapPauseTimeoutMinutes(minutes) },
+                        label = {
+                            Text(
+                                if (minutes == DoubleTapPauseTimeoutPolicy.NEVER) {
+                                    stringResource(R.string.settings_pause_timeout_never)
+                                } else {
+                                    stringResource(R.string.settings_pause_timeout_minutes, minutes)
+                                },
+                            )
+                        },
+                    )
+                }
+            }
+        }
     }
 
     SettingsSectionCard(stringResource(R.string.settings_battery_protection_title)) {

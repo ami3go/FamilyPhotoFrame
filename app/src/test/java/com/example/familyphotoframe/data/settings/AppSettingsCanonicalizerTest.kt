@@ -11,12 +11,14 @@ class AppSettingsCanonicalizerTest {
             intervalSeconds = -100,
             transitionDurationMs = 99_999,
             temporarilySuppressAfterDecodeFailures = 0,
+            doubleTapPauseTimeoutMinutes = 7,
             portraitCollage = PortraitCollageSettings(maxPhotos = 99, cornerRadiusDp = -4),
         ).withCurrentDefaults()
 
         assertEquals(3, normalized.intervalSeconds)
         assertEquals(2_000, normalized.transitionDurationMs)
         assertEquals(1, normalized.temporarilySuppressAfterDecodeFailures)
+        assertEquals(5, normalized.doubleTapPauseTimeoutMinutes)
         assertEquals(3, normalized.portraitCollage.maxPhotos)
         assertEquals(0, normalized.portraitCollage.cornerRadiusDp)
     }

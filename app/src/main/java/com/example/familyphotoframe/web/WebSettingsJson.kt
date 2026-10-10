@@ -72,6 +72,7 @@ internal object WebSettingsJson {
             put("autoRescanDays", s.schedule.autoRescanDays)
             put("onUnreachable", s.onUnreachable.name)
             put("autoStartOnBoot", s.autoStartOnBoot)
+            put("doubleTapPauseTimeoutMinutes", s.doubleTapPauseTimeoutMinutes)
             put("batteryProtectionEnabled", s.batteryProtectionEnabled)
             // Backward-compatible aliases for pre-unification web clients.
             put("sleepEnabled", scheduledBrightness)
