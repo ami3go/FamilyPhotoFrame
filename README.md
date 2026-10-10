@@ -33,6 +33,7 @@ Most "digital photo frame" apps depend on a cloud account, subscription, or broa
 - **Schedules** for quiet hours, brightness timelines, and automatic re-scan intervals.
 - **On-device web control panel** for setup and remote control from a phone or laptop, including QR-code pairing, live status, settings, diagnostics, and encrypted backup/restore.
 - **Boot auto-start** for dedicated photo-frame devices (best effort; newer Android versions impose background-start restrictions).
+- **Optional rooted V80 battery care** for an always-powered test frame, using a conservative 60-75% charge band and thermal cutoff; off by default and device-gated.
 - **D-pad friendly** operation for Android TV and set-top boxes as well as touch devices.
 
 See [`CAPABILITIES.md`](CAPABILITIES.md) for the machine-checked, always-current feature inventory. Every row there is tied to a real symbol in the source tree and fails the build if it goes stale.
@@ -78,6 +79,7 @@ A release build falls back to debug signing unless you configure a real keystore
 ## Documentation
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — module ownership and architectural boundaries.
+- [`docs/BATTERY_CARE.md`](docs/BATTERY_CARE.md) — rooted V80 charging safeguards and limitations.
 - [`CAPABILITIES.md`](CAPABILITIES.md) — machine-checked feature inventory.
 - [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md) — what remains unvalidated and why.
 - [`ROADMAP.md`](ROADMAP.md) — deferred and not-yet-started work.

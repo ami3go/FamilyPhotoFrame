@@ -712,6 +712,7 @@ class SlideshowViewModel(
                 nativeMemoryHilMode = s.nativeMemoryHilMode,
                 memoryTier = services.memoryTier,
                 autoStartOnBoot = s.autoStartOnBoot,
+                batteryProtectionEnabled = s.batteryProtectionEnabled,
                 web = s.web,
                 schedule = s.schedule,
                 weather = s.weather,
@@ -5036,6 +5037,10 @@ class SlideshowViewModel(
 
     fun setAutoStartOnBoot(value: Boolean) {
         viewModelScope.launch { services.settings.update { it.copy(autoStartOnBoot = value) } }
+    }
+
+    fun setBatteryProtectionEnabled(value: Boolean) {
+        viewModelScope.launch { services.settings.update { it.copy(batteryProtectionEnabled = value) } }
     }
 
     private fun updateOverlays(transform: (com.example.familyphotoframe.data.settings.OverlaySettings) -> com.example.familyphotoframe.data.settings.OverlaySettings) {

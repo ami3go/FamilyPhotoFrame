@@ -2,6 +2,7 @@
 """Static contracts for Build 89's remote-hash and retention fixes."""
 
 from pathlib import Path
+import re
 import sys
 
 
@@ -15,9 +16,12 @@ def main() -> int:
     sink = (ROOT / "app/src/main/java/com/example/familyphotoframe/data/diagnostics/FileDiagnosticsSink.kt").read_text()
     bundle = (ROOT / "app/src/main/java/com/example/familyphotoframe/data/diagnostics/DiagnosticsBundle.kt").read_text()
     catalog = (ROOT / "app/src/main/java/com/example/familyphotoframe/data/diagnostics/DiagnosticEventSpec.kt").read_text()
+    build_number = re.search(r"val buildNumber = (\d+)", build)
 
     checks = {
-        "install-distinct versionCode 90": "val buildNumber = 90" in build,
+        "install-distinct versionCode at least 90": bool(
+            build_number and int(build_number.group(1)) >= 90
+        ),
         "cache exposes bounded hash updates": "val contentHashUpdates: SharedFlow<String>" in cache,
         "cache hashes verified local file": "scheduleLocalContentHash(item, target)" in cache,
         "remote display avoids direct backfill": "if (!current.needsCache && lastHashPhotoId != current.id)" in vm,

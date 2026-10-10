@@ -81,6 +81,19 @@ internal fun DeviceSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
         ToggleRow(stringResource(R.string.settings_autostart), state.autoStartOnBoot, vm::setAutoStartOnBoot)
     }
 
+    SettingsSectionCard(stringResource(R.string.settings_battery_protection_title)) {
+        Text(
+            stringResource(R.string.settings_battery_protection_hint),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            fontSize = 14.sp,
+        )
+        ToggleRow(
+            stringResource(R.string.settings_battery_protection),
+            state.batteryProtectionEnabled,
+            vm::setBatteryProtectionEnabled,
+        )
+    }
+
     SettingsSectionCard(stringResource(R.string.settings_perf)) {
         Text(
             stringResource(R.string.settings_perf_hint),

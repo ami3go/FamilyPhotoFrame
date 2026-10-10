@@ -887,6 +887,8 @@ data class AppSettings(
     val decodeTimeoutMs: Long = 8_000,
     val temporarilySuppressAfterDecodeFailures: Int = 3,
     val autoStartOnBoot: Boolean = false,
+    /** Rooted V80-only 60-75% charge hysteresis. Off on installs and upgrades. */
+    val batteryProtectionEnabled: Boolean = false,
     val web: WebSettings = WebSettings(),
     /** Scan include/exclude filters (spec §20). */
     val filters: FilterSettings = FilterSettings(),

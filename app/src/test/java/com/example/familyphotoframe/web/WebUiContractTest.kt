@@ -155,6 +155,8 @@ class WebUiContractTest {
         // autoStartOnBoot has exactly one control, on Device, so the two pages cannot disagree.
         assertTrue(js.contains("toggleControl('autoStartOnBoot'"))
         assertEquals(1, Regex("toggleControl\\('autoStartOnBoot'").findAll(js).count())
+        assertTrue(js.contains("toggleControl('batteryProtectionEnabled'"))
+        assertEquals(1, Regex("toggleControl\\('batteryProtectionEnabled'").findAll(js).count())
         // Web-only cards must not remain on the Device tab.
         assertFalse(js.contains("el('tab-device').innerHTML=pageTitle('Web control'"))
         // Source indicator: which source is set up, which one is playing, and the

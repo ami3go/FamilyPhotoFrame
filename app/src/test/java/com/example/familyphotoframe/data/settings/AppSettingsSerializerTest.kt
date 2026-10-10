@@ -14,6 +14,7 @@ class AppSettingsSerializerTest {
     fun roundTrip_preservesValues() = runBlocking {
         val original = AppSettings(
             intervalSeconds = 42,
+            batteryProtectionEnabled = true,
             aspectMode = AspectMode.FILL_CROP,
             overlays = OverlaySettings(clock24h = false, folderShow = false),
             source = ActiveSource(
@@ -28,6 +29,7 @@ class AppSettingsSerializerTest {
         // readFrom normalises via withCurrentDefaults(); writeTo does not. Comparing against
         // the normalised original tests serialization fidelity rather than that asymmetry.
         assertEquals(original.withCurrentDefaults(), restored)
+        assertTrue(restored.batteryProtectionEnabled)
     }
 
     @Test

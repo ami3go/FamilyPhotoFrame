@@ -26,6 +26,16 @@ import org.junit.Test
 
 class WebSettingsJsonTest {
     @Test
+    fun batteryProtectionIsProjectedForWebParity() {
+        val json = WebSettingsJson.redactedConfig(
+            AppSettings(batteryProtectionEnabled = true),
+            nextScheduleAction = "none",
+        )
+
+        assertEquals("true", json.getValue("batteryProtectionEnabled").jsonPrimitive.content)
+    }
+
+    @Test
     fun primitiveCollectionsAreProjectedAsJsonElements() {
         val settings = AppSettings(
             selectedFolders = setOf("Trip B", "Trip A"),
