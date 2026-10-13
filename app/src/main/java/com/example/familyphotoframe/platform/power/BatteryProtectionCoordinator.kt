@@ -14,6 +14,7 @@ import com.example.familyphotoframe.data.settings.SettingsRepository
 import com.example.familyphotoframe.domain.power.BatteryProtectionPolicy
 import com.example.familyphotoframe.domain.power.BatteryProtectionPolicy.Action
 import com.example.familyphotoframe.domain.power.BatteryProtectionPolicy.DisableCause
+import com.example.familyphotoframe.domain.power.BatteryProtectionRetryPolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -34,6 +35,7 @@ internal class BatteryProtectionCoordinator(
     private val telemetry = BatteryTelemetry(appContext)
     private val preferences = appContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
     private val mutex = Mutex()
+    private var lastEvaluationElapsedMs = Long.MIN_VALUE
 
     fun start() {
         scope.launch {
@@ -56,6 +58,16 @@ internal class BatteryProtectionCoordinator(
                 return
             }
 
+            val nowElapsedMs = SystemClock.elapsedRealtime()
+            if (
+                lastEvaluationElapsedMs != Long.MIN_VALUE &&
+                nowElapsedMs - lastEvaluationElapsedMs <
+                    BatteryProtectionRetryPolicy.DUPLICATE_EVALUATION_WINDOW_MS
+            ) {
+                return
+            }
+            lastEvaluationElapsedMs = nowElapsedMs
+
             val reading = telemetry.snapshot()
             if (Build.VERSION.SDK_INT != Build.VERSION_CODES.LOLLIPOP_MR1) {
                 logFailure("BATTERY_PROTECTION_UNAVAILABLE", trigger, "unsupported_android_version", reading)
@@ -69,9 +81,14 @@ internal class BatteryProtectionCoordinator(
             val chargeState = (readResult as? RootChargeController.Result.Success)?.state
             if (readResult is RootChargeController.Result.Failure) {
                 logFailure("BATTERY_PROTECTION_UNAVAILABLE", trigger, readResult.reason, reading)
-                scheduleNext(owned)
+                val failures = preferences.getInt(KEY_CONSECUTIVE_ROOT_FAILURES, 0)
+                    .plus(1)
+                    .coerceAtMost(MAX_RECORDED_FAILURES)
+                preferences.edit().putInt(KEY_CONSECUTIVE_ROOT_FAILURES, failures).apply()
+                scheduleAfterFailure(owned, failures)
                 return
             }
+            preferences.edit().remove(KEY_CONSECUTIVE_ROOT_FAILURES).apply()
             // Sysfs charge state normally resets on reboot. Do not keep stale ownership
             // after the kernel has already restored charging.
             if (owned && chargeState != RootChargeController.State.DISABLED) {
@@ -106,7 +123,27 @@ internal class BatteryProtectionCoordinator(
             }
             if (result is RootChargeController.Result.Failure) {
                 logFailure("BATTERY_PROTECTION_FAILED", trigger, result.reason, reading)
+                val failures = preferences.getInt(KEY_CONSECUTIVE_ROOT_FAILURES, 0)
+                    .plus(1)
+                    .coerceAtMost(MAX_RECORDED_FAILURES)
+                preferences.edit().putInt(KEY_CONSECUTIVE_ROOT_FAILURES, failures).apply()
+                diagnostics.logEvent(
+                    "BATTERY_PROTECTION_EVALUATED",
+                    eventFields(
+                        trigger = trigger,
+                        reason = decision.reason,
+                        reading = reading,
+                        owned = preferences.getBoolean(KEY_APP_OWNS_DISABLED_STATE, false),
+                    ) + mapOf("action" to decision.action.name.lowercase()),
+                    DiagnosticContext(origin = DiagnosticOrigin.SYSTEM),
+                )
+                scheduleAfterFailure(
+                    preferences.getBoolean(KEY_APP_OWNS_DISABLED_STATE, false),
+                    failures,
+                )
+                return
             } else if (result is RootChargeController.Result.Success) {
+                preferences.edit().remove(KEY_CONSECUTIVE_ROOT_FAILURES).apply()
                 val nowOwned = decision.action == Action.DISABLE_CHARGING
                 preferences.edit()
                     .putBoolean(KEY_APP_OWNS_DISABLED_STATE, nowOwned)
@@ -137,6 +174,7 @@ internal class BatteryProtectionCoordinator(
 
     private suspend fun releaseAndCancel() = mutex.withLock {
         releaseOwnedState("feature_disabled")
+        preferences.edit().remove(KEY_CONSECUTIVE_ROOT_FAILURES).apply()
         cancelAlarm()
     }
 
@@ -190,12 +228,20 @@ internal class BatteryProtectionCoordinator(
 
     @Suppress("DEPRECATION")
     private fun scheduleNext(chargeDisabledByApp: Boolean) {
+        scheduleAtDelay(
+            if (chargeDisabledByApp) DISABLED_CHECK_INTERVAL_MS else ENABLED_CHECK_INTERVAL_MS,
+        )
+    }
+
+    private fun scheduleAfterFailure(chargeDisabledByApp: Boolean, consecutiveFailures: Int) {
+        scheduleAtDelay(
+            BatteryProtectionRetryPolicy.delayMs(consecutiveFailures, chargeDisabledByApp),
+        )
+    }
+
+    private fun scheduleAtDelay(delayMs: Long) {
         val alarm = appContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val triggerAt = SystemClock.elapsedRealtime() + if (chargeDisabledByApp) {
-            DISABLED_CHECK_INTERVAL_MS
-        } else {
-            ENABLED_CHECK_INTERVAL_MS
-        }
+        val triggerAt = SystemClock.elapsedRealtime() + delayMs
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 alarm.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, alarmIntent())
@@ -230,6 +276,8 @@ internal class BatteryProtectionCoordinator(
         const val PREFERENCES = "battery_charge_protection"
         const val KEY_APP_OWNS_DISABLED_STATE = "app_owns_disabled_state"
         const val KEY_DISABLE_CAUSE = "disable_cause"
+        const val KEY_CONSECUTIVE_ROOT_FAILURES = "consecutive_root_failures"
+        const val MAX_RECORDED_FAILURES = 1_000
         const val ALARM_REQUEST_CODE = 0x4250
         const val ENABLED_CHECK_INTERVAL_MS = 15L * 60_000L
         const val DISABLED_CHECK_INTERVAL_MS = 5L * 60_000L

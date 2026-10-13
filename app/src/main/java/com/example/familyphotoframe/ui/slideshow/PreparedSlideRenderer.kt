@@ -62,8 +62,7 @@ internal fun PreparedPhotoFrame(
             onRecoverableOom,
         )
         is PreparedSlide.Collage -> if (
-            prepared.layout == CollageLayout.TWO_COLUMNS ||
-            prepared.layout == CollageLayout.THREE_COLUMNS
+            usesPanelMotionRenderer(prepared.layout, prepared.tiles.size)
         ) {
             PreparedCollage(
                 prepared,
@@ -78,6 +77,10 @@ internal fun PreparedPhotoFrame(
         }
     }
 }
+
+/** Only the genuine three-photo equal-column layout is allowed into panel-motion state. */
+internal fun usesPanelMotionRenderer(layout: CollageLayout, tileCount: Int): Boolean =
+    layout == CollageLayout.THREE_COLUMNS && tileCount == 3
 
 @Composable
 private fun PreparedSinglePhoto(

@@ -255,6 +255,7 @@ copy domain/engine/RenderAckRecoveryPolicy.kt
 copy domain/engine/RenderAckTimeoutPolicy.kt
 copy domain/engine/OnThisDayPlaybackPolicy.kt
 copy domain/engine/SourcePoolPolicy.kt
+copy domain/engine/DoubleTapPauseTimeoutPolicy.kt
 copy domain/engine/SlideshowEngine.kt
 copy slideshow/shuffle/ShuffleModels.kt
 copy slideshow/shuffle/ShuffleRandom.kt

@@ -1393,7 +1393,7 @@ internal fun PreparedCollage(
     val tileShape = RoundedCornerShape(state.portraitCollage.cornerRadiusDpClamped.dp)
 
     // Task §1: motion is defined for the three-equal-portrait-panel layout only.
-    val threePanel = prepared.layout == CollageLayout.THREE_COLUMNS && prepared.tiles.size == 3
+    val threePanel = usesPanelMotionRenderer(prepared.layout, prepared.tiles.size)
     val animationScale = rememberSystemAnimationScale()
     val profile = if (!threePanel || state.portraitCollage.scaleMode == CollageScaleMode.FIT) {
         PanelMotionProfile.OFF

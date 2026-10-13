@@ -9,7 +9,14 @@ import kotlinx.coroutines.withContext
  * Commands are compile-time constants. Every command checks the device identity before
  * reading or writing, and no endpoint, setting value, or external input is interpolated.
  */
-internal class RootChargeController {
+internal class RootChargeController(
+    private val processFactory: (String) -> Process = { command ->
+        ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
+    },
+    private val commandTimeoutMs: Long = COMMAND_TIMEOUT_MS,
+    private val pollIntervalMs: Long = POLL_INTERVAL_MS,
+    private val terminationGraceMs: Long = TERMINATION_GRACE_MS,
+) {
     enum class State { ENABLED, DISABLED, THROTTLED }
 
     sealed interface Result {
@@ -25,47 +32,73 @@ internal class RootChargeController {
 
     private suspend fun execute(command: String): Result = withContext(Dispatchers.IO) {
         val process = runCatching {
-            ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
+            processFactory(command)
         }.getOrElse { return@withContext Result.Failure("root_unavailable") }
 
-        val deadlineNanos = System.nanoTime() + COMMAND_TIMEOUT_MS * 1_000_000L
-        var exitCode: Int? = null
-        while (System.nanoTime() < deadlineNanos) {
-            exitCode = runCatching { process.exitValue() }.getOrNull()
-            if (exitCode != null) break
-            Thread.sleep(POLL_INTERVAL_MS)
-        }
-        if (exitCode == null) {
-            process.destroy()
-            return@withContext Result.Failure("root_timeout")
-        }
-        val output = runCatching { process.inputStream.bufferedReader().use { it.readText() } }
-            .getOrDefault("")
-            .lineSequence()
-            .map(String::trim)
-            .lastOrNull { it == "0" || it == "1" || it == "2" }
-        if (exitCode != 0) {
-            return@withContext Result.Failure(
-                when (exitCode) {
-                    IDENTITY_MISMATCH_EXIT -> "wrong_device"
-                    NODE_UNAVAILABLE_EXIT -> "charge_control_unavailable"
-                    EXTERNAL_CONTROL_EXIT -> "charge_control_busy"
-                    else -> "root_command_failed"
-                },
-            )
-        }
-        when (output) {
-            "1" -> Result.Success(State.ENABLED)
-            "0" -> Result.Success(State.DISABLED)
-            "2" -> Result.Success(State.THROTTLED)
-            else -> Result.Failure("invalid_charge_state")
+        try {
+            val exitCode = awaitExit(process, commandTimeoutMs)
+            if (exitCode == null) {
+                // Android 5.1 keeps a native process-waiter thread for each Process. Merely
+                // dropping the Process after destroy() can leave that waiter and its stack
+                // resident when a root wrapper is slow to acknowledge termination. Always
+                // close the pipes and give the wrapper a bounded reap window before return.
+                terminateAndReap(process)
+                return@withContext Result.Failure("root_timeout")
+            }
+            val output = runCatching { process.inputStream.bufferedReader().use { it.readText() } }
+                .getOrDefault("")
+                .lineSequence()
+                .map(String::trim)
+                .lastOrNull { it == "0" || it == "1" || it == "2" }
+            if (exitCode != 0) {
+                return@withContext Result.Failure(
+                    when (exitCode) {
+                        IDENTITY_MISMATCH_EXIT -> "wrong_device"
+                        NODE_UNAVAILABLE_EXIT -> "charge_control_unavailable"
+                        EXTERNAL_CONTROL_EXIT -> "charge_control_busy"
+                        else -> "root_command_failed"
+                    },
+                )
+            }
+            when (output) {
+                "1" -> Result.Success(State.ENABLED)
+                "0" -> Result.Success(State.DISABLED)
+                "2" -> Result.Success(State.THROTTLED)
+                else -> Result.Failure("invalid_charge_state")
+            }
+        } finally {
+            closeProcessStreams(process)
         }
     }
 
+    private fun awaitExit(process: Process, timeoutMs: Long): Int? {
+        val deadlineNanos = System.nanoTime() + timeoutMs * 1_000_000L
+        while (System.nanoTime() < deadlineNanos) {
+            runCatching { process.exitValue() }.getOrNull()?.let { return it }
+            Thread.sleep(pollIntervalMs)
+        }
+        return runCatching { process.exitValue() }.getOrNull()
+    }
+
+    private fun terminateAndReap(process: Process) {
+        closeProcessStreams(process)
+        runCatching { process.destroy() }
+        awaitExit(process, terminationGraceMs)
+        closeProcessStreams(process)
+    }
+
+    private fun closeProcessStreams(process: Process) {
+        runCatching { process.outputStream.close() }
+        runCatching { process.inputStream.close() }
+        runCatching { process.errorStream.close() }
+    }
+
     companion object {
-        // First use can include SuperSU's user-approval dialog. This runs on Dispatchers.IO,
-        // so allow enough time for that one-time authorization without blocking the UI.
-        const val COMMAND_TIMEOUT_MS = 30_000L
+        // BroadcastReceiver.goAsync still has a short platform completion budget. Root
+        // permission is provisioned interactively before enabling this option, so runtime
+        // checks must fail closed quickly instead of retaining a receiver/process waiter.
+        const val COMMAND_TIMEOUT_MS = 8_000L
+        const val TERMINATION_GRACE_MS = 1_000L
         const val POLL_INTERVAL_MS = 50L
         const val IDENTITY_MISMATCH_EXIT = 41
         const val NODE_UNAVAILABLE_EXIT = 42
