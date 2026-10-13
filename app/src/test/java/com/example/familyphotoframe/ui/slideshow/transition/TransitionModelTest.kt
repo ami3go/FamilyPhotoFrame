@@ -1,5 +1,6 @@
 package com.example.familyphotoframe.ui.slideshow.transition
 
+import androidx.compose.ui.graphics.CompositingStrategy
 import com.example.familyphotoframe.data.settings.TransitionMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -54,6 +55,15 @@ class TransitionModelTest {
             val frame = softFocusFrame(step / 100f)
             assertTrue("soft focus alpha sum at $step", frame.combinedAlpha >= 0.999f)
         }
+    }
+
+    @Test
+    fun onlyPartialAlphaUsesAnOffscreenFadeLayer() {
+        assertEquals(CompositingStrategy.Auto, fadeCompositingStrategy(0f))
+        assertEquals(CompositingStrategy.Offscreen, fadeCompositingStrategy(0.001f))
+        assertEquals(CompositingStrategy.Offscreen, fadeCompositingStrategy(0.5f))
+        assertEquals(CompositingStrategy.Offscreen, fadeCompositingStrategy(0.999f))
+        assertEquals(CompositingStrategy.Auto, fadeCompositingStrategy(1f))
     }
 
 }

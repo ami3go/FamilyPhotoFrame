@@ -107,17 +107,32 @@ private fun <T> SoftFocusRenderer(
 
     Box(Modifier.fillMaxSize()) {
         if (outgoing != null) {
-            Box(Modifier.fillMaxSize().graphicsLayer { alpha = frame.outgoingSharp }) { render(outgoing) }
-            Box(Modifier.fillMaxSize().graphicsLayer { alpha = frame.outgoingBlurred }) {
-                renderBlurred(outgoing)
-            }
+            Box(Modifier.fillMaxSize().fadeLayer(frame.outgoingSharp)) { render(outgoing) }
+            Box(Modifier.fillMaxSize().fadeLayer(frame.outgoingBlurred)) { renderBlurred(outgoing) }
         }
-        Box(Modifier.fillMaxSize().graphicsLayer { alpha = frame.incomingBlurred }) {
-            renderBlurred(incoming)
-        }
-        Box(Modifier.fillMaxSize().graphicsLayer { alpha = frame.incomingSharp }) { render(incoming) }
+        Box(Modifier.fillMaxSize().fadeLayer(frame.incomingBlurred)) { renderBlurred(incoming) }
+        Box(Modifier.fillMaxSize().fadeLayer(frame.incomingSharp)) { render(incoming) }
     }
 }
+
+private fun Modifier.fadeLayer(alpha: Float): Modifier =
+    graphicsLayer {
+        this.alpha = alpha
+        compositingStrategy = fadeCompositingStrategy(alpha)
+    }
+
+/**
+ * Group opacity for a partially transparent presentation.
+ *
+ * With [CompositingStrategy.Auto], an API 21-22 Compose view layer draws partial alpha
+ * through a fresh HWUI saveLayer on every animation frame. The V80's Intel GLES driver
+ * permanently retains about 400 bytes of native heap for each of those offscreen
+ * attachments: ~94 per crossfade, the whole ~42 KB/slide native-PSS slope. An offscreen
+ * layer is attached once when the fade begins, then only re-composited as alpha changes,
+ * and is pixel-identical because the presentation is still faded as one group.
+ */
+internal fun fadeCompositingStrategy(alpha: Float): CompositingStrategy =
+    if (alpha > 0f && alpha < 1f) CompositingStrategy.Offscreen else CompositingStrategy.Auto
 
 internal data class SoftFocusFrame(
     val outgoingSharp: Float,
@@ -142,6 +157,7 @@ internal fun softFocusFrame(rawProgress: Float): SoftFocusFrame {
 private fun Modifier.presentationTransform(transform: LayerTransform): Modifier =
     graphicsLayer {
         alpha = transform.alpha.coerceIn(0f, 1f)
+        compositingStrategy = fadeCompositingStrategy(alpha)
         scaleX = transform.scale
         scaleY = transform.scale
         translationX = transform.translationXFraction * size.width

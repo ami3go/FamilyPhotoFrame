@@ -1,5 +1,32 @@
 # Native-memory Phase 2B HIL test
 
+## Root cause: Intel GLES offscreen-attachment leak in fades (build 26.98.1)
+
+Build 26.97.1 on the V80 still grew native PSS linearly at ~8.8 MB/hour (~42 KB per
+slide) in normal playback and hit the controlled native-pressure restart after ~6.4 h.
+Decode, transition, transfer, SMB, FD, and thread counters were all balanced, and the
+growth was entirely malloc'd memory in the dlmalloc `[heap]` mapping.
+
+A root `/proc/<pid>/mem` walk of the dlmalloc chunks after 834 slides found ~80k live
+136-byte chunks, each holding a pointer to `iglRboTextureSurfaceLock(__GLrenderBuffer*,
+__GLdrawable*, __GLFBOCommon*, bool)` in `libGLES_intel8.so`, plus a matching population
+of 264-byte companions. On-device counting showed exactly ~94 new render-buffer objects
+per slide and none ever released. The crossfade wraps both presentations in a Compose
+`graphicsLayer { alpha }`; on API 21-22 Compose uses a `ViewLayer`, and with the default
+compositing strategy HWUI draws partial alpha through a fresh `saveLayerAlpha` FBO
+attachment on every frame (two faded layers x ~47 partial-alpha frames). The Intel driver
+retains one render-buffer wrapper for each attachment.
+
+Build 26.98.1 sets `CompositingStrategy.Offscreen` only while a transition layer is
+partially transparent. The `ViewLayer` then becomes a hardware layer that is attached once
+per fade and re-composited with alpha, which is pixel-identical group opacity. The first
+V80 run showed zero leaked render-buffer objects across the measured slides and unchanged
+55-frame, 0-slow-frame crossfades.
+
+The ~16 regex `Matcher` objects per diagnostic field (`DiagnosticPrivacyPolicy`) cause large
+ICU `RegexMatcher` native churn on API 22, but those are reclaimed by finalizers and are not
+part of this slope.
+
 ## Phase 4 follow-up: SMB content-hash read churn (build 26.58.1)
 
 The build 26.57.1 V80 qualification run kept total PSS flat and rendered continuously,
