@@ -62,6 +62,8 @@ data class EngineUiModel(
         com.example.familyphotoframe.slideshow.shuffle.ShuffleProgress(),
     /** Bounded same-folder candidates reserved with the current anchor. */
     val reservedCandidateIds: List<Long> = emptyList(),
+    /** Folder-balanced reservation for [next], anchor first; empty outside that mode. */
+    val nextReservedCandidateIds: List<Long> = emptyList(),
     /** Exact committed member order when navigating persistent history. */
     val historyPhotoIds: List<Long> = emptyList(),
 )

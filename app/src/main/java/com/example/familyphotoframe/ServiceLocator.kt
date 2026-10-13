@@ -206,8 +206,9 @@ class ServiceLocator(private val appContext: Context) {
                     runCatching { ActivityManager.MemoryInfo().also(manager::getMemoryInfo) }.getOrNull()
                 }
                 val processBudgetBytes = memoryProtection.processMemoryBudgetBytes
+                // Same app-owned basis as the guard (see App memory sampling).
                 val sampledProcessPressurePercent = diagnosticPercent(
-                    numerator = pssKb * 1024L,
+                    numerator = (dalvikPssKb + nativePssKb) * 1024L,
                     denominator = processBudgetBytes,
                 )
                 val sampledSystemHeadroomPercent = diagnosticPercent(

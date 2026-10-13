@@ -2679,6 +2679,24 @@ class SlideshowViewModel(
             ModelResolutionPriority.BACKGROUND_PRELOAD ->
                 com.example.familyphotoframe.data.cache.MediaTransferPriority.BACKGROUND_PRELOAD
         }
+        if (request.cacheOnly) {
+            // A presentation that is already due must not start NAS transfers for optional
+            // collage companions inside its selection budget. A miss is not a photo fault.
+            return when (val cached = services.mediaCache.resolveIfCached(item, onMediaCacheStage)) {
+                is MediaCache.ResolveResult.Ready -> PhotoModelResolution.Ready(cached.file)
+                is MediaCache.ResolveResult.Failed -> PhotoModelResolution.Failed(
+                    DecodeFailure(
+                        photoId = display.id,
+                        sourceId = display.sourceId,
+                        fileExtension = extension,
+                        mimeType = display.mimeType,
+                        stage = DecodeFailureStage.CACHE_LOOKUP,
+                        reason = NOT_CACHED_REASON,
+                        sourceLevelFailure = true,
+                    )
+                )
+            }
+        }
         val cacheResult = if (remotePrimaryCachedOnly && display.sourceId == remotePrimarySourceId) {
             services.mediaCache.resolveIfCached(item, onMediaCacheStage)
         } else {
@@ -2851,13 +2869,17 @@ class SlideshowViewModel(
         val cap = limit.coerceIn(1, 12)
         val engineState = engine.ui.value
         val reservedMatches = engineState.reservedCandidateIds.firstOrNull() == anchor.id
+        // The folder-balanced turn reserved ahead for the preloaded next presentation.
+        val nextReservedMatches = !reservedMatches &&
+            engineState.nextReservedCandidateIds.firstOrNull() == anchor.id
         val historyMatches = engineState.historyPhotoIds.firstOrNull() == anchor.id
         val orderedIds = when {
             reservedMatches -> engineState.reservedCandidateIds.drop(1)
+            nextReservedMatches -> engineState.nextReservedCandidateIds.drop(1)
             historyMatches -> engineState.historyPhotoIds.drop(1)
             else -> emptyList()
         }.take(cap)
-        if (reservedMatches || historyMatches) {
+        if (reservedMatches || nextReservedMatches || historyMatches) {
             if (orderedIds.isEmpty()) return emptyList()
             val byId = services.photoDao.byIds(orderedIds).associateBy { it.id }
             // Do not add or substitute anything here: only reservation/history members

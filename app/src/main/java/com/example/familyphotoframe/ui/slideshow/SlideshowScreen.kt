@@ -27,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -93,8 +94,14 @@ import com.example.familyphotoframe.ui.slideshow.transition.TransitionTiming
 import com.example.familyphotoframe.web.WebPreviewCaptureRequest
 import com.example.familyphotoframe.web.WebPreviewFrame
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -465,6 +472,20 @@ private fun PlayingContent(
         onDispose { registry.clear() }
     }
     val preparationMutex = remember { Mutex() }
+
+    /**
+     * The next presentation's preparation, owned outside its LaunchedEffect. When the dwell
+     * ends before a slow remote preload finishes, the selected effect awaits this job instead
+     * of cancelling it and starting over against the shorter selected deadline — which used to
+     * discard partially transferred bytes and force a single-photo fallback.
+     */
+    val compositionScope = rememberCoroutineScope()
+    val preloadScope = remember(compositionScope) {
+        CoroutineScope(compositionScope.coroutineContext + SupervisorJob(compositionScope.coroutineContext[Job]))
+    }
+    val inflightPreload = remember { InflightPreload() }
+    val latestSelectedId = rememberUpdatedState(selected?.id)
+    val latestNextId = rememberUpdatedState(next?.id)
     val transitionProgress = remember { Animatable(1f) }
     val transitionSelector = remember {
         TransitionSelector(Random(SystemClock.elapsedRealtimeNanos()))
@@ -665,11 +686,29 @@ private fun PlayingContent(
                     requestedPresentationId = photo.id,
                 )
             }
-            val cachedHandle = registry.latest(photo.id)
-            val existingHandle = cachedHandle?.takeIf { handle ->
-                handle == committedHandle ||
-                    (fastManual && slide(handle) != null) ||
-                    slide(handle)?.let { !softFocusNeeded || it.transitionBlurredBitmap != null } == true
+            fun reusable(handle: PreparedSlideHandle?): PreparedSlideHandle? = handle?.takeIf {
+                it == committedHandle ||
+                    (fastManual && slide(it) != null) ||
+                    slide(it)?.let { prepared -> !softFocusNeeded || prepared.transitionBlurredBitmap != null } == true
+            }
+            var existingHandle = reusable(registry.latest(photo.id))
+            if (existingHandle == null) {
+                inflightPreload.pendingFor(photo.id)?.let { pending ->
+                    onPreparationSubstage(photo.id, selectionGeneration, "PRELOAD_JOIN")
+                    val remainingMs = (selectedTransferDeadlineMonotonicMs - presentationMonotonicNowMs())
+                        .coerceAtLeast(0L)
+                    val joined = withTimeoutOrNull(remainingMs) {
+                        try {
+                            pending.await()
+                        } catch (retired: CancellationException) {
+                            // Rethrows when this effect (or the timeout) is what was cancelled.
+                            currentCoroutineContext().ensureActive()
+                            null
+                        }
+                    }
+                    if (joined == null) inflightPreload.cancel(photo.id) else inflightPreload.forget(photo.id, pending)
+                    existingHandle = reusable(joined ?: registry.latest(photo.id))
+                }
             }
             val handle = existingHandle ?: when (val result = build(
                 photo,
@@ -832,27 +871,44 @@ private fun PlayingContent(
             } == true
         }
         if (existingHandle != null) return@LaunchedEffect
-        when (val result = build(photo, fastManual = prewarmManual)) {
-            is PrepareSlideResult.Ready -> {
-                if (!currentCoroutineContext().isActive ||
-                    !isHostPlaybackTokenCurrent(lifecycleToken)
-                ) {
-                    registry.retireUnowned(result.slide)
-                    publishBitmapInventory()
-                    return@LaunchedEffect
+        val pending = inflightPreload.pendingFor(photo.id) ?: preloadScope.async {
+            // The job admits its own result, so a selected effect that joins it and this
+            // effect never both own one bitmap graph.
+            when (val result = build(photo, fastManual = prewarmManual)) {
+                is PrepareSlideResult.Ready -> {
+                    if (!isActive || !isHostPlaybackTokenCurrent(lifecycleToken)) {
+                        registry.retireUnowned(result.slide)
+                        publishBitmapInventory()
+                        null
+                    } else {
+                        registry.put(result.slide, protectedSlideHandles()).also {
+                            publishBitmapInventory()
+                        }
+                    }
                 }
-                registry.put(result.slide, protectedSlideHandles())
-                publishBitmapInventory()
-            }
-            is PrepareSlideResult.Failed -> {
-                if (!currentCoroutineContext().isActive ||
-                    !isHostPlaybackTokenCurrent(lifecycleToken)
-                ) return@LaunchedEffect
-                if (result.failure.exceptionClass == "OutOfMemoryError") {
-                    onRecoverableOom(photo, "next_preload_allocation")
+                is PrepareSlideResult.Failed -> {
+                    if (isActive && isHostPlaybackTokenCurrent(lifecycleToken) &&
+                        result.failure.exceptionClass == "OutOfMemoryError"
+                    ) {
+                        onRecoverableOom(photo, "next_preload_allocation")
+                    }
+                    null
                 }
             }
+        }.also { inflightPreload.track(photo.id, it) }
+        try {
+            pending.await()
+        } catch (cancelled: CancellationException) {
+            // The shared job was retired elsewhere while this effect is still live.
+            if (currentCoroutineContext().isActive) return@LaunchedEffect
+            // Keep the work while this photo is still next (the effect merely restarted) or
+            // has just been selected (the selected effect joins it); otherwise retire it.
+            if (latestSelectedId.value != photo.id && latestNextId.value != photo.id) {
+                inflightPreload.cancel(photo.id)
+            }
+            throw cancelled
         }
+        inflightPreload.forget(photo.id, pending)
     }
 
     // Drop any next-slide allocation immediately when pressure changes the decision.
@@ -1562,3 +1618,32 @@ private fun stringRes(id: Int, arg: Int): String = androidx.compose.ui.res.strin
 @Composable
 private fun stringRes(id: Int, a1: Int, a2: Int): String =
     androidx.compose.ui.res.stringResource(id, a1, a2)
+
+/** Single in-flight next-presentation preparation; main-thread confined like its callers. */
+private class InflightPreload {
+    private var photoId: Long? = null
+    private var job: Deferred<PreparedSlideHandle?>? = null
+
+    fun pendingFor(id: Long): Deferred<PreparedSlideHandle?>? =
+        job?.takeIf { photoId == id && !it.isCancelled }
+
+    fun track(id: Long, deferred: Deferred<PreparedSlideHandle?>) {
+        if (photoId != id) job?.cancel()
+        photoId = id
+        job = deferred
+    }
+
+    fun cancel(id: Long) {
+        if (photoId != id) return
+        job?.cancel()
+        photoId = null
+        job = null
+    }
+
+    fun forget(id: Long, deferred: Deferred<PreparedSlideHandle?>) {
+        if (photoId == id && job === deferred) {
+            photoId = null
+            job = null
+        }
+    }
+}

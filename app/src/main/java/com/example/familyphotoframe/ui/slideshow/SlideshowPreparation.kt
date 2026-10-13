@@ -115,7 +115,12 @@ internal enum class ModelResolutionPriority {
 internal data class ModelResolutionRequest(
     val priority: ModelResolutionPriority,
     val selectedTransferDeadlineMonotonicMs: Long? = null,
+    /** Resolve remote items only from the local media cache; never start a transfer. */
+    val cacheOnly: Boolean = false,
 )
+
+/** [DecodeFailure.reason] for a cache-only miss: an absent optional member, not a fault. */
+internal const val NOT_CACHED_REASON = "not_cached"
 
 internal fun presentationMonotonicNowMs(): Long = System.nanoTime() / 1_000_000L
 
@@ -922,6 +927,25 @@ internal suspend fun prepareSlide(
             )
         }
 
+        // While a presentation is already due, companions come from the local cache only:
+        // a NAS transfer for an optional tile must not consume the anchor's selection budget,
+        // and its progress must never be attributed to the anchor's transfer trace.
+        val companionRequest = if (
+            modelResolutionRequest.priority == ModelResolutionPriority.SELECTED_PRESENTATION
+        ) {
+            modelResolutionRequest.copy(cacheOnly = true)
+        } else {
+            modelResolutionRequest
+        }
+        val singleFallbackAspect =
+            if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) allowedFallback else null
+        val oomFallbackAspect =
+            if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) AspectMode.FIT_COLOR else null
+        // The anchor tile survives a companion retry when the next layout gives it the
+        // same destination size, so one bad companion does not cost another anchor decode.
+        var anchorTile: PreparedTile? = null
+        var anchorTileSize: Pair<Int, Int>? = null
+
         while (true) {
             val decision = PortraitCollagePolicy.chooseBestPresentation(
                 mode = collageMode,
@@ -936,15 +960,13 @@ internal suspend fun prepareSlide(
                 fillWithOtherOrientations = collageFillWithOtherOrientations,
             )
             if (decision == null) {
-                val fallbackMode = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) {
-                    allowedFallback
-                } else null
+                anchorTile?.let(::discard)
                 // Why a frame stayed single is not answerable from the reason alone: an
                 // anchor the filter excluded and an anchor with no companions left both
                 // land here and want opposite fixes.
                 return prepareSingle(
-                    forcedAspect = fallbackMode,
-                    eventReason = if (fallbackMode != requestedFallback && fallbackMode != null) {
+                    forcedAspect = singleFallbackAspect,
+                    eventReason = if (singleFallbackAspect != requestedFallback && singleFallbackAspect != null) {
                         "memory_guard_solid_background"
                     } else {
                         "insufficient_compatible_photos"
@@ -963,120 +985,131 @@ internal suspend fun prepareSlide(
                 )
             }
 
-            val inspectedById = buildMap<Long, InspectedCollagePhoto> {
-                put(anchorInspected.meta.id, anchorInspected)
-                mutableCandidates.forEach { put(it.meta.id, it) }
-            }
             val destinations = collageDestinationRects(
                 decision.layout,
                 targetW.toFloat(),
                 targetH.toFloat(),
                 collageGapPixels(context, collageGap),
             )
-            if (destinations.size != decision.photoIds.size) {
-                return prepareSingle(
-                    forcedAspect = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) allowedFallback else null,
-                    eventReason = "layout_geometry_mismatch",
-                )
+            if (destinations.size != decision.photoIds.size || decision.photoIds.first() != photo.id) {
+                anchorTile?.let(::discard)
+                return prepareSingle(forcedAspect = singleFallbackAspect, eventReason = "layout_geometry_mismatch")
             }
+            val inspectedById = mutableCandidates.associateBy { it.meta.id }
+            val sizeById = decision.photoIds.mapIndexed { index, id ->
+                val rect = destinations[index]
+                id to (rect.width().roundToInt().coerceAtLeast(1) to rect.height().roundToInt().coerceAtLeast(1))
+            }.toMap()
 
-            val targetById = decision.photoIds.mapIndexed { index, id -> id to destinations[index] }.toMap()
-            val decodedById = linkedMapOf<Long, PreparedTile>()
-            var failedCandidateId: Long? = null
-            var failureForRetry: DecodeFailure? = null
-            val decodeOrder = decision.photoIds.sortedBy { if (it == photo.id) 0 else 1 }
-
-            for (id in decodeOrder) {
-                val inspected = inspectedById[id] ?: continue
+            // 1. Resolve every companion before decoding anything, so a missing or failed
+            //    member costs a cheap lookup rather than a wasted bitmap.
+            val resolvedById = linkedMapOf(photo.id to resolvedAnchor)
+            var droppedCandidateId: Long? = null
+            var dropReason: String? = null
+            for (id in decision.photoIds.drop(1)) {
+                val inspected = inspectedById[id]
+                if (inspected == null) {
+                    droppedCandidateId = id
+                    break
+                }
                 val resolved = inspected.resolved ?: when (val model = resolvePhoto(
                     inspected.photo,
                     resolveModel,
-                    modelResolutionRequest,
+                    companionRequest,
                     onPreparationSubstage,
-                    onPreparationTransferUpdate,
+                    {},
                 )) {
                     is ResolvePhotoResult.Ready -> model.photo
                     is ResolvePhotoResult.Failed -> {
-                        if (id == photo.id) return PrepareSlideResult.Failed(model.failure)
-                        onCollageCandidateFailure(model.failure)
+                        if (model.failure.reason != NOT_CACHED_REASON) onCollageCandidateFailure(model.failure)
                         if (model.failure.exceptionClass == "OutOfMemoryError") {
-                            decodedById.values.forEach(::discard)
+                            anchorTile?.let(::discard)
                             return prepareSingle(
-                                forcedAspect = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) AspectMode.FIT_COLOR else null,
+                                forcedAspect = oomFallbackAspect,
                                 eventReason = "candidate_model_oom",
                                 allowTransitionBlur = false,
                             )
                         }
-                        failedCandidateId = id
-                        failureForRetry = model.failure
-                        break
+                        droppedCandidateId = id
+                        dropReason = model.failure.reason
+                        null
+                    }
+                } ?: break
+                resolvedById[id] = resolved
+            }
+
+            // 2. Decode at tile size, anchor first.
+            val decodedById = linkedMapOf<Long, PreparedTile>()
+            if (droppedCandidateId == null) {
+                val anchorSize = sizeById.getValue(photo.id)
+                val reusable = anchorTile?.takeIf { anchorTileSize == anchorSize }
+                if (reusable != null) {
+                    decodedById[photo.id] = reusable
+                } else {
+                    anchorTile?.let(::discard)
+                    anchorTile = null
+                    when (val decoded = decodeOwned(resolvedAnchor, anchorSize.first, anchorSize.second)) {
+                        is DecodePhotoResult.Ready -> {
+                            anchorTile = decoded.tile
+                            anchorTileSize = anchorSize
+                            decodedById[photo.id] = decoded.tile
+                        }
+                        is DecodePhotoResult.Failed -> return PrepareSlideResult.Failed(decoded.failure)
                     }
                 }
-                val destination = targetById.getValue(id)
-                val width = destination.width().roundToInt().coerceAtLeast(1)
-                val height = destination.height().roundToInt().coerceAtLeast(1)
-                when (val decoded = decodeOwned(resolved, width, height)) {
-                    is DecodePhotoResult.Ready -> decodedById[id] = decoded.tile
-                    is DecodePhotoResult.Failed -> {
-                        if (id == photo.id) {
-                            decodedById.values.forEach(::discard)
-                            return PrepareSlideResult.Failed(decoded.failure)
-                        }
-                        onCollageCandidateFailure(decoded.failure)
-                        if (decoded.failure.exceptionClass == "OutOfMemoryError") {
-                            val anchorTile = decodedById.remove(photo.id)
-                            decodedById.values.forEach(::discard)
-                            if (anchorTile != null) {
-                                val emergency = PreparedSlide.Single(
-                                    anchor = photo,
-                                    model = resolvedAnchor.model,
-                                    bitmap = anchorTile.bitmap,
-                                    dataSource = anchorTile.dataSource,
-                                    aspectOverride = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) AspectMode.FIT_COLOR else null,
+                for (id in decision.photoIds.drop(1)) {
+                    val (width, height) = sizeById.getValue(id)
+                    when (val decoded = decodeOwned(resolvedById.getValue(id), width, height)) {
+                        is DecodePhotoResult.Ready -> decodedById[id] = decoded.tile
+                        is DecodePhotoResult.Failed -> {
+                            onCollageCandidateFailure(decoded.failure)
+                            decodedById.filterKeys { it != photo.id }.values.forEach(::discard)
+                            if (decoded.failure.exceptionClass == "OutOfMemoryError") {
+                                val emergencyTile = anchorTile
+                                if (emergencyTile != null) {
+                                    val emergency = PreparedSlide.Single(
+                                        anchor = photo,
+                                        model = resolvedAnchor.model,
+                                        bitmap = emergencyTile.bitmap,
+                                        dataSource = emergencyTile.dataSource,
+                                        aspectOverride = oomFallbackAspect,
+                                    )
+                                    emergency.allBitmaps().forEach(uncommitted::remove)
+                                    emit(
+                                        "COLLAGE_FALLBACK_SINGLE",
+                                        prepareMs = SystemClock.elapsedRealtime() - startedAt,
+                                        decodedBytes = emergency.decodedBytes,
+                                        reason = "candidate_decode_oom",
+                                    )
+                                    return PrepareSlideResult.Ready(emergency)
+                                }
+                                return prepareSingle(
+                                    forcedAspect = oomFallbackAspect,
+                                    eventReason = "candidate_decode_oom",
+                                    allowTransitionBlur = false,
                                 )
-                                emergency.allBitmaps().forEach(uncommitted::remove)
-                                emit(
-                                    "COLLAGE_FALLBACK_SINGLE",
-                                    prepareMs = SystemClock.elapsedRealtime() - startedAt,
-                                    decodedBytes = emergency.decodedBytes,
-                                    reason = "candidate_decode_oom",
-                                )
-                                return PrepareSlideResult.Ready(emergency)
                             }
-                            return prepareSingle(
-                                forcedAspect = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) AspectMode.FIT_COLOR else null,
-                                eventReason = "candidate_decode_oom",
-                                allowTransitionBlur = false,
-                            )
+                            droppedCandidateId = id
+                            dropReason = decoded.failure.reason
+                            break
                         }
-                        failedCandidateId = id
-                        failureForRetry = decoded.failure
-                        break
                     }
                 }
             }
 
-            if (failedCandidateId != null) {
-                decodedById.values.forEach(::discard)
-                mutableCandidates.removeAll { it.meta.id == failedCandidateId }
+            if (droppedCandidateId != null) {
+                mutableCandidates.removeAll { it.meta.id == droppedCandidateId }
                 if (mutableCandidates.isEmpty()) {
+                    anchorTile?.let(::discard)
                     return prepareSingle(
-                        forcedAspect = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) allowedFallback else null,
-                        eventReason = failureForRetry?.reason ?: "insufficient_compatible_photos",
+                        forcedAspect = singleFallbackAspect,
+                        eventReason = dropReason ?: "insufficient_compatible_photos",
                     )
                 }
                 continue
             }
 
-            val chosen = decision.photoIds.mapNotNull(decodedById::get)
-            if (chosen.size != decision.photoIds.size) {
-                chosen.forEach(::discard)
-                return prepareSingle(
-                    forcedAspect = if (anchorInspected.meta.orientation == PhotoOrientation.PORTRAIT) allowedFallback else null,
-                    eventReason = "selected_tile_missing",
-                )
-            }
-
+            val chosen = decision.photoIds.map(decodedById::getValue)
             emit(
                 event = "COLLAGE_SELECTION_EVALUATED",
                 ids = decision.photoIds,
