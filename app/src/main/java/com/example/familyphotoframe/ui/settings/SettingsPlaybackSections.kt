@@ -507,9 +507,14 @@ internal fun PlaybackSettings(state: SlideshowUiState, vm: SlideshowViewModel, o
         state.favoritesOnly,
         vm::setFavoritesOnly,
     )
-    OutlinedButton(onClick = vm::unhideAllPhotos) {
-        Text(stringResource(R.string.action_unhide_all))
-    }
+    ConfirmingButton(
+        text = stringResource(R.string.action_unhide_all),
+        title = stringResource(R.string.settings_confirm_unhide_title),
+        message = stringResource(R.string.settings_confirm_unhide_message),
+        confirmLabel = stringResource(R.string.settings_confirm_unhide),
+        onConfirm = vm::unhideAllPhotos,
+        destructive = false,
+    )
     Text(
         stringResource(R.string.settings_curation_hint),
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),

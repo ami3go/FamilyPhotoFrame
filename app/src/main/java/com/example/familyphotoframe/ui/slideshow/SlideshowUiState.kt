@@ -132,6 +132,8 @@ data class SlideshowUiState(
     val asleep: Boolean = false,
     /** Window brightness to apply, 0..1 (never a system-wide setting). */
     val screenBrightness: Float = 1f,
+    /** Transient window brightness while a settings slider is dragged; never persisted. */
+    val brightnessPreview: Float? = null,
     /** How the next photo is chosen (spec §9.6). */
     val selectionMode: com.example.familyphotoframe.data.settings.SelectionMode =
         com.example.familyphotoframe.data.settings.SelectionMode.FOLDER_BALANCED_SHUFFLE,

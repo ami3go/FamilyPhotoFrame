@@ -40,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
@@ -304,4 +305,89 @@ internal fun IntervalStepper(seconds: Int, onChange: (Int) -> Unit) {
             fontSize = 13.sp,
         )
     }
+}
+
+/**
+ * A button whose action only runs after an explicit confirmation dialog. Used for
+ * irreversible or disruptive actions (revoke browser trust, sign out web devices,
+ * unhide every photo), matching the existing shuffle and collage reset dialogs.
+ */
+@Composable
+internal fun ConfirmingButton(
+    text: String,
+    title: String,
+    message: String,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    destructive: Boolean = true,
+) {
+    var asking by remember { mutableStateOf(false) }
+    if (destructive) {
+        DestructiveButton(text = text, onClick = { asking = true }, modifier = modifier, enabled = enabled)
+    } else {
+        OutlinedButton(onClick = { asking = true }, modifier = modifier, enabled = enabled) { Text(text) }
+    }
+    if (asking) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { asking = false },
+            title = { Text(title) },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = {
+                    asking = false
+                    onConfirm()
+                }) { Text(confirmLabel) }
+            },
+            dismissButton = {
+                TextButton(onClick = { asking = false }) { Text(stringResource(R.string.settings_cancel)) }
+            },
+        )
+    }
+}
+
+/**
+ * Whole-number field that saves on Done or when focus leaves it, not on every keystroke:
+ * typing "365" must not persist 3 and then 36 on the way. An empty or out-of-range entry
+ * is clamped on commit and the field then shows the value that was actually saved.
+ */
+@Composable
+internal fun CommitNumberField(
+    value: Int,
+    range: IntRange,
+    label: String,
+    onCommit: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var text by remember(value) { mutableStateOf(value.toString()) }
+    var focused by remember { mutableStateOf(false) }
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+
+    fun commit() {
+        val parsed = text.toIntOrNull()?.coerceIn(range) ?: value
+        text = parsed.toString()
+        if (parsed != value) onCommit(parsed)
+    }
+
+    OutlinedTextField(
+        value = text,
+        onValueChange = { text = it.filter(Char::isDigit).take(range.last.toString().length) },
+        label = { Text(label) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Number,
+            imeAction = androidx.compose.ui.text.input.ImeAction.Done,
+        ),
+        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = {
+            commit()
+            focusManager.clearFocus()
+        }),
+        modifier = modifier
+            .fillMaxWidth()
+            .onFocusChanged { state ->
+                if (focused && !state.isFocused) commit()
+                focused = state.isFocused
+            },
+    )
 }

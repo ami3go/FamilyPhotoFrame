@@ -122,7 +122,54 @@ internal fun DeviceSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
         )
     }
 
-    SettingsSectionCard(stringResource(R.string.settings_perf)) {
+    TestModeWarning(state, vm)
+    LowMemorySettings(state, vm)
+}
+
+/** A hardware test mode changes playback, so it must never be on without a visible way back. */
+@Composable
+internal fun TestModeWarning(state: SlideshowUiState, vm: SlideshowViewModel) {
+    if (state.nativeMemoryHilMode == NativeMemoryHilMode.NORMAL) return
+    SettingsSectionCard(stringResource(R.string.settings_developer_tools)) {
+        Text(
+            stringResource(R.string.settings_test_mode_active, nativeHilModeLabel(state.nativeMemoryHilMode)),
+            color = MaterialTheme.colorScheme.error,
+            fontSize = 14.sp,
+        )
+        Button(
+            onClick = { vm.setNativeMemoryHilMode(NativeMemoryHilMode.NORMAL) },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(stringResource(R.string.settings_test_mode_off)) }
+    }
+}
+
+@Composable
+private fun nativeHilModeLabel(mode: NativeMemoryHilMode): String = stringResource(
+    when (mode) {
+        NativeMemoryHilMode.NORMAL -> R.string.settings_native_hil_normal
+        NativeMemoryHilMode.HOLD_COMMITTED_FRAME -> R.string.settings_native_hil_hold
+        NativeMemoryHilMode.SINGLE_PHOTO_INSTANT -> R.string.settings_native_hil_instant
+        NativeMemoryHilMode.SINGLE_PHOTO_CROSSFADE -> R.string.settings_native_hil_crossfade
+    }
+)
+
+/**
+ * Diagnostics-only controls, collapsed on the About page. The memory test modes freeze or
+ * simplify playback and the performance overlay draws over photos, so they are kept out of
+ * the everyday Device settings.
+ */
+@Composable
+internal fun DeveloperToolsSection(state: SlideshowUiState, vm: SlideshowViewModel) {
+    var expanded by remember { mutableStateOf(state.nativeMemoryHilMode != NativeMemoryHilMode.NORMAL) }
+    SettingsSectionCard(stringResource(R.string.settings_developer_tools)) {
+        ToggleRow(stringResource(R.string.settings_developer_tools_show), expanded) { expanded = it }
+        if (!expanded) return@SettingsSectionCard
+        Text(
+            stringResource(R.string.settings_developer_tools_hint),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            fontSize = 14.sp,
+        )
+        SectionLabel(stringResource(R.string.settings_perf))
         Text(
             stringResource(R.string.settings_perf_hint),
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
@@ -138,9 +185,39 @@ internal fun DeviceSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
                 Text(stringResource(R.string.settings_perf_capture))
             }
         }
+        SectionLabel(stringResource(R.string.settings_native_hil_mode))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilterChip(
+                    state.nativeMemoryHilMode == NativeMemoryHilMode.NORMAL,
+                    { vm.setNativeMemoryHilMode(NativeMemoryHilMode.NORMAL) },
+                    { Text(stringResource(R.string.settings_native_hil_normal)) },
+                )
+                FilterChip(
+                    state.nativeMemoryHilMode == NativeMemoryHilMode.HOLD_COMMITTED_FRAME,
+                    { vm.setNativeMemoryHilMode(NativeMemoryHilMode.HOLD_COMMITTED_FRAME) },
+                    { Text(stringResource(R.string.settings_native_hil_hold)) },
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilterChip(
+                    state.nativeMemoryHilMode == NativeMemoryHilMode.SINGLE_PHOTO_INSTANT,
+                    { vm.setNativeMemoryHilMode(NativeMemoryHilMode.SINGLE_PHOTO_INSTANT) },
+                    { Text(stringResource(R.string.settings_native_hil_instant)) },
+                )
+                FilterChip(
+                    state.nativeMemoryHilMode == NativeMemoryHilMode.SINGLE_PHOTO_CROSSFADE,
+                    { vm.setNativeMemoryHilMode(NativeMemoryHilMode.SINGLE_PHOTO_CROSSFADE) },
+                    { Text(stringResource(R.string.settings_native_hil_crossfade)) },
+                )
+            }
+        }
+        Text(
+            stringResource(R.string.settings_native_hil_hint),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            fontSize = 14.sp,
+        )
     }
-
-    LowMemorySettings(state, vm)
 }
 
 /**
@@ -233,38 +310,6 @@ internal fun LowMemorySettings(state: SlideshowUiState, vm: SlideshowViewModel) 
             fontSize = 14.sp,
         )
 
-        Text(stringResource(R.string.settings_native_hil_mode))
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                FilterChip(
-                    state.nativeMemoryHilMode == NativeMemoryHilMode.NORMAL,
-                    { vm.setNativeMemoryHilMode(NativeMemoryHilMode.NORMAL) },
-                    { Text(stringResource(R.string.settings_native_hil_normal)) },
-                )
-                FilterChip(
-                    state.nativeMemoryHilMode == NativeMemoryHilMode.HOLD_COMMITTED_FRAME,
-                    { vm.setNativeMemoryHilMode(NativeMemoryHilMode.HOLD_COMMITTED_FRAME) },
-                    { Text(stringResource(R.string.settings_native_hil_hold)) },
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                FilterChip(
-                    state.nativeMemoryHilMode == NativeMemoryHilMode.SINGLE_PHOTO_INSTANT,
-                    { vm.setNativeMemoryHilMode(NativeMemoryHilMode.SINGLE_PHOTO_INSTANT) },
-                    { Text(stringResource(R.string.settings_native_hil_instant)) },
-                )
-                FilterChip(
-                    state.nativeMemoryHilMode == NativeMemoryHilMode.SINGLE_PHOTO_CROSSFADE,
-                    { vm.setNativeMemoryHilMode(NativeMemoryHilMode.SINGLE_PHOTO_CROSSFADE) },
-                    { Text(stringResource(R.string.settings_native_hil_crossfade)) },
-                )
-            }
-        }
-        Text(
-            stringResource(R.string.settings_native_hil_hint),
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-            fontSize = 14.sp,
-        )
     }
 }
 @Composable
@@ -339,18 +384,19 @@ internal fun WebSection(state: SlideshowUiState, vm: SlideshowViewModel) {
                 "The safest default is to revoke every remembered browser when the PIN changes.",
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f), fontSize = 13.sp,
             )
-            OutlinedButton(
-                onClick = { vm.regenerateWebPin(keepRememberedOnPinReset) },
+            ConfirmingButton(
+                text = stringResource(
+                    if (state.webPinRegenerationInProgress) R.string.web_new_pin_working
+                    else R.string.web_new_pin,
+                ),
+                title = stringResource(R.string.settings_confirm_new_pin_title),
+                message = stringResource(R.string.settings_confirm_new_pin_message),
+                confirmLabel = stringResource(R.string.settings_confirm_new_pin),
+                onConfirm = { vm.regenerateWebPin(keepRememberedOnPinReset) },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !state.webPinRegenerationInProgress,
-            ) {
-                Text(
-                    stringResource(
-                        if (state.webPinRegenerationInProgress) R.string.web_new_pin_working
-                        else R.string.web_new_pin,
-                    )
-                )
-            }
+                destructive = false,
+            )
         }
     }
     if (state.web.enabled) {
@@ -360,12 +406,6 @@ internal fun WebSection(state: SlideshowUiState, vm: SlideshowViewModel) {
 @Composable
 internal fun RememberedBrowserSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     val policy = state.web.rememberedBrowsers
-    var maxBrowsers by remember(policy.maxRememberedBrowsers) {
-        mutableStateOf(policy.maxRememberedBrowsers.toString())
-    }
-    var maxDays by remember(policy.maxExpirySeconds) {
-        mutableStateOf((policy.maxExpirySeconds / (24L * 60L * 60L)).coerceAtLeast(1L).toString())
-    }
 
     SettingsSectionCard("Remembered browsers") {
         Text(
@@ -404,32 +444,28 @@ internal fun RememberedBrowserSettings(state: SlideshowUiState, vm: SlideshowVie
                 }
             }
 
-            OutlinedTextField(
-                value = maxBrowsers,
-                onValueChange = {
-                    maxBrowsers = it.filter(Char::isDigit).take(2)
-                    maxBrowsers.toIntOrNull()?.let(vm::setRememberedMaximumBrowsers)
-                },
-                label = { Text("Maximum remembered browsers (1–32)") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth(),
+            CommitNumberField(
+                value = policy.maxRememberedBrowsers,
+                range = 1..32,
+                label = stringResource(R.string.settings_remembered_max_browsers),
+                onCommit = vm::setRememberedMaximumBrowsers,
             )
-            OutlinedTextField(
-                value = maxDays,
-                onValueChange = {
-                    maxDays = it.filter(Char::isDigit).take(4)
-                    maxDays.toIntOrNull()?.let(vm::setRememberedMaximumExpiryDays)
-                },
-                label = { Text("Maximum expiry in days (1–3650)") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth(),
+            CommitNumberField(
+                value = (policy.maxExpirySeconds / (24L * 60L * 60L)).coerceIn(1L, 3650L).toInt(),
+                range = 1..3650,
+                label = stringResource(R.string.settings_remembered_max_days),
+                onCommit = vm::setRememberedMaximumExpiryDays,
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = vm::refreshRememberedBrowsers) { Text("Refresh") }
-                DestructiveButton(text = "Revoke all", onClick = vm::revokeAllRememberedBrowsers)
+                ConfirmingButton(
+                    text = stringResource(R.string.settings_confirm_revoke_all),
+                    title = stringResource(R.string.settings_confirm_revoke_all_title),
+                    message = stringResource(R.string.settings_confirm_revoke_all_message),
+                    confirmLabel = stringResource(R.string.settings_confirm_revoke_all),
+                    onConfirm = vm::revokeAllRememberedBrowsers,
+                )
             }
             if (state.rememberedBrowserRecords.isEmpty()) {
                 Text("No browsers are remembered.", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 14.sp)
@@ -455,7 +491,13 @@ internal fun RememberedBrowserSettings(state: SlideshowUiState, vm: SlideshowVie
                             "Expires: ${browser.expiresAtEpochMs?.let(::formatRememberedTime) ?: "Forever — until revoked"}",
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 13.sp,
                         )
-                        DestructiveButton(text = "Revoke", onClick = { vm.revokeRememberedBrowser(browser.id) })
+                        ConfirmingButton(
+                            text = stringResource(R.string.settings_confirm_revoke),
+                            title = stringResource(R.string.settings_confirm_revoke_title),
+                            message = stringResource(R.string.settings_confirm_revoke_message, browser.label),
+                            confirmLabel = stringResource(R.string.settings_confirm_revoke),
+                            onConfirm = { vm.revokeRememberedBrowser(browser.id) },
+                        )
                     }
                 }
             }
