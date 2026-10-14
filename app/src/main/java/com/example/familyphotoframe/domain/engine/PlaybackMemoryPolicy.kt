@@ -178,7 +178,12 @@ object PlaybackMemoryPolicy {
      */
     const val NATIVE_GROWTH_MIN_WINDOW_MS = 15L * 60_000L
     const val NATIVE_GROWTH_MAX_WINDOW_MS = 30L * 60_000L
-    const val NATIVE_GROWTH_MIN_BYTES = 512L * 1024L
+    /**
+     * Above the measured noise floor: a flat V80 process swings ±0.85 MiB between windows,
+     * which at 512 KiB held preload off (GUARDED) for 13% of a day. The fade-layer leak this
+     * guards against grew 2.2 MiB per 15-minute window.
+     */
+    const val NATIVE_GROWTH_MIN_BYTES = 2L * 1024L * 1024L
     const val NATIVE_GROWTH_MIN_RATE_KB_PER_MIN = 16
     const val NATIVE_GROWTH_CRITICAL_BYTES = 4L * 1024L * 1024L
     const val NATIVE_GROWTH_CRITICAL_RATE_KB_PER_MIN = 64

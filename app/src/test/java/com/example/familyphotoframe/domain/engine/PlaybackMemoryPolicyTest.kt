@@ -328,7 +328,7 @@ class PlaybackMemoryPolicyTest {
                 heapUsedBytes = heap / 2L,
                 heapMaxBytes = heap,
                 nowElapsedMs = now,
-                nativePssBytes = baseNative + (index.toLong() + 1L) * 1024L * 1024L,
+                nativePssBytes = baseNative + (index.toLong() + 1L) * 3L * 1024L * 1024L,
             )
         }
 
@@ -394,6 +394,30 @@ class PlaybackMemoryPolicyTest {
         )
         assertEquals(PlaybackMemoryLevel.NORMAL, state.level)
         assertEquals(0, state.nativeGrowthStreak)
+    }
+
+    @Test fun subMegabyteNativeNoiseOnAFlatProcessStaysNormal() {
+        val base = 23L * 1024L * 1024L
+        var now = 1_000L
+        var state = PlaybackMemoryPolicy.sample(
+            previous = PlaybackMemoryState(nativeGrowthWarmedUp = true),
+            heapUsedBytes = heap / 4L,
+            heapMaxBytes = heap,
+            nowElapsedMs = now,
+            nativePssBytes = base,
+        )
+        // V80 field swings while native PSS stayed flat for 14 hours.
+        listOf(847L, -840L, 612L, 850L).forEach { deltaKb ->
+            now += PlaybackMemoryPolicy.NATIVE_GROWTH_MIN_WINDOW_MS
+            state = PlaybackMemoryPolicy.sample(
+                previous = state,
+                heapUsedBytes = heap / 4L,
+                heapMaxBytes = heap,
+                nowElapsedMs = now,
+                nativePssBytes = state.nativePssBytes + deltaKb * 1024L,
+            )
+            assertEquals(PlaybackMemoryLevel.NORMAL, state.level)
+        }
     }
 
     @Test fun lowMemoryTierStartsWithABoundedEconomyProfile() {
