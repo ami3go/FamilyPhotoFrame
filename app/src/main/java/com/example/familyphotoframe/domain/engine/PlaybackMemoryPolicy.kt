@@ -114,9 +114,13 @@ data class PlaybackMemoryState(
         PlaybackMemoryLevel.RECOVERY -> 1
     }
 
-    /** Decode below physical display size while guarded; the GPU scales the result. */
+    /**
+     * Decode below physical display size while guarded; the GPU scales the result. A low
+     * tier is already capped by [DeviceMemoryTierPolicy.decodeScaleFor] (1.5 MP); applying a
+     * second NORMAL reduction on top left a 1920×1200 frame at 1271×794.
+     */
     val decodeScale: Float get() = when (level) {
-        PlaybackMemoryLevel.NORMAL -> if (lowMemoryTier) 0.82f else 1.0f
+        PlaybackMemoryLevel.NORMAL -> 1.0f
         PlaybackMemoryLevel.GUARDED -> 0.80f
         PlaybackMemoryLevel.CRITICAL -> 0.68f
         PlaybackMemoryLevel.CIRCUIT_OPEN -> 0.60f

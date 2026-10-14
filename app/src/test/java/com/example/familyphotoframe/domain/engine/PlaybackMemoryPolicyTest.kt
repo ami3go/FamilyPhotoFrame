@@ -431,7 +431,8 @@ class PlaybackMemoryPolicyTest {
         assertFalse(state.allowWebPreview)
         assertTrue(state.forceSimpleTransition)
         assertEquals(3, state.maxCollagePhotos)
-        assertTrue(state.decodeScale < 1f)
+        // The tier's pixel cap already bounds decodes; NORMAL adds no second reduction.
+        assertEquals(1f, state.decodeScale, 0.0001f)
         assertTrue(state.allowSelectedDecode)
     }
 }

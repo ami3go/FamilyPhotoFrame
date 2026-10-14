@@ -511,6 +511,8 @@ internal suspend fun prepareSlide(
     collageOrientationFilter: CollageOrientationFilter = CollageOrientationFilter.ANY,
     collageFillWithOtherOrientations: Boolean = true,
     collageLayoutPreference: CollageLayoutPreference = CollageLayoutPreference.AUTO,
+    /** Tiles render crop-to-fill, so each member is decoded to cover its tile. */
+    collageCropsTiles: Boolean = true,
     prepareSoftFocusBlur: Boolean,
     allowBlurredBackground: Boolean,
     colorChoice: DecodeColorChoice = DecodeColorChoice.ARGB_8888,
@@ -998,7 +1000,14 @@ internal suspend fun prepareSlide(
             val inspectedById = mutableCandidates.associateBy { it.meta.id }
             val sizeById = decision.photoIds.mapIndexed { index, id ->
                 val rect = destinations[index]
-                id to (rect.width().roundToInt().coerceAtLeast(1) to rect.height().roundToInt().coerceAtLeast(1))
+                val tileW = rect.width().roundToInt().coerceAtLeast(1)
+                val tileH = rect.height().roundToInt().coerceAtLeast(1)
+                val aspect = if (id == photo.id) anchorInspected.meta.aspectRatio else inspectedById[id]?.meta?.aspectRatio
+                id to if (collageCropsTiles && aspect != null) {
+                    collageCoverDecodeSize(tileW, tileH, aspect)
+                } else {
+                    tileW to tileH
+                }
             }.toMap()
 
             // 1. Resolve every companion before decoding anything, so a missing or failed
