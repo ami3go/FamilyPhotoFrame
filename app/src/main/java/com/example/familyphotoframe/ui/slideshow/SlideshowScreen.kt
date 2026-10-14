@@ -599,6 +599,7 @@ private fun PlayingContent(
             collageOrientationFilter = state.portraitCollage.orientationFilter,
             collageFillWithOtherOrientations = state.portraitCollage.fillWithOtherOrientations,
             collageLayoutPreference = state.portraitCollage.layoutPreference,
+            collageCropsTiles = state.portraitCollage.scaleMode == CollageScaleMode.CROP,
             prepareSoftFocusBlur = softFocusNeeded && !fastManual,
             allowBlurredBackground = state.nativeMemoryHilMode == NativeMemoryHilMode.NORMAL &&
                 memoryProtection.allowBlurredBackdrop && !fastManual,

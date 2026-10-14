@@ -144,6 +144,14 @@ object ConfigTransfer {
         )
     }
 
+    /**
+     * [merge] for an import that arrives over the web server. The importing browser must not
+     * be able to rewrite the web server's own trust settings — remembered-browser policy is
+     * otherwise PIN step-up protected — or stop/move the server it is talking through.
+     */
+    fun mergeForWebImport(current: AppSettings, imported: AppSettings): AppSettings =
+        merge(current, imported).copy(web = current.web)
+
     /** True when the merged config points at a source whose stored password is missing. */
     fun needsPasswordReentry(merged: AppSettings): Boolean = when (merged.source.kind) {
         ActiveSourceKind.SMB -> merged.source.smb?.credentialRef.isNullOrEmpty()

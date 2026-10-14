@@ -734,7 +734,10 @@ class WebServerController(
             if (parsed !is ImportResult.Ok) return "Backup rejected: ${(parsed as ImportResult.Failed).reason.name}"
             val previous = backupExport()
             return try {
-                settings.update { current -> ConfigTransfer.merge(current, parsed.bundle.settings).withCurrentDefaults() }
+                settings.update { current ->
+                    ConfigTransfer.mergeForWebImport(current, parsed.bundle.settings).withCurrentDefaults()
+                        .copy(web = current.web)
+                }
                 rollbackBackup = previous
                 diagnostics.log(
                     DiagnosticsLog.Category.APP,
@@ -770,7 +773,10 @@ class WebServerController(
                 val backup = rollbackBackup ?: return "No rollback backup is available"
                 val parsed = ConfigTransfer.parse(backup)
                 if (parsed !is ImportResult.Ok) return "Rollback backup is invalid"
-                settings.update { current -> ConfigTransfer.merge(current, parsed.bundle.settings).withCurrentDefaults() }
+                settings.update { current ->
+                    ConfigTransfer.mergeForWebImport(current, parsed.bundle.settings).withCurrentDefaults()
+                        .copy(web = current.web)
+                }
                 rollbackBackup = null
                 diagnostics.log(DiagnosticsLog.Category.APP, "WEB_BACKUP_ROLLED_BACK")
                 null

@@ -29,3 +29,34 @@ internal fun collageDestinationRects(
         )
     }
 }
+
+/**
+ * Decode box for a photo shown with crop-to-fill in a [tileWidth]×[tileHeight] tile.
+ *
+ * Decoding to the tile box with fit semantics leaves a photo whose shape differs from the
+ * tile (a landscape in a tall column) far smaller than the tile, and the renderer then
+ * stretches it 1.5–3× to fill. The returned box has the photo's aspect and covers the tile,
+ * so a fit decode into it lands at, or just above, display resolution. Extreme shapes are
+ * bounded to [maxAreaRatio] times the tile area; beyond that they accept some upscale.
+ */
+internal fun collageCoverDecodeSize(
+    tileWidth: Int,
+    tileHeight: Int,
+    photoAspect: Float,
+    maxAreaRatio: Float = COLLAGE_MAX_COVER_AREA_RATIO,
+): Pair<Int, Int> {
+    val w = tileWidth.coerceAtLeast(1)
+    val h = tileHeight.coerceAtLeast(1)
+    if (!photoAspect.isFinite() || photoAspect <= 0f) return w to h
+    var coverW = maxOf(w.toFloat(), h * photoAspect)
+    var coverH = maxOf(h.toFloat(), w / photoAspect)
+    val ratio = (coverW * coverH) / (w.toFloat() * h.toFloat())
+    if (ratio > maxAreaRatio) {
+        val shrink = kotlin.math.sqrt(maxAreaRatio / ratio)
+        coverW *= shrink
+        coverH *= shrink
+    }
+    return kotlin.math.ceil(coverW).toInt().coerceAtLeast(1) to kotlin.math.ceil(coverH).toInt().coerceAtLeast(1)
+}
+
+internal const val COLLAGE_MAX_COVER_AREA_RATIO = 2f

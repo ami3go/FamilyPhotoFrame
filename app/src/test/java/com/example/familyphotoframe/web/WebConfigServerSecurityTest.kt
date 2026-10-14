@@ -33,6 +33,8 @@ class WebConfigServerSecurityTest {
     private var port = 0
     private var controlCalls = 0
     private var previewCaptureCalls = 0
+    private val maintenanceCalls = mutableListOf<String>()
+    private var backupImports = 0
 
     /** Minimal backend; records whether control actions actually reached the app. */
     private inner class FakeBackend : WebBackendAdapter() {
@@ -52,6 +54,16 @@ class WebConfigServerSecurityTest {
         override suspend fun diagnosticsBundle(): InputStream =
             ByteArrayInputStream("{\"recordType\":\"bundleMetadata\"}\n{\"code\":\"TEST\"}\n".toByteArray())
         override suspend fun settingsRevision(): Long = 42L
+        override suspend fun maintenance(action: String): String? { maintenanceCalls += action; return null }
+        override suspend fun backupImport(text: String): String? { backupImports++; return null }
+        override suspend fun uploadFile(
+            ownerToken: String,
+            sessionId: String,
+            clientId: String,
+            encodedName: String,
+            declaredSize: Long,
+            input: InputStream,
+        ): JsonObject = buildJsonObject { put("read", input.readBytes().size) }
         override suspend fun capturePreview(): WebPreviewCaptureResult {
             previewCaptureCalls++
             val frame = WebPreviewFrame(
@@ -177,6 +189,83 @@ class WebConfigServerSecurityTest {
         assertEquals(200, r.code)
         val obj = Json.parseToJsonElement(r.body) as JsonObject
         return obj["session"]!!.jsonPrimitive.content to obj["csrf"]!!.jsonPrimitive.content
+    }
+
+    // ---- uploads ----
+
+    /**
+     * A browser keeps the connection open after the body. Reading the request stream to
+     * EOF used to block until the socket timeout and then fail the upload with a 500.
+     */
+    @Test fun upload_bodyEndsAtContentLengthOnKeptAliveConnection() {
+        val (session, csrf) = pairSuccessfully()
+        java.net.Socket("127.0.0.1", port).use { socket ->
+            socket.soTimeout = 5_000
+            val body = ByteArray(10) { 7 }
+            val head = buildString {
+                append("POST /api/v1/uploads/session1/files?clientId=f1 HTTP/1.1\r\n")
+                append("Host: 127.0.0.1:$port\r\n")
+                append("${WebSecurity.HEADER_SESSION}: $session\r\n")
+                append("${WebSecurity.HEADER_CSRF}: $csrf\r\n")
+                append("Content-Type: application/octet-stream\r\n")
+                append("Content-Length: ${body.size}\r\n")
+                append("X-Upload-File-Name: a.jpg\r\n")
+                append("Connection: keep-alive\r\n\r\n")
+            }
+            val started = System.nanoTime()
+            socket.getOutputStream().apply { write(head.toByteArray()); write(body); flush() }
+            val text = socket.getInputStream().bufferedReader().readText()
+            val elapsedMs = (System.nanoTime() - started) / 1_000_000L
+            assertTrue(text, text.startsWith("HTTP/1.1 200"))
+            assertTrue(text, text.contains("\"read\":10"))
+            assertTrue("upload waited ${elapsedMs}ms", elapsedMs < 1_500L)
+        }
+    }
+
+    // ---- sensitive-action step-up ----
+
+    @Test fun rememberedSession_needsPinForFactoryResetAndImport() {
+        val pin = security.regeneratePin()
+        val remembered = security.issueRememberedSession("remembered-browser-0001")
+
+        val reset = request(
+            "/api/v1/maintenance", "POST", """{"action":"factory_reset"}""",
+            remembered.token, remembered.csrfToken,
+        )
+        assertEquals(403, reset.code)
+        assertTrue(reset.body, reset.body.contains("STEP_UP_REQUIRED"))
+        val imported = request(
+            "/api/v1/backup/import", "POST", """{"backup":"{}"}""",
+            remembered.token, remembered.csrfToken,
+        )
+        assertEquals(403, imported.code)
+        assertTrue(maintenanceCalls.isEmpty())
+        assertEquals(0, backupImports)
+
+        val confirmed = request(
+            "/api/v1/maintenance", "POST", """{"action":"factory_reset","pin":"$pin"}""",
+            remembered.token, remembered.csrfToken,
+        )
+        assertEquals(200, confirmed.code)
+        assertEquals(listOf("factory_reset"), maintenanceCalls)
+    }
+
+    @Test fun rememberedSession_routineMaintenanceNeedsNoPin() {
+        security.regeneratePin()
+        val remembered = security.issueRememberedSession("remembered-browser-0002")
+        val r = request(
+            "/api/v1/maintenance", "POST", """{"action":"clear_cache"}""",
+            remembered.token, remembered.csrfToken,
+        )
+        assertEquals(200, r.code)
+        assertEquals(listOf("clear_cache"), maintenanceCalls)
+    }
+
+    @Test fun pinPairedSession_isNotAskedAgain() {
+        val (session, csrf) = pairSuccessfully()
+        val r = request("/api/v1/maintenance", "POST", """{"action":"factory_reset"}""", session, csrf)
+        assertEquals(200, r.code)
+        assertEquals(listOf("factory_reset"), maintenanceCalls)
     }
 
     // ---- unauthenticated access ----
