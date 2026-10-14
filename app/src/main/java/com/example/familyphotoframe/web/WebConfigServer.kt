@@ -482,6 +482,7 @@ class WebConfigServer(
             }
             uri == "/api/v1/backup/import" && method == Method.POST -> guarded(token, csrf) {
                 val body = readJsonObject(session, MAX_BACKUP_CHARS) ?: return@guarded badJson()
+                if (!stepUpSatisfied(token, body)) return@guarded stepUpRequired()
                 val backup = body.string("backup")
                     ?: return@guarded v1Error(Response.Status.BAD_REQUEST, "MISSING_BACKUP", "Missing backup data")
                 val error = runBlocking { backend.backupImport(backup) }
@@ -492,6 +493,9 @@ class WebConfigServer(
                 val body = readJsonObject(session) ?: return@guarded badJson()
                 val action = body.string("action")
                     ?: return@guarded v1Error(Response.Status.BAD_REQUEST, "MISSING_ACTION", "Missing maintenance action")
+                if (action in STEP_UP_MAINTENANCE_ACTIONS && !stepUpSatisfied(token, body)) {
+                    return@guarded stepUpRequired()
+                }
                 val error = runBlocking { backend.maintenance(action) }
                 onEvent("WEB_MAINTENANCE_ACTION", mapOf("action" to action, "ok" to (error == null).toString()))
                 if (error == null) v1Ok(buildJsonObject { put("action", action) })
@@ -571,8 +575,12 @@ class WebConfigServer(
                     return@guarded v1Error(Response.Status.BAD_REQUEST, "UPLOAD_METADATA_MISSING", "File id and name are required")
                 }
                 try {
+                    // NanoHTTPD exposes the raw socket stream; on a kept-alive browser
+                    // connection it never reaches EOF after the body, so a reader that
+                    // copies to end-of-stream would block until the socket timeout.
+                    val body = ContentLengthInputStream(session.inputStream, length)
                     val uploaded = runBlocking {
-                        backend.uploadFile(token.orEmpty(), uploadParts[3], clientId, encodedName, length, session.inputStream)
+                        backend.uploadFile(token.orEmpty(), uploadParts[3], clientId, encodedName, length, body)
                     }
                     // Only on success: a mid-stream failure leaves the body partially read.
                     requestBodyConsumed.set(true)
@@ -908,6 +916,23 @@ class WebConfigServer(
         return v1Ok(buildJsonObject { put("revoked", changed); put("id", id) })
     }
 
+    /**
+     * A session minted from a remembered-browser credential has not proven the PIN since the
+     * browser was trusted, possibly months ago. While the owner policy asks for it, such a
+     * session must re-enter the PIN for irreversible actions. A PIN-paired session already
+     * proved it within its bounded lifetime.
+     */
+    private fun stepUpSatisfied(token: String?, body: JsonObject): Boolean {
+        if (security.rememberedBrowserIdForSession(token) == null) return true
+        val policy = runBlocking { rememberedBrowsers?.policy() } ?: RememberedBrowserPolicy()
+        if (!policy.requireStepUpForSensitiveActions) return true
+        return security.verifyPin(body.string("pin").orEmpty())
+    }
+
+    // 403, not 401: the web client treats 401 as an expired session and re-pairs.
+    private fun stepUpRequired(): Response =
+        v1Error(Response.Status.FORBIDDEN, "STEP_UP_REQUIRED", "The current frame PIN is required")
+
     private fun rememberedAuthFailure(): Response =
         v1Error(Response.Status.UNAUTHORIZED, "REMEMBERED_AUTH_FAILED", "Remembered browser authorization is no longer valid.")
 
@@ -1079,7 +1104,33 @@ class WebConfigServer(
         const val REMEMBERED_RATE_LIMIT = 20
         const val REMEMBERED_GLOBAL_RATE_LIMIT = 200
         const val REMEMBERED_RATE_WINDOW_MS = 10L * 60_000L
+        val STEP_UP_MAINTENANCE_ACTIONS = setOf(
+            "factory_reset", "restart_app", "rollback_backup", "reset_shuffle_all_history",
+        )
     }
+}
+
+/** Ends at the request's declared Content-Length instead of the socket's end of stream. */
+internal class ContentLengthInputStream(
+    private val delegate: InputStream,
+    private var remaining: Long,
+) : InputStream() {
+    override fun read(): Int {
+        if (remaining <= 0L) return -1
+        return delegate.read().also { if (it >= 0) remaining-- }
+    }
+
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        if (remaining <= 0L) return -1
+        val n = delegate.read(b, off, minOf(len.toLong(), remaining).toInt())
+        if (n > 0) remaining -= n
+        return n
+    }
+
+    override fun available(): Int = minOf(delegate.available().toLong(), remaining).toInt()
+
+    /** The socket belongs to NanoHTTPD; never close it from a request handler. */
+    override fun close() = Unit
 }
 
 private fun JsonPrimitive.contentOrNullSafe(): String? = if (isString) content else contentOrNullFallback()

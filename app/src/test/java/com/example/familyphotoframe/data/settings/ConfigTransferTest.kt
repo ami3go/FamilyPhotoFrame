@@ -24,6 +24,27 @@ class ConfigTransferTest {
         ),
     )
 
+    @Test fun webImport_keepsTheServersOwnTrustSettings() {
+        val current = smbSettings().copy(
+            web = WebSettings(enabled = true, port = 8080, rememberedBrowsers = RememberedBrowserPolicy()),
+        )
+        val imported = smbSettings().copy(
+            intervalSeconds = 7,
+            web = WebSettings(
+                enabled = false,
+                port = 9999,
+                rememberedBrowsers = RememberedBrowserPolicy(
+                    enabled = true,
+                    allowForever = true,
+                    requireStepUpForSensitiveActions = false,
+                ),
+            ),
+        )
+        val merged = ConfigTransfer.mergeForWebImport(current, imported)
+        assertEquals(7, merged.intervalSeconds)
+        assertEquals(current.web, merged.web)
+    }
+
     @Test fun export_stripsCredentialReference() {
         val text = ConfigTransfer.export(smbSettings(), "1.0", 123L)
         assertFalse("credential ref must not be exported", text.contains("cred_smb_secret_ref"))
