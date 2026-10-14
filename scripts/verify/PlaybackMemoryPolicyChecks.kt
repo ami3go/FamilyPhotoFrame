@@ -217,7 +217,7 @@ fun runPlaybackMemoryPolicyChecks() {
             heapUsedBytes = heap / 2L,
             heapMaxBytes = heap,
             nowElapsedMs = nativeAt,
-            nativePssBytes = baseNative + (index.toLong() + 1L) * 1024L * 1024L,
+            nativePssBytes = baseNative + (index.toLong() + 1L) * 3L * 1024L * 1024L,
         )
     }
     check("repeated native growth escalates to critical", PlaybackMemoryLevel.CRITICAL, nativeGrowth.level)
