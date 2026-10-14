@@ -14,6 +14,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -130,10 +131,13 @@ internal fun CollageSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
             FilterChip(collage.gap == CollageGap.LARGE, { vm.setCollageGap(CollageGap.LARGE) }, { Text(stringResource(R.string.settings_collage_gap_large)) })
         }
 
-        Text(stringResource(R.string.settings_collage_corner_radius, collage.cornerRadiusDpClamped))
+        // Saved on release: each saved change re-renders every prepared slide.
+        var radius by remember(collage.cornerRadiusDpClamped) { mutableIntStateOf(collage.cornerRadiusDpClamped) }
+        Text(stringResource(R.string.settings_collage_corner_radius, radius))
         Slider(
-            value = collage.cornerRadiusDpClamped.toFloat(),
-            onValueChange = { vm.setCollageCornerRadiusDp(it.roundToInt()) },
+            value = radius.toFloat(),
+            onValueChange = { radius = it.roundToInt() },
+            onValueChangeFinished = { vm.setCollageCornerRadiusDp(radius) },
             valueRange = 0f..32f,
             steps = 7,
         )
@@ -178,7 +182,7 @@ internal fun CollageSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { showResetConfirmation = false }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.settings_cancel))
                 }
             },
         )

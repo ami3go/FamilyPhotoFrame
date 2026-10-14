@@ -131,9 +131,6 @@ internal fun LocalThumbnailCacheSection(state: SlideshowUiState, vm: SlideshowVi
     LaunchedEffect(Unit) { vm.refreshLocalThumbnailCacheInfo() }
 
     val cache = state.localThumbnailCache
-    var maxGiB by remember(cache.maxBytes) {
-        mutableStateOf((cache.maxBytes / (1024L * 1024L * 1024L)).coerceAtLeast(1).toString())
-    }
 
     SettingsSectionCard("Local photo cache") {
         Text(
@@ -152,16 +149,11 @@ internal fun LocalThumbnailCacheSection(state: SlideshowUiState, vm: SlideshowVi
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
                 fontSize = 14.sp,
             )
-            OutlinedTextField(
-                value = maxGiB,
-                onValueChange = {
-                    maxGiB = it.filter(Char::isDigit).take(4)
-                    maxGiB.toIntOrNull()?.let(vm::setLocalThumbnailCacheMaxGiB)
-                },
-                label = { Text("Maximum size (GiB) — at least 2 GiB is always kept free for other apps") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth(),
+            CommitNumberField(
+                value = (cache.maxBytes / (1024L * 1024L * 1024L)).coerceIn(1L, 9999L).toInt(),
+                range = 1..9999,
+                label = stringResource(R.string.settings_local_cache_max),
+                onCommit = vm::setLocalThumbnailCacheMaxGiB,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(

@@ -431,6 +431,14 @@ private fun PlayingContent(
     val context = LocalContext.current
     val selected = state.engine.current
     val next = state.engine.next
+    // Corners, background, alignment and panel motion restyle tiles that are already decoded;
+    // only the remaining collage options change what a preparation produces.
+    val collagePreparationKey = state.portraitCollage.copy(
+        alignment = com.example.familyphotoframe.data.settings.CollageAlignment.CENTER,
+        background = com.example.familyphotoframe.data.settings.CollageBackground.APP_BACKGROUND,
+        cornerRadiusDp = 0,
+        animateThreePhotoFrames = true,
+    )
     val softFocusNeeded = state.nativeMemoryHilMode == NativeMemoryHilMode.NORMAL &&
         memoryProtection.allowSoftFocus &&
         state.transitionSelectionMode == TransitionSelectionMode.FIXED &&
@@ -663,7 +671,7 @@ private fun PlayingContent(
         state.engine.selectionGeneration,
         targetW,
         targetH,
-        state.portraitCollage,
+        collagePreparationKey,
         softFocusNeeded,
         state.nativeMemoryHilMode,
         memoryProtection.decisionVersion,
@@ -835,7 +843,7 @@ private fun PlayingContent(
         selected?.id,
         targetW,
         targetH,
-        state.portraitCollage,
+        collagePreparationKey,
         softFocusNeeded,
         state.nativeMemoryHilMode,
         memoryProtection.decisionVersion,

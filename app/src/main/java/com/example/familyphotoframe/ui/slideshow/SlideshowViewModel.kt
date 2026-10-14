@@ -4664,6 +4664,15 @@ class SlideshowViewModel(
         }
     }
 
+    /**
+     * Window-only brightness while a settings slider is dragged; nothing is persisted. The
+     * matching setter clears it once the chosen value has been saved, so the window does not
+     * flick back to the previous level in between.
+     */
+    fun previewBrightness(value: Float?) {
+        _state.update { it.copy(brightnessPreview = value?.coerceIn(0.01f, 1f)) }
+    }
+
     fun setManualBrightness(value: Float) {
         viewModelScope.launch {
             services.settings.update {
@@ -4671,11 +4680,15 @@ class SlideshowViewModel(
                     manualBrightness = value.coerceIn(0.01f, 1f),
                 ))
             }
+            previewBrightness(null)
         }
     }
 
     fun setBrightnessPeriod(index: Int, startTime: String, brightness: Float, action: NightAction) {
-        val startMinutes = SleepSchedule.parseMinutes(startTime) ?: return
+        val startMinutes = SleepSchedule.parseMinutes(startTime) ?: run {
+            previewBrightness(null)
+            return
+        }
         val normalizedStart = SleepSchedule.formatMinutes(startMinutes)
         viewModelScope.launch {
             services.settings.update { current ->
@@ -4688,6 +4701,7 @@ class SlideshowViewModel(
                 )
                 current.copy(brightnessAutomation = current.brightnessAutomation.copy(periods = periods))
             }
+            previewBrightness(null)
         }
     }
 

@@ -431,4 +431,26 @@
     <string name="shuffle_recommend_quarantine">Some photos could not be decoded. Review quarantined photos.</string>
     <string name="shuffle_recommend_recovery">An interrupted shuffle reservation was recovered without introducing a duplicate.</string>
     <string name="selection_sequential">Sequential</string>
+    <!-- Confirmations and developer tools (settings review fixes) -->
+    <string name="settings_cancel">Cancel</string>
+    <string name="settings_confirm_revoke_all_title">Revoke all remembered browsers?</string>
+    <string name="settings_confirm_revoke_all_message">Every remembered browser will need the frame PIN again, and their web sessions end now.</string>
+    <string name="settings_confirm_revoke_all">Revoke all</string>
+    <string name="settings_confirm_revoke_title">Revoke this browser?</string>
+    <string name="settings_confirm_revoke_message">%1$s will need the frame PIN again, and its web sessions end now.</string>
+    <string name="settings_confirm_revoke">Revoke</string>
+    <string name="settings_confirm_new_pin_title">Show a new PIN?</string>
+    <string name="settings_confirm_new_pin_message">Every paired web device is signed out and must pair again with the new PIN.</string>
+    <string name="settings_confirm_new_pin">New PIN</string>
+    <string name="settings_confirm_unhide_title">Unhide all photos?</string>
+    <string name="settings_confirm_unhide_message">Every photo you hid from the slideshow becomes eligible to play again. This cannot be undone.</string>
+    <string name="settings_confirm_unhide">Unhide all</string>
+    <string name="settings_developer_tools">Developer tools</string>
+    <string name="settings_developer_tools_show">Show developer tools</string>
+    <string name="settings_developer_tools_hint">Hardware test modes and performance capture for diagnosing memory or rendering problems. They change normal playback.</string>
+    <string name="settings_test_mode_active">Memory test mode is active: %1$s. The slideshow does not play normally until it is switched off.</string>
+    <string name="settings_test_mode_off">Return to normal playback</string>
+    <string name="settings_remembered_max_browsers">Maximum remembered browsers (1–32)</string>
+    <string name="settings_remembered_max_days">Maximum expiry in days (1–3650)</string>
+    <string name="settings_local_cache_max">Maximum size (GiB) — at least 2 GiB is always kept free for other apps</string>
 </resources>

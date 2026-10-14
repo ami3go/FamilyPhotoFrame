@@ -259,6 +259,7 @@ private fun AboutSettings(
             Text(stringResource(R.string.settings_notices))
         }
     }
+    DeveloperToolsSection(state, vm)
 }
 
 @Composable

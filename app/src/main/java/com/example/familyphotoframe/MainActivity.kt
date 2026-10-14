@@ -151,7 +151,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             vm.state.collect { ui ->
                 latestUiState = ui
                 val lp = window.attributes
-                val wanted = ui.screenBrightness.coerceIn(0.01f, 1f)
+                val wanted = (ui.brightnessPreview ?: ui.screenBrightness).coerceIn(0.01f, 1f)
                 if (lp.screenBrightness != wanted) {
                     lp.screenBrightness = wanted
                     window.attributes = lp

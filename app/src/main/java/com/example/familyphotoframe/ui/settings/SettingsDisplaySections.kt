@@ -93,9 +93,12 @@ internal fun BrightnessAutomationSection(state: SlideshowUiState, vm: SlideshowV
         }
     }
     Text("Manual/day brightness", color = MaterialTheme.colorScheme.onSurface)
+    // Preview on the window while dragging; persist once on release.
+    var manual by remember(settings.manualBrightness) { mutableStateOf(settings.manualBrightness) }
     Slider(
-        value = settings.manualBrightness,
-        onValueChange = vm::setManualBrightness,
+        value = manual,
+        onValueChange = { manual = it; vm.previewBrightness(it) },
+        onValueChangeFinished = { vm.setManualBrightness(manual) },
         valueRange = 0.01f..1f,
     )
     if (settings.mode != BrightnessMode.MANUAL) {
@@ -119,10 +122,12 @@ internal fun BrightnessAutomationSection(state: SlideshowUiState, vm: SlideshowV
                     singleLine = true, modifier = Modifier.widthIn(max = 120.dp),
                 )
                 Column(Modifier.weight(1f)) {
-                    Text("${(period.brightness * 100).roundToInt()}% · ${period.action.name.lowercase().replace('_', ' ')}", color = MaterialTheme.colorScheme.onSurface)
+                    var level by remember(period.brightness) { mutableStateOf(period.brightness) }
+                    Text("${(level * 100).roundToInt()}% · ${period.action.name.lowercase().replace('_', ' ')}", color = MaterialTheme.colorScheme.onSurface)
                     Slider(
-                        value = period.brightness,
-                        onValueChange = { vm.setBrightnessPeriod(index, start, it, period.action) },
+                        value = level,
+                        onValueChange = { level = it; vm.previewBrightness(it) },
+                        onValueChangeFinished = { vm.setBrightnessPeriod(index, start, level, period.action) },
                         valueRange = 0.01f..1f,
                     )
                 }
@@ -167,7 +172,15 @@ internal fun HealthDashboardSection(state: SlideshowUiState, vm: SlideshowViewMo
     h.recommendations.forEach { Text("• $it", color = Color(0xFFFFD180), fontSize = 14.sp) }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = vm::rebuildIndex, modifier = Modifier.weight(1f)) { Text("Scan now") }
-        OutlinedButton(onClick = vm::unhideAllPhotos, modifier = Modifier.weight(1f)) { Text("Unhide all") }
+        ConfirmingButton(
+            text = stringResource(R.string.settings_confirm_unhide),
+            title = stringResource(R.string.settings_confirm_unhide_title),
+            message = stringResource(R.string.settings_confirm_unhide_message),
+            confirmLabel = stringResource(R.string.settings_confirm_unhide),
+            onConfirm = vm::unhideAllPhotos,
+            modifier = Modifier.weight(1f),
+            destructive = false,
+        )
     }
     OutlinedButton(onClick = vm::requestExportSupportBundle, modifier = Modifier.fillMaxWidth()) {
         Text("Export support report")

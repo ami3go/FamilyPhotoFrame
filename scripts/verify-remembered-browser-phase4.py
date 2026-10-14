@@ -30,7 +30,7 @@ checks = {
     'settings': [
         'RememberedBrowserSettings', 'Allow browsers to be remembered',
         'Keep remembered browsers when generating a new PIN',
-        'Revoke all', 'vm.revokeRememberedBrowser',
+        'R.string.settings_confirm_revoke_all', 'vm.revokeRememberedBrowser',
     ],
     'vm': [
         'refreshRememberedBrowsers', 'setRememberedBrowsersEnabled',
@@ -43,6 +43,8 @@ checks = {
 }
 texts = {'server': server, 'assets': assets, 'setup': setup, 'settings': settings,
          'vm': vm, 'state': state, 'controller': controller}
+strings_xml = (ROOT / 'app/src/main/res/values/strings.xml').read_text()
+assert '<string name="settings_confirm_revoke_all">Revoke all</string>' in strings_xml, 'strings: missing Revoke all'
 for name, markers in checks.items():
     for marker in markers:
         assert marker in texts[name], f'{name}: missing {marker}'
