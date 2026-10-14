@@ -52,6 +52,11 @@ data class PlaybackMemoryState(
     val nativeGrowthStreak: Int = 0,
     val nativeGrowthWindowBaselineBytes: Long = 0L,
     val nativeGrowthWindowStartedElapsedMs: Long = 0L,
+    /**
+     * False until the first full window after process start has closed. Startup legitimately
+     * grows native PSS by tens of MiB (fonts, GL, SQLite, decoder pools) and is not a trend.
+     */
+    val nativeGrowthWarmedUp: Boolean = false,
     /** A native critical condition remains latched until two measured plateau windows. */
     val nativeCriticalLatched: Boolean = false,
     val nativeCriticalSinceElapsedMs: Long = 0L,
@@ -83,8 +88,14 @@ data class PlaybackMemoryState(
 ) {
     /** Only a real decode OOM opens the decode circuit. */
     val allowSelectedDecode: Boolean get() = level != PlaybackMemoryLevel.CIRCUIT_OPEN
+    /**
+     * One speculative presentation ahead. Low-tier devices keep it too: a frame (single or
+     * collage) is decoded at tile size and capped by the tier's pixel budget, so the second
+     * slot costs a few MiB, while without it every remote slide is fetched on demand and
+     * collages can never be assembled in time.
+     */
     val allowNextPreload: Boolean
-        get() = level == PlaybackMemoryLevel.NORMAL && !lowMemoryTier
+        get() = level == PlaybackMemoryLevel.NORMAL
     val allowSoftFocus: Boolean
         get() = level == PlaybackMemoryLevel.NORMAL && !lowMemoryTier
     val allowBlurredBackdrop: Boolean
@@ -94,9 +105,9 @@ data class PlaybackMemoryState(
     val forceSimpleTransition: Boolean
         get() = level != PlaybackMemoryLevel.NORMAL || lowMemoryTier
 
-    /** Low-memory devices never prepare a three-photo frame, even before pressure appears. */
+    /** Tiles decode at their destination size, so a three-photo frame costs one frame's pixels. */
     val maxCollagePhotos: Int get() = when (level) {
-        PlaybackMemoryLevel.NORMAL -> if (lowMemoryTier) 2 else 3
+        PlaybackMemoryLevel.NORMAL -> 3
         PlaybackMemoryLevel.GUARDED -> 2
         PlaybackMemoryLevel.CRITICAL,
         PlaybackMemoryLevel.CIRCUIT_OPEN,
@@ -139,7 +150,10 @@ object PlaybackMemoryPolicy {
     const val LOW_HEAP_GUARDED_EXIT_PERCENT = 62
     const val LOW_HEAP_CRITICAL_EXIT_PERCENT = 72
 
-    /** PSS is compared with the ordinary memory class so `largeHeap` cannot hide process cost. */
+    /**
+     * App-owned PSS (Java + native heaps) is compared with the ordinary memory class so
+     * `largeHeap` cannot hide process cost.
+     */
     const val PROCESS_GUARDED_ENTER_PERCENT = 100
     const val PROCESS_CRITICAL_ENTER_PERCENT = 125
 
@@ -204,6 +218,7 @@ object PlaybackMemoryPolicy {
         val signal: ExternalSignal,
         val windowClosed: Boolean,
         val growing: Boolean,
+        val warmedUp: Boolean,
     )
 
     private fun thresholds(heapMaxBytes: Long): Thresholds =
@@ -337,6 +352,7 @@ object PlaybackMemoryPolicy {
             signal = ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE),
             windowClosed = false,
             growing = false,
+            warmedUp = previous.nativeGrowthWarmedUp,
         )
         val nativeLatchTriggered = nativeAssessment.signal.level == ExternalLevel.CRITICAL &&
             nativeAssessment.signal.source == PlaybackMemoryPressureSource.NATIVE_PSS_GROWTH
@@ -470,6 +486,7 @@ object PlaybackMemoryPolicy {
             nativeGrowthStreak = nativeAssessment.streak,
             nativeGrowthWindowBaselineBytes = nativeAssessment.windowBaselineBytes,
             nativeGrowthWindowStartedElapsedMs = nativeAssessment.windowStartedElapsedMs,
+            nativeGrowthWarmedUp = nativeAssessment.warmedUp,
             nativeCriticalLatched = nativeCriticalLatched,
             nativeCriticalSinceElapsedMs = nativeCriticalSince,
             nativeStableWindowStreak = nativeStableWindowStreak,
@@ -594,10 +611,28 @@ object PlaybackMemoryPolicy {
                 signal = ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE),
                 windowClosed = false,
                 growing = false,
+                warmedUp = previous.nativeGrowthWarmedUp,
             )
         }
 
         val elapsedMs = now - previous.nativeGrowthWindowStartedElapsedMs
+        if (!previous.nativeGrowthWarmedUp) {
+            // The first window after process start measures startup allocation, not a leak:
+            // rebaseline once it has lasted a full window and judge only later windows.
+            val warmupDone = elapsedMs >= NATIVE_GROWTH_MIN_WINDOW_MS
+            return NativeGrowthAssessment(
+                nativePssBytes = current,
+                growthBytes = 0L,
+                growthRateKbPerMin = 0,
+                streak = 0,
+                windowBaselineBytes = if (warmupDone) current else previous.nativeGrowthWindowBaselineBytes,
+                windowStartedElapsedMs = if (warmupDone) now else previous.nativeGrowthWindowStartedElapsedMs,
+                signal = ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE),
+                windowClosed = false,
+                growing = false,
+                warmedUp = warmupDone,
+            )
+        }
         val growthBytes = current - previous.nativeGrowthWindowBaselineBytes
         val rateKbPerMin = if (elapsedMs > 0L && growthBytes > 0L) {
             ((growthBytes.toDouble() * 60_000.0) / elapsedMs.toDouble() / 1024.0)
@@ -622,6 +657,7 @@ object PlaybackMemoryPolicy {
                 signal = ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE),
                 windowClosed = false,
                 growing = false,
+                warmedUp = true,
             )
         }
 
@@ -656,6 +692,7 @@ object PlaybackMemoryPolicy {
             signal = signal,
             windowClosed = true,
             growing = growing,
+            warmedUp = true,
         )
     }
 

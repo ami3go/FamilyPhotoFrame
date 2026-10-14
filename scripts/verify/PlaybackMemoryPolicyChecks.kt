@@ -201,6 +201,15 @@ fun runPlaybackMemoryPolicyChecks() {
     var nativeGrowth = PlaybackMemoryPolicy.sample(
         PlaybackMemoryState(), heap / 2L, heap, nativeAt, nativePssBytes = baseNative,
     )
+    // The first full window after process start is warm-up and only rebaselines.
+    nativeAt += PlaybackMemoryPolicy.NATIVE_GROWTH_MIN_WINDOW_MS
+    nativeGrowth = PlaybackMemoryPolicy.sample(
+        previous = nativeGrowth,
+        heapUsedBytes = heap / 2L,
+        heapMaxBytes = heap,
+        nowElapsedMs = nativeAt,
+        nativePssBytes = baseNative,
+    )
     repeat(PlaybackMemoryPolicy.NATIVE_GROWTH_CRITICAL_STREAK) { index ->
         nativeAt += PlaybackMemoryPolicy.NATIVE_GROWTH_MIN_WINDOW_MS
         nativeGrowth = PlaybackMemoryPolicy.sample(
@@ -224,8 +233,8 @@ fun runPlaybackMemoryPolicyChecks() {
     )
 
     val economy = PlaybackMemoryState(lowMemoryTier = true)
-    check("low tier starts without speculative preload", false, economy.allowNextPreload)
-    check("low tier starts with two-photo maximum", 2, economy.maxCollagePhotos)
+    check("low tier keeps one presentation preloaded", true, economy.allowNextPreload)
+    check("low tier allows tile-sized three-photo frames", 3, economy.maxCollagePhotos)
     check("low tier forces bounded transition", true, economy.forceSimpleTransition)
 
     val guard = PlaybackMemoryGuard()

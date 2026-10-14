@@ -311,6 +311,16 @@ class PlaybackMemoryPolicyTest {
             nowElapsedMs = now,
             nativePssBytes = baseNative,
         )
+        // The first full window after process start is warm-up and only rebaselines.
+        now += PlaybackMemoryPolicy.NATIVE_GROWTH_MIN_WINDOW_MS
+        state = PlaybackMemoryPolicy.sample(
+            previous = state,
+            heapUsedBytes = heap / 2L,
+            heapMaxBytes = heap,
+            nowElapsedMs = now,
+            nativePssBytes = baseNative,
+        )
+        assertTrue(state.nativeGrowthWarmedUp)
         repeat(PlaybackMemoryPolicy.NATIVE_GROWTH_CRITICAL_STREAK) { index ->
             now += PlaybackMemoryPolicy.NATIVE_GROWTH_MIN_WINDOW_MS
             state = PlaybackMemoryPolicy.sample(
@@ -352,16 +362,51 @@ class PlaybackMemoryPolicyTest {
         )
     }
 
+    @Test fun startupNativeGrowthIsWarmUpNotATrend() {
+        var now = 1_000L
+        var state = PlaybackMemoryPolicy.sample(
+            previous = PlaybackMemoryState(),
+            heapUsedBytes = heap / 4L,
+            heapMaxBytes = heap,
+            nowElapsedMs = now,
+            nativePssBytes = 2L * 1024L * 1024L,
+        )
+        // Observed on the V80: ~2 MiB at process start, ~23 MiB once playback is warm.
+        now += PlaybackMemoryPolicy.NATIVE_GROWTH_MIN_WINDOW_MS
+        state = PlaybackMemoryPolicy.sample(
+            previous = state,
+            heapUsedBytes = heap / 4L,
+            heapMaxBytes = heap,
+            nowElapsedMs = now,
+            nativePssBytes = 23L * 1024L * 1024L,
+        )
+        assertEquals(PlaybackMemoryLevel.NORMAL, state.level)
+        assertFalse(state.nativeCriticalLatched)
+        assertEquals(23L * 1024L * 1024L, state.nativeGrowthWindowBaselineBytes)
+
+        now += PlaybackMemoryPolicy.NATIVE_GROWTH_MAX_WINDOW_MS
+        state = PlaybackMemoryPolicy.sample(
+            previous = state,
+            heapUsedBytes = heap / 4L,
+            heapMaxBytes = heap,
+            nowElapsedMs = now,
+            nativePssBytes = 23L * 1024L * 1024L + 64L * 1024L,
+        )
+        assertEquals(PlaybackMemoryLevel.NORMAL, state.level)
+        assertEquals(0, state.nativeGrowthStreak)
+    }
+
     @Test fun lowMemoryTierStartsWithABoundedEconomyProfile() {
         val state = PlaybackMemoryState(lowMemoryTier = true)
 
         assertEquals(PlaybackMemoryLevel.NORMAL, state.level)
-        assertFalse(state.allowNextPreload)
+        // One prepared presentation ahead is what makes remote collages possible at all.
+        assertTrue(state.allowNextPreload)
         assertFalse(state.allowSoftFocus)
         assertFalse(state.allowBlurredBackdrop)
         assertFalse(state.allowWebPreview)
         assertTrue(state.forceSimpleTransition)
-        assertEquals(2, state.maxCollagePhotos)
+        assertEquals(3, state.maxCollagePhotos)
         assertTrue(state.decodeScale < 1f)
         assertTrue(state.allowSelectedDecode)
     }

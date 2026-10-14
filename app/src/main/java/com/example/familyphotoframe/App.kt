@@ -210,7 +210,10 @@ class App : Application() {
                     services.playbackMemoryGuard.recordMemory(
                         heapUsedBytes = reading.usedBytes,
                         heapMaxBytes = reading.maxBytes,
-                        processPssBytes = sampledMemory.pssKb * 1024L,
+                        // App-owned memory only. Total PSS also carries clean, shared file
+                        // mappings (dex/oat/.so: ~50 MiB on the V80) that the kernel can drop,
+                        // which held a 100 MiB-class device at GUARDED with no real pressure.
+                        processPssBytes = (sampledMemory.dalvikPssKb + sampledMemory.nativePssKb) * 1024L,
                         systemAvailBytes = sampledMemory.systemAvailMemKb * 1024L,
                         systemThresholdBytes = sampledMemory.systemThresholdKb * 1024L,
                         systemLowMemory = sampledMemory.systemLowMemory,

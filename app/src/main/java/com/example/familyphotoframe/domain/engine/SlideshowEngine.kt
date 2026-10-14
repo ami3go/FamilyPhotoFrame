@@ -135,6 +135,16 @@ class SlideshowEngine(
 
     /** Persisted folder-balanced reservation for the selected, not-yet-committed presentation. */
     private var activeReservation: ReservedPresentation? = null
+
+    /**
+     * Folder-balanced turn reserved one step ahead while the current presentation dwells, so
+     * the UI can fetch and compose it (including collage companions) before it is due. The
+     * repository keeps one reservation per scope and [ShuffleRepository.reserve] returns an
+     * existing one unchanged, so the ordinary forward pick later receives exactly this turn.
+     */
+    private var lookaheadReservation: ReservedPresentation? = null
+    /** The visible presentation is a history replay; forward then continues through history. */
+    private var currentFromHistory: Boolean = false
     private var activeShuffleScopeKey: String? = null
     /** True when an oversized explicit queue is using the persistent bounded selector. */
     @Volatile private var boundedSelectionFallbackActive: Boolean = false
@@ -408,6 +418,7 @@ class SlideshowEngine(
     fun resetActiveShuffle(clearHistory: Boolean = false) {
         loopScope?.launch {
             cancelActiveReservation("reset")
+            releaseFolderLookahead("reset")
             folderBalancedShuffle.resetPlaylist(activePlaylistId, clearHistory)
             resetSelectionState()
             _ui.value = _ui.value.copy(
@@ -425,6 +436,7 @@ class SlideshowEngine(
     fun resetAllShuffle(clearHistory: Boolean = false) {
         loopScope?.launch {
             cancelActiveReservation("reset_all")
+            releaseFolderLookahead("reset_all")
             folderBalancedShuffle.resetAll(clearHistory)
             resetSelectionState()
             _ui.value = _ui.value.copy(
@@ -873,6 +885,18 @@ class SlideshowEngine(
                     activeReservation = reservation.copy(candidatePhotoIds = remaining)
                     _ui.value = _ui.value.copy(reservedCandidateIds = remaining)
                 }
+            } ?: lookaheadReservation?.takeIf {
+                failure.photoId in it.candidatePhotoIds && failure.photoId != it.anchorPhotoId
+            }?.let { reservation ->
+                // A companion that failed while the next turn was being preloaded.
+                val recorded = folderBalancedShuffle.recordCandidateFailure(
+                    reservation.scopeKey, reservation.reservationId, failure.photoId,
+                )
+                if (recorded) {
+                    val remaining = reservation.candidatePhotoIds.filterNot { it == failure.photoId }
+                    lookaheadReservation = reservation.copy(candidatePhotoIds = remaining)
+                    _ui.value = _ui.value.copy(nextReservedCandidateIds = remaining)
+                }
             }
             persistSuppression(failure)
             diagnostics.log(
@@ -977,7 +1001,11 @@ class SlideshowEngine(
                 } else {
                     // A full interval starts only after successful visible presentation;
                     // any manual command still pre-empts it immediately.
-                    val cmd = withTimeoutOrNull(intervalMs) { commands.receive() }
+                    val lookaheadStartedNs = System.nanoTime()
+                    reserveFolderLookahead()
+                    val dwellMs = (intervalMs - (System.nanoTime() - lookaheadStartedNs) / 1_000_000L)
+                        .coerceAtLeast(0L)
+                    val cmd = withTimeoutOrNull(dwellMs) { commands.receive() }
                     if (cmd == null) advance(forward = true) else handle(cmd)
                 }
             }
@@ -1104,6 +1132,7 @@ class SlideshowEngine(
         // or selection sets the flag again and is handled on the next loop iteration.
         reselectPending = false
         cancelActiveReservation("reselect")
+        releaseFolderLookahead("reselect")
         resetHistory()
         advance(forward = true)
     }
@@ -1130,6 +1159,52 @@ class SlideshowEngine(
         onThisDayInterludeComplete = false
     }
 
+
+    /**
+     * Reserve the next folder-balanced turn while the current presentation dwells. Without
+     * this the UI only learns the next anchor when it is already due, so every remote slide
+     * is fetched on demand and a collage can never be assembled within the selection budget.
+     */
+    private suspend fun reserveFolderLookahead() {
+        if (selectionMode != SelectionMode.FOLDER_BALANCED_SHUFFLE) return
+        val ui = _ui.value
+        if (ui.current == null || ui.next != null || lookaheadReservation != null) return
+        // Uncommitted current turn, a one-folder preview, or history replay: the next
+        // forward step is not a fresh reservation, so there is nothing to prepare ahead.
+        if (activeReservation != null || previewReturnPick != null || currentFromHistory) return
+        if (primaryIds.isEmpty() && unavailableSourceIds.isEmpty()) return
+        val picked = pickFrom(
+            sourceIds = primaryIds,
+            queue = primaryQueue,
+            cachedOnly = primaryCachedOnly,
+            poolRole = "primary",
+            fromFallback = false,
+        ) ?: return
+        val reservation = picked.reservation ?: return
+        if (reservation.anchorPhotoId == ui.current.id) return
+        lookaheadReservation = reservation
+        _ui.value = _ui.value.copy(
+            next = picked.item.toDisplayPhoto(),
+            nextReservedCandidateIds = reservation.candidatePhotoIds,
+        )
+        diagnostics.log(
+            DiagnosticsLog.Category.ENGINE, "SHUFFLE_LOOKAHEAD_RESERVED",
+            "scope" to reservation.scopeKey,
+            "reservation" to reservation.reservationId.take(12),
+            "candidateCount" to reservation.candidatePhotoIds.size.toString(),
+        )
+    }
+
+    private suspend fun releaseFolderLookahead(reason: String) {
+        val reservation = lookaheadReservation ?: return
+        lookaheadReservation = null
+        folderBalancedShuffle.cancelReservation(
+            reservation.scopeKey,
+            reservation.reservationId,
+            "lookahead_$reason",
+        )
+        _ui.value = _ui.value.copy(next = null, nextReservedCandidateIds = emptyList())
+    }
 
     private suspend fun cancelActiveReservation(reason: String) {
         val reservation = activeReservation ?: return
@@ -1335,6 +1410,10 @@ class SlideshowEngine(
         }
         playingFallback = pick.fromFallback
         activeReservation = pick.reservation
+        // Either this pick consumed the lookahead turn, or navigation superseded it. A
+        // superseded reservation stays persisted and is returned by the next forward pick.
+        lookaheadReservation = null
+        currentFromHistory = pick.historyPhotoIds.isNotEmpty()
         activeShuffleScopeKey = pick.scopeKey ?: activeShuffleScopeKey
         if (selectionMode != SelectionMode.FOLDER_BALANCED_SHUFFLE) {
             when {
@@ -1371,6 +1450,7 @@ class SlideshowEngine(
             current = photo,
             selectionGeneration = selectionGeneration,
             next = preview,
+            nextReservedCandidateIds = emptyList(),
             state = currentState(),
             reservedCandidateIds = pick.reservation?.candidatePhotoIds.orEmpty(),
             historyPhotoIds = pick.historyPhotoIds,
