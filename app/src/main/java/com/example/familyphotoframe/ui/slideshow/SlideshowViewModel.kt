@@ -679,6 +679,7 @@ class SlideshowViewModel(
                 autoStartOnBoot = s.autoStartOnBoot,
                 doubleTapPauseTimeoutMinutes = s.doubleTapPauseTimeoutMinutes,
                 batteryProtectionEnabled = s.batteryProtectionEnabled,
+                stopLeakingGpsService = s.stopLeakingGpsService,
                 web = s.web,
                 schedule = s.schedule,
                 weather = s.weather,
@@ -4814,6 +4815,10 @@ class SlideshowViewModel(
 
     fun setBatteryProtectionEnabled(value: Boolean) {
         viewModelScope.launch { services.settings.update { it.copy(batteryProtectionEnabled = value) } }
+    }
+
+    fun setStopLeakingGpsService(value: Boolean) {
+        viewModelScope.launch { services.settings.update { it.copy(stopLeakingGpsService = value) } }
     }
 
     private fun updateOverlays(transform: (com.example.familyphotoframe.data.settings.OverlaySettings) -> com.example.familyphotoframe.data.settings.OverlaySettings) {

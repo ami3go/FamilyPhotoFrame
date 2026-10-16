@@ -891,6 +891,12 @@ data class AppSettings(
     val doubleTapPauseTimeoutMinutes: Int = 5,
     /** Rooted V80-only 60-75% charge hysteresis. Off on installs and upgrades. */
     val batteryProtectionEnabled: Boolean = false,
+    /**
+     * Rooted V80-only: keep the leaking vendor GPS daemon stopped. On by default because the
+     * leak eventually gets the frame killed and nothing in the app uses device location;
+     * other devices are identity-rejected without any change.
+     */
+    val stopLeakingGpsService: Boolean = true,
     val web: WebSettings = WebSettings(),
     /** Scan include/exclude filters (spec §20). */
     val filters: FilterSettings = FilterSettings(),

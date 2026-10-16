@@ -23,6 +23,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
+import com.example.familyphotoframe.platform.ForegroundIntentStore
+import com.example.familyphotoframe.platform.ForegroundRelaunchPolicy
 import com.example.familyphotoframe.ui.settings.SettingsPage
 import com.example.familyphotoframe.ui.settings.SettingsScreen
 import com.example.familyphotoframe.ui.slideshow.SlideshowScreen
@@ -59,6 +61,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var settingsPage by mutableStateOf(SettingsPage.ROOT)
     private var latestUiState: SlideshowUiState? = null
     private val activityDiagnostics by lazy { ActivityDiagnosticsController(this, services) }
+    private val foregroundIntent by lazy { ForegroundIntentStore(this) }
 
     private val immersiveMode by lazy {
         ImmersiveModeController(
@@ -264,6 +267,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
 
     override fun onStart() {
         super.onStart()
+        foregroundIntent.markShowing()
         vm.onHostStarted()
         activityDiagnostics.onStarted()
     }
@@ -288,6 +292,10 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     }
 
     override fun onStop() {
+        val powerManager = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+        if (ForegroundRelaunchPolicy.stopMeansUserLeft(powerManager.isInteractive, isChangingConfigurations)) {
+            foregroundIntent.markLeft()
+        }
         vm.onHostStopped()
         activityDiagnostics.onStopped()
         super.onStop()
