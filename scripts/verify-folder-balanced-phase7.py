@@ -8,6 +8,8 @@ read = lambda p: (ROOT / p).read_text(encoding="utf-8")
 settings = read("app/src/main/java/com/example/familyphotoframe/data/settings/AppSettings.kt")
 engine = read("app/src/main/java/com/example/familyphotoframe/domain/engine/SlideshowEngine.kt")
 vm = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowViewModel.kt")
+# Feature areas the ViewModel delegates to live in ui/slideshow/viewmodel/.
+vm += "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "app/src/main/java/com/example/familyphotoframe/ui/slideshow/viewmodel").glob("*.kt")))
 repo = read("app/src/main/java/com/example/familyphotoframe/slideshow/shuffle/ShuffleRepository.kt")
 eligibility = read("app/src/main/java/com/example/familyphotoframe/slideshow/shuffle/ShuffleEligibilityProvider.kt")
 models = read("app/src/main/java/com/example/familyphotoframe/slideshow/shuffle/ShuffleModels.kt")

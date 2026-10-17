@@ -3,6 +3,8 @@ from pathlib import Path
 root=Path(__file__).resolve().parents[1]
 engine=(root/'app/src/main/java/com/example/familyphotoframe/domain/engine/SlideshowEngine.kt').read_text()
 vm=(root/'app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowViewModel.kt').read_text()
+# Feature areas the ViewModel delegates to live in ui/slideshow/viewmodel/.
+vm += "".join(p.read_text(encoding="utf-8") for p in sorted((root/'app/src/main/java/com/example/familyphotoframe/ui/slideshow/viewmodel').glob("*.kt")))
 screen=''.join(p.read_text() for p in sorted((root/'app/src/main/java/com/example/familyphotoframe/ui/slideshow').glob('Slideshow*.kt')))
 state=(root/'app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowUiState.kt').read_text()
 checks=[

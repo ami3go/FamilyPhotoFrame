@@ -4,6 +4,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 settings = (root / 'app/src/main/java/com/example/familyphotoframe/data/settings/AppSettings.kt').read_text()
 screen = ''.join(p.read_text() for p in sorted((root / 'app/src/main/java/com/example/familyphotoframe/ui/slideshow').glob('Slideshow*.kt')))
+screen += ''.join((root / 'app/src/main/java/com/example/familyphotoframe/ui/slideshow' / name).read_text() for name in ('PlayingContent.kt', 'PreparedCollage.kt'))
 renderer = (root / 'app/src/main/java/com/example/familyphotoframe/ui/slideshow/transition/SlideshowTransitionRenderer.kt').read_text()
 model = (root / 'app/src/main/java/com/example/familyphotoframe/ui/slideshow/transition/TransitionModel.kt').read_text()
 web_dir = root / 'app/src/main/java/com/example/familyphotoframe/web'

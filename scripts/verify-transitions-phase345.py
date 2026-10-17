@@ -16,6 +16,7 @@ selector = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/tra
 performance = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/transition/TransitionPerformance.kt")
 renderer = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/transition/SlideshowTransitionRenderer.kt")
 screen = "".join(p.read_text() for p in sorted((root / "app/src/main/java/com/example/familyphotoframe/ui/slideshow").glob("Slideshow*.kt")))
+screen += ''.join((root / "app/src/main/java/com/example/familyphotoframe/ui/slideshow" / name).read_text() for name in ("PlayingContent.kt", "PreparedCollage.kt"))
 settings_dir = root / "app/src/main/java/com/example/familyphotoframe/ui/settings"
 ui = "".join(p.read_text() for p in sorted(settings_dir.glob("Settings*.kt")))
 web = (read("app/src/main/java/com/example/familyphotoframe/web/SetupPage.kt") +
@@ -23,6 +24,8 @@ web = (read("app/src/main/java/com/example/familyphotoframe/web/SetupPage.kt") +
        read("app/src/main/java/com/example/familyphotoframe/web/WebUiCss.kt") +
        read("app/src/main/java/com/example/familyphotoframe/web/WebUiScript.kt"))
 vm = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowViewModel.kt")
+# Feature areas the ViewModel delegates to live in ui/slideshow/viewmodel/.
+vm += "".join(p.read_text(encoding="utf-8") for p in sorted((root / "app/src/main/java/com/example/familyphotoframe/ui/slideshow/viewmodel").glob("*.kt")))
 model = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/transition/TransitionModel.kt")
 
 EFFECTS = {

@@ -2,6 +2,8 @@
 from pathlib import Path
 root=Path(__file__).resolve().parents[1]
 vm=(root/'app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowViewModel.kt').read_text()
+# Feature areas the ViewModel delegates to live in ui/slideshow/viewmodel/.
+vm += "".join(p.read_text(encoding="utf-8") for p in sorted((root/'app/src/main/java/com/example/familyphotoframe/ui/slideshow/viewmodel').glob("*.kt")))
 settings_dir=root/'app/src/main/java/com/example/familyphotoframe/ui/settings'
 ui=''.join(p.read_text() for p in sorted(settings_dir.glob('Settings*.kt')))
 state=(root/'app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowUiState.kt').read_text()

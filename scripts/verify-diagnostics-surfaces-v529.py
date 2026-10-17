@@ -15,6 +15,8 @@ script = (WEB / "WebUiScript.kt").read_text()
 css = (WEB / "WebUiCss.kt").read_text()
 assets = (WEB / "WebUiAssets.kt").read_text()
 view_model = (MAIN / "ui/slideshow/SlideshowViewModel.kt").read_text()
+# Feature areas the ViewModel delegates to live in ui/slideshow/viewmodel/.
+view_model += "".join(p.read_text(encoding="utf-8") for p in sorted((MAIN / "ui/slideshow/viewmodel").glob("*.kt")))
 activity = (MAIN / "MainActivity.kt").read_text()
 analyzer = (ROOT / "scripts/diagnostics_analysis.py").read_text()
 general = (ROOT / "scripts/analyze-diagnostics.py").read_text()

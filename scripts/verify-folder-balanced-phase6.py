@@ -6,6 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 repo = (ROOT / 'app/src/main/java/com/example/familyphotoframe/slideshow/shuffle/ShuffleRepository.kt').read_text()
 engine = (ROOT / 'app/src/main/java/com/example/familyphotoframe/domain/engine/SlideshowEngine.kt').read_text()
 vm = (ROOT / 'app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowViewModel.kt').read_text()
+# Feature areas the ViewModel delegates to live in ui/slideshow/viewmodel/.
+vm += "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / 'app/src/main/java/com/example/familyphotoframe/ui/slideshow/viewmodel').glob("*.kt")))
 tests = (ROOT / 'app/src/androidTest/java/com/example/familyphotoframe/slideshow/shuffle/ShuffleRepositoryTest.kt').read_text()
 
 checks = {

@@ -16,6 +16,8 @@ assets = read("app/src/main/java/com/example/familyphotoframe/web/WebUiAssets.kt
 services = read("app/src/main/java/com/example/familyphotoframe/ServiceLocator.kt")
 preparation = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowPreparation.kt")
 screen = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowScreen.kt")
+screen += read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/PlayingContent.kt")
+screen += read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/PreparedCollage.kt")
 backdrop = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowBackdrop.kt")
 app = read("app/src/main/java/com/example/familyphotoframe/App.kt")
 sampler = read("app/src/main/java/com/example/familyphotoframe/data/diagnostics/RuntimeSampler.kt")
@@ -23,6 +25,8 @@ diagnostics = read("app/src/main/java/com/example/familyphotoframe/data/diagnost
 sink = read("app/src/main/java/com/example/familyphotoframe/data/diagnostics/FileDiagnosticsSink.kt")
 web_server = read("app/src/main/java/com/example/familyphotoframe/web/WebConfigServer.kt")
 view_model = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowViewModel.kt")
+# Feature areas the ViewModel delegates to live in ui/slideshow/viewmodel/.
+view_model += "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "app/src/main/java/com/example/familyphotoframe/ui/slideshow/viewmodel").glob("*.kt")))
 bounded_input = read("app/src/main/java/com/example/familyphotoframe/data/settings/BoundedTextInput.kt")
 portable = read("app/src/main/java/com/example/familyphotoframe/data/settings/PortableBundle.kt")
 webdav_api = read("app/src/main/java/com/example/familyphotoframe/data/source/WebDavApi.kt")

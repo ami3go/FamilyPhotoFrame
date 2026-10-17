@@ -59,7 +59,7 @@ showing before.
 - Manual playlist activation already has a bounded-duration override:
   `PlaylistSettings.manualOverrideUntilEpochMs`, set by `playlistAction 'play'` with an
   `overrideMinutes` body field (`WebServerController.kt`), and unwound automatically by
-  `restartPlaylistScheduleWatcher()` in `SlideshowViewModel.kt` once the timestamp
+  `restartPlaylistScheduleWatcher()` in `viewmodel/PlaylistActions.kt` once the timestamp
   passes. This is a working "temporarily switch playlists, then revert" mechanism
   already in production — On This Day should reuse it, not invent a second one.
 

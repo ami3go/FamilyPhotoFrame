@@ -12,11 +12,15 @@ def read(relative: str) -> str:
 
 preparation = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowPreparation.kt")
 screen = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowScreen.kt")
+screen += read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/PlayingContent.kt")
+screen += read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/PreparedCollage.kt")
 preview_renderer = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/WebPreviewRenderer.kt")
 memory = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/PreparedSlideMemory.kt")
 policy = read("app/src/main/java/com/example/familyphotoframe/domain/engine/PlaybackMemoryPolicy.kt")
 app = read("app/src/main/java/com/example/familyphotoframe/App.kt")
 vm = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowViewModel.kt")
+# Feature areas the ViewModel delegates to live in ui/slideshow/viewmodel/.
+vm += "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "app/src/main/java/com/example/familyphotoframe/ui/slideshow/viewmodel").glob("*.kt")))
 runtime = read("app/src/main/java/com/example/familyphotoframe/data/diagnostics/DiagnosticRuntimeState.kt")
 crash = read("app/src/main/java/com/example/familyphotoframe/data/diagnostics/CrashEnvelopeStore.kt")
 catalog = read("app/src/main/java/com/example/familyphotoframe/data/diagnostics/DiagnosticEventSpec.kt")
