@@ -887,6 +887,12 @@ data class AppSettings(
     val decodeTimeoutMs: Long = 8_000,
     val temporarilySuppressAfterDecodeFailures: Int = 3,
     val autoStartOnBoot: Boolean = false,
+    /**
+     * Display the slideshow over the lock screen, so a frame that reboots does not sit on
+     * the keyguard until someone swipes. A PIN, pattern or password is never bypassed:
+     * leaving the frame still requires unlocking.
+     */
+    val showOverLockScreen: Boolean = true,
     /** Automatic recovery for touch pauses; zero preserves an indefinite pause. */
     val doubleTapPauseTimeoutMinutes: Int = 5,
     /** Rooted V80-only 60-75% charge hysteresis. Off on installs and upgrades. */

@@ -159,6 +159,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     lp.screenBrightness = wanted
                     window.attributes = lp
                 }
+                applyLockScreenPresentation(ui.showOverLockScreen)
                 activityDiagnostics.recordUiState(ui, screen == Screen.SETTINGS, "VIEW_MODEL_STATE")
             }
         }
@@ -262,6 +263,29 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 SettingsPage.ROOT
             }
             immersiveMode.recover("SETTINGS_PAGE_BACK")
+        }
+    }
+
+    private var lockScreenPresentation: Boolean? = null
+
+    /**
+     * Show over the keyguard so a rebooted frame plays instead of waiting on the lock screen.
+     * A non-secure (swipe) keyguard is dismissed; a secure one is only shown over.
+     */
+    @Suppress("DEPRECATION")
+    private fun applyLockScreenPresentation(enabled: Boolean) {
+        if (lockScreenPresentation == enabled) return
+        lockScreenPresentation = enabled
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(enabled)
+            if (enabled) {
+                (getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager)
+                    .requestDismissKeyguard(this, null)
+            }
+        } else {
+            val flags = WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+            if (enabled) window.addFlags(flags) else window.clearFlags(flags)
         }
     }
 

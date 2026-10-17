@@ -86,6 +86,7 @@ data class SlideshowUiState(
     /** Result text of the last "Test connection" action, or null. */
     val smbTestResult: String? = null,
     val autoStartOnBoot: Boolean = false,
+    val showOverLockScreen: Boolean = true,
     val doubleTapPauseTimeoutMinutes: Int = 5,
     val batteryProtectionEnabled: Boolean = false,
     val stopLeakingGpsService: Boolean = true,

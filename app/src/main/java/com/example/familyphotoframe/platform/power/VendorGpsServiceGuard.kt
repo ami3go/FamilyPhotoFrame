@@ -50,11 +50,13 @@ internal class VendorGpsServiceGuard(
                         return@collectLatest
                     }
                     delay(STARTUP_DELAY_MS)
+                    var failures = 0
                     while (true) {
                         val result = execute(STOP_COMMAND)
                         report(result, trigger = "check")
                         if (result == Result.WRONG_DEVICE) return@collectLatest
-                        delay(CHECK_INTERVAL_MS)
+                        failures = if (result == Result.UNAVAILABLE || result == Result.FAILED) failures + 1 else 0
+                        delay(nextCheckDelayMs(failures))
                     }
                 }
         }
@@ -87,6 +89,17 @@ internal class VendorGpsServiceGuard(
         const val SERVICE = "gnssCG2000"
         const val STARTUP_DELAY_MS = 30_000L
         const val CHECK_INTERVAL_MS = 60L * 60_000L
+
+        /**
+         * Root is briefly unavailable right after boot (SuperSU's daemon still starting) and
+         * after an app update until SuperSU re-grants it; meanwhile the daemon keeps leaking,
+         * so a failed check retries within minutes rather than waiting an hour.
+         */
+        private val FAILURE_RETRY_DELAYS_MS = longArrayOf(2L * 60_000L, 5L * 60_000L, 15L * 60_000L)
+
+        internal fun nextCheckDelayMs(consecutiveFailures: Int): Long =
+            if (consecutiveFailures <= 0) CHECK_INTERVAL_MS
+            else FAILURE_RETRY_DELAYS_MS.getOrElse(consecutiveFailures - 1) { CHECK_INTERVAL_MS }
 
         private const val STATE = "\$(getprop init.svc.$SERVICE)"
         /** Prints 1 when it stopped a running service, 0 when it was already stopped. */

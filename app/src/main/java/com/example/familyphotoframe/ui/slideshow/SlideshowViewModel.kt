@@ -677,6 +677,7 @@ class SlideshowViewModel(
                 nativeMemoryHilMode = s.nativeMemoryHilMode,
                 memoryTier = services.memoryTier,
                 autoStartOnBoot = s.autoStartOnBoot,
+                showOverLockScreen = s.showOverLockScreen,
                 doubleTapPauseTimeoutMinutes = s.doubleTapPauseTimeoutMinutes,
                 batteryProtectionEnabled = s.batteryProtectionEnabled,
                 stopLeakingGpsService = s.stopLeakingGpsService,
@@ -4806,6 +4807,10 @@ class SlideshowViewModel(
 
     fun setAutoStartOnBoot(value: Boolean) {
         viewModelScope.launch { services.settings.update { it.copy(autoStartOnBoot = value) } }
+    }
+
+    fun setShowOverLockScreen(value: Boolean) {
+        viewModelScope.launch { services.settings.update { it.copy(showOverLockScreen = value) } }
     }
 
     fun setDoubleTapPauseTimeoutMinutes(minutes: Int) {
