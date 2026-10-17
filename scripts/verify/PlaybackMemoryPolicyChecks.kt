@@ -212,13 +212,16 @@ fun runPlaybackMemoryPolicyChecks() {
     )
     repeat(PlaybackMemoryPolicy.NATIVE_GROWTH_CRITICAL_STREAK) { index ->
         nativeAt += PlaybackMemoryPolicy.NATIVE_GROWTH_MIN_WINDOW_MS
-        nativeGrowth = PlaybackMemoryPolicy.sample(
-            previous = nativeGrowth,
-            heapUsedBytes = heap / 2L,
-            heapMaxBytes = heap,
-            nowElapsedMs = nativeAt,
-            nativePssBytes = baseNative + (index.toLong() + 1L) * 3L * 1024L * 1024L,
-        )
+        // A leak lifts every one-minute sample, so feed the settle window at the new level.
+        for (minutesBefore in (PlaybackMemoryPolicy.NATIVE_SETTLE_SAMPLES - 1) downTo 0) {
+            nativeGrowth = PlaybackMemoryPolicy.sample(
+                previous = nativeGrowth,
+                heapUsedBytes = heap / 2L,
+                heapMaxBytes = heap,
+                nowElapsedMs = nativeAt - minutesBefore * 60_000L,
+                nativePssBytes = baseNative + (index.toLong() + 1L) * 3L * 1024L * 1024L,
+            )
+        }
     }
     check("repeated native growth escalates to critical", PlaybackMemoryLevel.CRITICAL, nativeGrowth.level)
     check(
