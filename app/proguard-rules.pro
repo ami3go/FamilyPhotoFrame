@@ -40,6 +40,12 @@
 # optional dependencies (BouncyCastle, logging backends) that are not on this classpath.
 -keep class jcifs.** { *; }
 -dontwarn jcifs.**
+# jcifs-ng computes the NTLM hash (MD4) and SMB3 signatures through the BouncyCastle
+# provider. The provider registers every algorithm by class-name string and instantiates
+# it reflectively, so R8 cannot see the usage: without these rules the MD4 digest was
+# stripped and every SMB login in a release build failed (PROVIDER_ERROR, 2026-10-17).
+-keep class org.bouncycastle.jce.provider.** { *; }
+-keep class org.bouncycastle.jcajce.provider.** { *; }
 -dontwarn org.bouncycastle.**
 -dontwarn org.slf4j.**
 
