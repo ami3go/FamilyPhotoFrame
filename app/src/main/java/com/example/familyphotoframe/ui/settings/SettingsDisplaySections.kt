@@ -165,6 +165,13 @@ internal fun HealthDashboardSection(state: SlideshowUiState, vm: SlideshowViewMo
     }, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
     Text("Photos: ${h.eligiblePhotos} playable / ${h.totalPhotos} indexed", color = MaterialTheme.colorScheme.onSurface)
     Text("Favorites: ${h.favoritePhotos} · Hidden: ${h.hiddenPhotos} · Failed: ${h.failedPhotos}", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
+    if (h.unsupportedPhotos > 0) {
+        Text(
+            stringResource(R.string.health_unsupported_heic, h.unsupportedPhotos),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            fontSize = 14.sp,
+        )
+    }
     Text("Local uploads: ${h.localUploadPhotos}", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
     Text("Free storage: ${formatBytes(h.freeStorageBytes)}", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
     Text("Playlist: ${state.activePlaylistName}", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))

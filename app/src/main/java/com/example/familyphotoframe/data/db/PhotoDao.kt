@@ -577,6 +577,26 @@ interface PhotoDao {
     )
     suspend fun failedOrUnsupportedCount(maxFailures: Int, allowHeif: Int): Int
 
+    /** Photos excluded after repeated decode failures — something the owner may act on. */
+    @Query("SELECT COUNT(*) FROM photos WHERE decodeFailureCount >= :maxFailures")
+    suspend fun decodeFailedCount(maxFailures: Int): Int
+
+    /**
+     * HEIC/HEIF photos this platform cannot decode (no platform HEIF decoder before
+     * Android 9). They are excluded by format, not failures, and need no action here.
+     */
+    @Query(
+        """
+        SELECT COUNT(*) FROM photos
+        WHERE :allowHeif = 0 AND decodeFailureCount < :maxFailures AND (
+          lower(fileName) LIKE '%.heic' OR lower(fileName) LIKE '%.heif'
+          OR lower(COALESCE(mimeType, '')) IN
+            ('image/heic','image/heif','image/heic-sequence','image/heif-sequence')
+        )
+        """
+    )
+    suspend fun unsupportedFormatCount(maxFailures: Int, allowHeif: Int): Int
+
     /** Un-hide everything, so a mis-tapped "hide" is always recoverable (spec §9.4). */
     @Query("UPDATE photos SET isHidden = 0")
     suspend fun unhideAll()
