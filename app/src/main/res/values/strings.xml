@@ -456,4 +456,6 @@
     <string name="settings_gps_service_title">GPS memory leak (V80)</string>
     <string name="settings_gps_service_hint">Rooted V80 only. The tablet\'s built-in GPS service leaks memory until Android closes the frame after a day or two. The frame never uses location, so this keeps that service stopped. Other devices are left unchanged.</string>
     <string name="settings_gps_service">Stop the leaking GPS service</string>
+    <string name="health_unsupported_heic">%1$d HEIC photos are skipped: this Android version cannot open HEIC (Android 9 or newer can).</string>
+    <string name="settings_show_over_lock">Show the slideshow over the lock screen</string>
 </resources>

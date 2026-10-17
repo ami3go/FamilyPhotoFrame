@@ -39,6 +39,8 @@ data class FrameHealthSummary(
     val hiddenPhotos: Int = 0,
     val favoritePhotos: Int = 0,
     val failedPhotos: Int = 0,
+    /** Excluded by format on this Android version (HEIC before Android 9); informational. */
+    val unsupportedPhotos: Int = 0,
     val localUploadPhotos: Int = 0,
     val freeStorageBytes: Long = 0L,
     val recommendations: List<String> = emptyList(),
@@ -84,6 +86,7 @@ data class SlideshowUiState(
     /** Result text of the last "Test connection" action, or null. */
     val smbTestResult: String? = null,
     val autoStartOnBoot: Boolean = false,
+    val showOverLockScreen: Boolean = true,
     val doubleTapPauseTimeoutMinutes: Int = 5,
     val batteryProtectionEnabled: Boolean = false,
     val stopLeakingGpsService: Boolean = true,

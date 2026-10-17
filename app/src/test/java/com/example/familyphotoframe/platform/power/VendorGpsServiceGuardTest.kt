@@ -32,6 +32,14 @@ class VendorGpsServiceGuardTest {
         assertEquals(VendorGpsServiceGuard.Result.FAILED, VendorGpsServiceGuard.classify(0, "su: denied"))
     }
 
+    @Test fun failedChecksRetryWithinMinutesThenFallBackToHourly() {
+        assertEquals(VendorGpsServiceGuard.CHECK_INTERVAL_MS, VendorGpsServiceGuard.nextCheckDelayMs(0))
+        assertEquals(2L * 60_000L, VendorGpsServiceGuard.nextCheckDelayMs(1))
+        assertEquals(5L * 60_000L, VendorGpsServiceGuard.nextCheckDelayMs(2))
+        assertEquals(15L * 60_000L, VendorGpsServiceGuard.nextCheckDelayMs(3))
+        assertEquals(VendorGpsServiceGuard.CHECK_INTERVAL_MS, VendorGpsServiceGuard.nextCheckDelayMs(4))
+    }
+
     @Test fun timedOutRootShellIsUnavailableAndReaped() = runBlocking {
         val process = NeverExitingProcess()
         val runner = RootCommandRunner(

@@ -677,6 +677,7 @@ class SlideshowViewModel(
                 nativeMemoryHilMode = s.nativeMemoryHilMode,
                 memoryTier = services.memoryTier,
                 autoStartOnBoot = s.autoStartOnBoot,
+                showOverLockScreen = s.showOverLockScreen,
                 doubleTapPauseTimeoutMinutes = s.doubleTapPauseTimeoutMinutes,
                 batteryProtectionEnabled = s.batteryProtectionEnabled,
                 stopLeakingGpsService = s.stopLeakingGpsService,
@@ -4738,7 +4739,10 @@ class SlideshowViewModel(
         val hidden = runCatching { services.photoDao.hiddenCount() }.getOrDefault(0)
         val favorites = runCatching { services.photoDao.favoriteCountAll() }.getOrDefault(0)
         val failed = runCatching {
-            services.photoDao.failedOrUnsupportedCount(currentMaxFailures(), heifFlag)
+            services.photoDao.decodeFailedCount(currentMaxFailures())
+        }.getOrDefault(0)
+        val unsupported = runCatching {
+            services.photoDao.unsupportedFormatCount(currentMaxFailures(), heifFlag)
         }.getOrDefault(0)
         val local = runCatching { services.photoDao.countForSource(ServiceLocator.SOURCE_LOCAL_UPLOADS) }.getOrDefault(0)
         val free = services.localUploadSource.directory.usableSpace.coerceAtLeast(0L)
@@ -4756,9 +4760,6 @@ class SlideshowViewModel(
             }
             if (shuffle.quarantinedPhotos > 0) {
                 add("${shuffle.quarantinedPhotos} photos are quarantined after repeated preparation failures.")
-            }
-            if (shuffle.lastRecoveryEpochMs != null) {
-                add("An interrupted shuffle reservation was recovered without introducing a duplicate.")
             }
             if (_state.value.stalePlayback) add("The network photo source is offline; cached photos are playing.")
         }
@@ -4780,6 +4781,7 @@ class SlideshowViewModel(
                 hiddenPhotos = hidden,
                 favoritePhotos = favorites,
                 failedPhotos = failed,
+                unsupportedPhotos = unsupported,
                 localUploadPhotos = local,
                 freeStorageBytes = free,
                 recommendations = recommendations,
@@ -4805,6 +4807,10 @@ class SlideshowViewModel(
 
     fun setAutoStartOnBoot(value: Boolean) {
         viewModelScope.launch { services.settings.update { it.copy(autoStartOnBoot = value) } }
+    }
+
+    fun setShowOverLockScreen(value: Boolean) {
+        viewModelScope.launch { services.settings.update { it.copy(showOverLockScreen = value) } }
     }
 
     fun setDoubleTapPauseTimeoutMinutes(minutes: Int) {

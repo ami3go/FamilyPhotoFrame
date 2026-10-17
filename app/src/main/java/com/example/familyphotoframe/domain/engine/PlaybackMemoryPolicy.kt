@@ -57,6 +57,8 @@ data class PlaybackMemoryState(
      * grows native PSS by tens of MiB (fonts, GL, SQLite, decoder pools) and is not a trend.
      */
     val nativeGrowthWarmedUp: Boolean = false,
+    /** Latest raw native-PSS samples before the current one, for the settled-level filter. */
+    val nativeRecentSamplesBytes: List<Long> = emptyList(),
     /** A native critical condition remains latched until two measured plateau windows. */
     val nativeCriticalLatched: Boolean = false,
     val nativeCriticalSinceElapsedMs: Long = 0L,
@@ -193,6 +195,8 @@ object PlaybackMemoryPolicy {
     const val NATIVE_GROWTH_CRITICAL_RATE_KB_PER_MIN = 64
     const val NATIVE_GROWTH_CRITICAL_STREAK = 3
     const val NATIVE_STABLE_WINDOWS_TO_RELEASE = 2
+    /** One-minute samples whose minimum is the settled native level used for trends. */
+    const val NATIVE_SETTLE_SAMPLES = 3
 
     const val GUARDED_RECOVERY_HOLD_MS = 3L * 60_000L
     const val CRITICAL_RECOVERY_HOLD_MS = 5L * 60_000L
@@ -496,6 +500,9 @@ object PlaybackMemoryPolicy {
             nativeGrowthWindowBaselineBytes = nativeAssessment.windowBaselineBytes,
             nativeGrowthWindowStartedElapsedMs = nativeAssessment.windowStartedElapsedMs,
             nativeGrowthWarmedUp = nativeAssessment.warmedUp,
+            nativeRecentSamplesBytes = nativePssBytes?.takeIf { it > 0L }
+                ?.let { (previous.nativeRecentSamplesBytes + it).takeLast(NATIVE_SETTLE_SAMPLES - 1) }
+                ?: previous.nativeRecentSamplesBytes,
             nativeCriticalLatched = nativeCriticalLatched,
             nativeCriticalSinceElapsedMs = nativeCriticalSince,
             nativeStableWindowStreak = nativeStableWindowStreak,
@@ -603,7 +610,12 @@ object PlaybackMemoryPolicy {
         nativePssBytes: Long,
         nowElapsedMs: Long,
     ): NativeGrowthAssessment {
-        val current = nativePssBytes.coerceAtLeast(0L)
+        val raw = nativePssBytes.coerceAtLeast(0L)
+        // A single decode can lift native PSS by several MiB for one sample and fall straight
+        // back (V80: +4.8 MiB at 09:51, gone a minute later, latched CRITICAL). Trends are
+        // judged on the settled level, the minimum of the latest samples: a lone spike is not
+        // growth, while a real leak lifts every sample and still registers.
+        val current = if (raw == 0L) 0L else (previous.nativeRecentSamplesBytes + raw).min()
         val now = nowElapsedMs.coerceAtLeast(0L)
         val needsBaseline = current == 0L ||
             previous.nativeGrowthWindowBaselineBytes <= 0L ||
@@ -611,7 +623,7 @@ object PlaybackMemoryPolicy {
             now < previous.nativeGrowthWindowStartedElapsedMs
         if (needsBaseline) {
             return NativeGrowthAssessment(
-                nativePssBytes = current,
+                nativePssBytes = raw,
                 growthBytes = 0L,
                 growthRateKbPerMin = 0,
                 streak = if (current == 0L) 0 else previous.nativeGrowthStreak,
@@ -630,7 +642,7 @@ object PlaybackMemoryPolicy {
             // rebaseline once it has lasted a full window and judge only later windows.
             val warmupDone = elapsedMs >= NATIVE_GROWTH_MIN_WINDOW_MS
             return NativeGrowthAssessment(
-                nativePssBytes = current,
+                nativePssBytes = raw,
                 growthBytes = 0L,
                 growthRateKbPerMin = 0,
                 streak = 0,
@@ -657,7 +669,7 @@ object PlaybackMemoryPolicy {
         val closesWindow = growing || elapsedMs >= NATIVE_GROWTH_MAX_WINDOW_MS
         if (!closesWindow) {
             return NativeGrowthAssessment(
-                nativePssBytes = current,
+                nativePssBytes = raw,
                 growthBytes = growthBytes,
                 growthRateKbPerMin = rateKbPerMin,
                 streak = previous.nativeGrowthStreak,
@@ -692,7 +704,7 @@ object PlaybackMemoryPolicy {
             else -> ExternalSignal(ExternalLevel.NONE, PlaybackMemoryPressureSource.NONE)
         }
         return NativeGrowthAssessment(
-            nativePssBytes = current,
+            nativePssBytes = raw,
             growthBytes = growthBytes,
             growthRateKbPerMin = rateKbPerMin,
             streak = streak,

@@ -323,13 +323,8 @@ class PlaybackMemoryPolicyTest {
         assertTrue(state.nativeGrowthWarmedUp)
         repeat(PlaybackMemoryPolicy.NATIVE_GROWTH_CRITICAL_STREAK) { index ->
             now += PlaybackMemoryPolicy.NATIVE_GROWTH_MIN_WINDOW_MS
-            state = PlaybackMemoryPolicy.sample(
-                previous = state,
-                heapUsedBytes = heap / 2L,
-                heapMaxBytes = heap,
-                nowElapsedMs = now,
-                nativePssBytes = baseNative + (index.toLong() + 1L) * 3L * 1024L * 1024L,
-            )
+            // A leak lifts every one-minute sample, so the settled level follows it.
+            state = sampleSettled(state, now, baseNative + (index.toLong() + 1L) * 3L * 1024L * 1024L)
         }
 
         assertEquals(PlaybackMemoryLevel.CRITICAL, state.level)
@@ -362,6 +357,43 @@ class PlaybackMemoryPolicyTest {
         )
     }
 
+    /** Feed the same native level for the settle window, ending at [at]. */
+    private fun sampleSettled(start: PlaybackMemoryState, at: Long, native: Long): PlaybackMemoryState {
+        var state = start
+        for (minutesBefore in (PlaybackMemoryPolicy.NATIVE_SETTLE_SAMPLES - 1) downTo 0) {
+            state = PlaybackMemoryPolicy.sample(
+                previous = state,
+                heapUsedBytes = heap / 2L,
+                heapMaxBytes = heap,
+                nowElapsedMs = at - minutesBefore * 60_000L,
+                nativePssBytes = native,
+            )
+        }
+        return state
+    }
+
+    @Test fun aOneSampleDecodeSpikeIsNotNativeGrowth() {
+        // V80 2026-10-17: flat 24.8 MiB, one 29.6 MiB sample at window close latched CRITICAL.
+        val flat = 24_782L * 1024L
+        var now = 1_000L
+        var state = PlaybackMemoryState(nativeGrowthWarmedUp = true)
+        for (minute in 0..PlaybackMemoryPolicy.NATIVE_GROWTH_MIN_WINDOW_MS / 60_000L + 1) {
+            val spike = minute == PlaybackMemoryPolicy.NATIVE_GROWTH_MIN_WINDOW_MS / 60_000L
+            state = PlaybackMemoryPolicy.sample(
+                previous = state,
+                heapUsedBytes = heap / 4L,
+                heapMaxBytes = heap,
+                nowElapsedMs = now,
+                nativePssBytes = if (spike) 29_614L * 1024L else flat,
+            )
+            assertEquals("minute $minute", PlaybackMemoryLevel.NORMAL, state.level)
+            assertFalse(state.nativeCriticalLatched)
+            now += 60_000L
+        }
+        // The raw sample is still reported as measured.
+        assertEquals(flat, state.nativePssBytes)
+    }
+
     @Test fun startupNativeGrowthIsWarmUpNotATrend() {
         var now = 1_000L
         var state = PlaybackMemoryPolicy.sample(
@@ -373,13 +405,7 @@ class PlaybackMemoryPolicyTest {
         )
         // Observed on the V80: ~2 MiB at process start, ~23 MiB once playback is warm.
         now += PlaybackMemoryPolicy.NATIVE_GROWTH_MIN_WINDOW_MS
-        state = PlaybackMemoryPolicy.sample(
-            previous = state,
-            heapUsedBytes = heap / 4L,
-            heapMaxBytes = heap,
-            nowElapsedMs = now,
-            nativePssBytes = 23L * 1024L * 1024L,
-        )
+        state = sampleSettled(state, now, 23L * 1024L * 1024L)
         assertEquals(PlaybackMemoryLevel.NORMAL, state.level)
         assertFalse(state.nativeCriticalLatched)
         assertEquals(23L * 1024L * 1024L, state.nativeGrowthWindowBaselineBytes)

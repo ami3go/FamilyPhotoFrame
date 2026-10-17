@@ -80,6 +80,7 @@ import kotlin.math.roundToInt
 internal fun DeviceSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
     SettingsSectionCard("Startup") {
         ToggleRow(stringResource(R.string.settings_autostart), state.autoStartOnBoot, vm::setAutoStartOnBoot)
+        ToggleRow(stringResource(R.string.settings_show_over_lock), state.showOverLockScreen, vm::setShowOverLockScreen)
     }
 
     SettingsSectionCard(stringResource(R.string.settings_pause_timeout_title)) {
