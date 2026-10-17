@@ -170,7 +170,7 @@ A new workstation has its own adb key, so the tablet will report `unauthorized` 
 ### 2. Verify the frame is actually playing — non-negotiable
 
 ```bash
-adb -s "$FRAME_ADB" shell "run-as com.example.familyphotoframe \
+adb -s "$FRAME_ADB" shell "run-as com.ami3go.familyphotoframe \
   cat files/diagnostics-slides/diagnostics.jsonl" | grep -c SLIDE_SELECTED
 ```
 
@@ -205,7 +205,7 @@ and field.
 The scripts are self-contained hprof parsers (no MAT required). Convert Android dumps first:
 
 ```bash
-adb -s "$FRAME_ADB" shell am dumpheap com.example.familyphotoframe /data/local/tmp/h.hprof
+adb -s "$FRAME_ADB" shell am dumpheap com.ami3go.familyphotoframe /data/local/tmp/h.hprof
 adb -s "$FRAME_ADB" pull /data/local/tmp/h.hprof raw.hprof
 "$ANDROID_HOME/platform-tools/hprof-conv" raw.hprof dump.hprof
 ```
@@ -213,9 +213,9 @@ adb -s "$FRAME_ADB" pull /data/local/tmp/h.hprof raw.hprof
 ## Reading the frame's own diagnostics
 
 ```bash
-adb shell "run-as com.example.familyphotoframe cat files/diagnostics/diagnostics.jsonl"
-adb shell "run-as com.example.familyphotoframe cat files/diagnostics-slides/diagnostics.jsonl"
-adb shell "run-as com.example.familyphotoframe cat files/datastore/app_settings.json"
+adb shell "run-as com.ami3go.familyphotoframe cat files/diagnostics/diagnostics.jsonl"
+adb shell "run-as com.ami3go.familyphotoframe cat files/diagnostics-slides/diagnostics.jsonl"
+adb shell "run-as com.ami3go.familyphotoframe cat files/datastore/app_settings.json"
 ```
 
 Both streams rotate into `.1.jsonl` / `.2.jsonl`. A field only reaches the file if it is listed

@@ -16,7 +16,7 @@ import java.util.Properties
  * [buildNumber] instead when the distinction has to be visible to the package manager.
  */
 val releaseYear = 26
-val buildNumber = 108
+val buildNumber = 109
 val testingVariant: Int? = 1
 
 plugins {
@@ -33,7 +33,10 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.familyphotoframe"
+        // The published identity. The Kotlin package (namespace) stays
+        // com.example.familyphotoframe: only the application ID is visible to the store and
+        // the package manager, and it must never change once released.
+        applicationId = "com.ami3go.familyphotoframe"
         // Spec §2 sets the *commercial* floor at API 24. This build lowers it to 21
         // by product decision; API 21-23 is an UNVALIDATED tier (see
         // KNOWN_LIMITATIONS.md) and must not be marketed until its test matrix
@@ -50,10 +53,9 @@ android {
 
     /**
      * Release signing is configured from `keystore.properties` (git-ignored) or from
-     * environment variables, so no key material is ever committed. When neither is
-     * present the release build falls back to the debug key and says so loudly — a
-     * developer building locally still gets an installable APK, but nobody can ship a
-     * debug-signed release without having seen the warning.
+     * environment variables, so no key material is ever committed. It fails closed: a
+     * release artifact cannot be built without the production key (see the task-graph
+     * check below), so a debug-signed release can never be produced by accident.
      */
     val keystorePropsFile = rootProject.file("keystore.properties")
     // `Properties` is imported at the top of this file on purpose: inside a
@@ -98,16 +100,8 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = if (hasReleaseSigning) {
-                signingConfigs.getByName("release")
-            } else {
-                logger.warn(
-                    "WARNING: no release signing config found (keystore.properties or " +
-                        "FPF_KEYSTORE* env vars). Falling back to the DEBUG key — this APK " +
-                        "must not be distributed. See BUILD_NOTES.md.",
-                )
-                signingConfigs.getByName("debug")
-            }
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
+            // Without the key there is deliberately no fallback; see releaseSigningGuard.
         }
     }
 
@@ -278,5 +272,35 @@ androidComponents {
         // (lazy) rather than tasks.named(...) because the assemble task may not be
         // registered yet at the moment this variant callback runs.
         tasks.matching { it.name == "assemble${capName}" }.configureEach { dependsOn(audit) }
+    }
+}
+
+/**
+ * Fail-closed release signing: building any release APK/AAB without the production key is
+ * an error instead of a silently debug-signed artifact. Debug builds, unit tests and lint
+ * (what CI runs) are unaffected.
+ */
+gradle.taskGraph.whenReady {
+    val wantsRelease = allTasks.any { task ->
+        task.project.name == "app" && task.name.endsWith("Release") &&
+            (task.name.startsWith("assemble") || task.name.startsWith("bundle") ||
+                task.name.startsWith("package"))
+    }
+    val keystoreProps = Properties().apply {
+        val file = rootProject.file("keystore.properties")
+        if (file.exists()) file.inputStream().use { load(it) }
+    }
+    val configured = listOf(
+        "storeFile" to "FPF_KEYSTORE",
+        "storePassword" to "FPF_KEYSTORE_PASSWORD",
+        "keyAlias" to "FPF_KEY_ALIAS",
+        "keyPassword" to "FPF_KEY_PASSWORD",
+    ).all { (name, env) -> !(keystoreProps.getProperty(name) ?: System.getenv(env)).isNullOrBlank() }
+    if (wantsRelease && !configured) {
+        throw GradleException(
+            "Release signing is not configured. Add keystore.properties (storeFile, " +
+                "storePassword, keyAlias, keyPassword) or the FPF_KEYSTORE* environment " +
+                "variables. Release builds never fall back to the debug key. See BUILD_NOTES.md.",
+        )
     }
 }

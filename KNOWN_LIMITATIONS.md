@@ -57,9 +57,8 @@ has never been exercised against a real NAS outage.
 
 ## Spike-posture build choices
 
-- **Release signing is not fail-closed.** R8/resource shrinking are enabled, but when no
-  production keystore is configured the release variant falls back to the debug key with
-  a warning. Such an artifact is for private testing only.
+- **Release signing is fail-closed** (resolved 2026-10-17): release tasks refuse to run
+  without the production keystore instead of falling back to the debug key.
 - **The current v0.11.0 increment has not completed a local Gradle build in the delivery
   environment.** Schema export is enabled and migrations through v5 are verified offline,
   but Room/KSP and Compose must be compiled again on the development workstation.
