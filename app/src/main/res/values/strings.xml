@@ -453,4 +453,7 @@
     <string name="settings_remembered_max_browsers">Maximum remembered browsers (1–32)</string>
     <string name="settings_remembered_max_days">Maximum expiry in days (1–3650)</string>
     <string name="settings_local_cache_max">Maximum size (GiB) — at least 2 GiB is always kept free for other apps</string>
+    <string name="settings_gps_service_title">GPS memory leak (V80)</string>
+    <string name="settings_gps_service_hint">Rooted V80 only. The tablet\'s built-in GPS service leaks memory until Android closes the frame after a day or two. The frame never uses location, so this keeps that service stopped. Other devices are left unchanged.</string>
+    <string name="settings_gps_service">Stop the leaking GPS service</string>
 </resources>

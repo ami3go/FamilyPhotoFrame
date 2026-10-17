@@ -1,8 +1,5 @@
 package com.example.familyphotoframe.platform.power
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-
 /**
  * Minimal root bridge for the one charge-control node verified on the V80.
  *
@@ -30,67 +27,39 @@ internal class RootChargeController(
         if (enabled) ENABLE_COMMAND else DISABLE_COMMAND,
     )
 
-    private suspend fun execute(command: String): Result = withContext(Dispatchers.IO) {
-        val process = runCatching {
-            processFactory(command)
-        }.getOrElse { return@withContext Result.Failure("root_unavailable") }
+    private val runner = RootCommandRunner(
+        processFactory = processFactory,
+        commandTimeoutMs = commandTimeoutMs,
+        pollIntervalMs = pollIntervalMs,
+        terminationGraceMs = terminationGraceMs,
+    )
 
-        try {
-            val exitCode = awaitExit(process, commandTimeoutMs)
-            if (exitCode == null) {
-                // Android 5.1 keeps a native process-waiter thread for each Process. Merely
-                // dropping the Process after destroy() can leave that waiter and its stack
-                // resident when a root wrapper is slow to acknowledge termination. Always
-                // close the pipes and give the wrapper a bounded reap window before return.
-                terminateAndReap(process)
-                return@withContext Result.Failure("root_timeout")
-            }
-            val output = runCatching { process.inputStream.bufferedReader().use { it.readText() } }
-                .getOrDefault("")
+    private suspend fun execute(command: String): Result = when (val outcome = runner.run(command)) {
+        RootCommandRunner.Outcome.Unavailable -> Result.Failure("root_unavailable")
+        RootCommandRunner.Outcome.TimedOut -> Result.Failure("root_timeout")
+        is RootCommandRunner.Outcome.Exited -> {
+            val output = outcome.output
                 .lineSequence()
                 .map(String::trim)
                 .lastOrNull { it == "0" || it == "1" || it == "2" }
-            if (exitCode != 0) {
-                return@withContext Result.Failure(
-                    when (exitCode) {
+            if (outcome.exitCode != 0) {
+                Result.Failure(
+                    when (outcome.exitCode) {
                         IDENTITY_MISMATCH_EXIT -> "wrong_device"
                         NODE_UNAVAILABLE_EXIT -> "charge_control_unavailable"
                         EXTERNAL_CONTROL_EXIT -> "charge_control_busy"
                         else -> "root_command_failed"
                     },
                 )
+            } else {
+                when (output) {
+                    "1" -> Result.Success(State.ENABLED)
+                    "0" -> Result.Success(State.DISABLED)
+                    "2" -> Result.Success(State.THROTTLED)
+                    else -> Result.Failure("invalid_charge_state")
+                }
             }
-            when (output) {
-                "1" -> Result.Success(State.ENABLED)
-                "0" -> Result.Success(State.DISABLED)
-                "2" -> Result.Success(State.THROTTLED)
-                else -> Result.Failure("invalid_charge_state")
-            }
-        } finally {
-            closeProcessStreams(process)
         }
-    }
-
-    private fun awaitExit(process: Process, timeoutMs: Long): Int? {
-        val deadlineNanos = System.nanoTime() + timeoutMs * 1_000_000L
-        while (System.nanoTime() < deadlineNanos) {
-            runCatching { process.exitValue() }.getOrNull()?.let { return it }
-            Thread.sleep(pollIntervalMs)
-        }
-        return runCatching { process.exitValue() }.getOrNull()
-    }
-
-    private fun terminateAndReap(process: Process) {
-        closeProcessStreams(process)
-        runCatching { process.destroy() }
-        awaitExit(process, terminationGraceMs)
-        closeProcessStreams(process)
-    }
-
-    private fun closeProcessStreams(process: Process) {
-        runCatching { process.outputStream.close() }
-        runCatching { process.inputStream.close() }
-        runCatching { process.errorStream.close() }
     }
 
     companion object {
@@ -107,9 +76,7 @@ internal class RootChargeController(
         const val MAX_NODE =
             "/sys/class/power_supply/dollar_cove_charger/charge_control_limit_max"
         const val IDENTITY_GUARD =
-            "serial=\$(getprop ro.serialno); boot=\$(getprop ro.boot.serialno); " +
-                "{ [ \"\$serial\" = \"Type1000123456\" ] || " +
-                "[ \"\$boot\" = \"Type1000123456\" ]; } || exit 41; " +
+            RootCommandRunner.V80_IDENTITY_GUARD +
                 "[ -r \"$NODE\" ] && [ -r \"$MAX_NODE\" ] || exit 42; "
         const val READ_VALUES =
             "limit=\$(cat \"$NODE\"); max=\$(cat \"$MAX_NODE\"); " +

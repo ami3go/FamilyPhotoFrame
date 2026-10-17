@@ -172,6 +172,15 @@ class App : Application() {
             diagnostics = services.diagnostics,
             scope = appScope,
         ).also { it.start() }
+        com.example.familyphotoframe.platform.power.VendorGpsServiceGuard(
+            settings = services.settings,
+            diagnostics = services.diagnostics,
+            scope = appScope,
+        ).start()
+        scheduleForegroundRecovery(
+            deviceReboot = processStartClassification.kind ==
+                com.example.familyphotoframe.data.diagnostics.ProcessStartKind.DEVICE_REBOOT,
+        )
         startMainThreadWatchdog()
         appScope.launch {
             reportCompletedMemoryProcessRecovery()
@@ -747,6 +756,45 @@ class App : Application() {
         flushSucceeded()
         delay(MEMORY_RESTART_FLUSH_GRACE_MS)
         Process.killProcess(Process.myPid())
+    }
+
+    /**
+     * Reopen the slideshow when this process was started by something other than the
+     * activity (for example the battery-care alarm) after the visible frame was killed.
+     */
+    private fun scheduleForegroundRecovery(deviceReboot: Boolean) {
+        val store = com.example.familyphotoframe.platform.ForegroundIntentStore(this)
+        if (!store.wasShowing() || deviceReboot) return
+        var activityStarted = false
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            override fun onActivityCreated(activity: android.app.Activity, state: android.os.Bundle?) {
+                activityStarted = true
+            }
+            override fun onActivityStarted(activity: android.app.Activity) = Unit
+            override fun onActivityResumed(activity: android.app.Activity) = Unit
+            override fun onActivityPaused(activity: android.app.Activity) = Unit
+            override fun onActivityStopped(activity: android.app.Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) = Unit
+            override fun onActivityDestroyed(activity: android.app.Activity) = Unit
+        })
+        android.os.Handler(Looper.getMainLooper()).postDelayed({
+            val relaunch = com.example.familyphotoframe.platform.ForegroundRelaunchPolicy.shouldRelaunch(
+                wasShowing = store.wasShowing(),
+                deviceReboot = deviceReboot,
+                activityStartedThisProcess = activityStarted,
+            )
+            if (!relaunch) return@postDelayed
+            services.diagnostics.logEvent(
+                "FOREGROUND_RELAUNCHED",
+                mapOf("reason" to "process_restarted_without_activity"),
+                DiagnosticContext(origin = DiagnosticOrigin.RECOVERY),
+            )
+            runCatching {
+                startActivity(
+                    Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+        }, com.example.familyphotoframe.platform.ForegroundRelaunchPolicy.RELAUNCH_CHECK_DELAY_MS)
     }
 
     @Suppress("DEPRECATION")

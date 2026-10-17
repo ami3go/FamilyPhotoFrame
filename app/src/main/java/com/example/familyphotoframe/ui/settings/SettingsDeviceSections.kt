@@ -122,6 +122,19 @@ internal fun DeviceSettings(state: SlideshowUiState, vm: SlideshowViewModel) {
         )
     }
 
+    SettingsSectionCard(stringResource(R.string.settings_gps_service_title)) {
+        Text(
+            stringResource(R.string.settings_gps_service_hint),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            fontSize = 14.sp,
+        )
+        ToggleRow(
+            stringResource(R.string.settings_gps_service),
+            state.stopLeakingGpsService,
+            vm::setStopLeakingGpsService,
+        )
+    }
+
     TestModeWarning(state, vm)
     LowMemorySettings(state, vm)
 }

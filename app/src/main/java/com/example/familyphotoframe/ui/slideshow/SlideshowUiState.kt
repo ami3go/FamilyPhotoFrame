@@ -86,6 +86,7 @@ data class SlideshowUiState(
     val autoStartOnBoot: Boolean = false,
     val doubleTapPauseTimeoutMinutes: Int = 5,
     val batteryProtectionEnabled: Boolean = false,
+    val stopLeakingGpsService: Boolean = true,
     /** Embedded web setup server settings (spec §15). */
     val web: com.example.familyphotoframe.data.settings.WebSettings =
         com.example.familyphotoframe.data.settings.WebSettings(),
