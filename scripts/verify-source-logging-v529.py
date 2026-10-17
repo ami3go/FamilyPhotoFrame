@@ -8,6 +8,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "app/src/main/java/com/example/familyphotoframe"
 VM = (MAIN / "ui/slideshow/SlideshowViewModel.kt").read_text(encoding="utf-8")
+# Feature areas the ViewModel delegates to live in ui/slideshow/viewmodel/.
+VM += "".join(p.read_text(encoding="utf-8") for p in sorted((MAIN / "ui/slideshow/viewmodel").glob("*.kt")))
 INDEXER = (MAIN / "data/index/Indexer.kt").read_text(encoding="utf-8")
 UPLOAD = (MAIN / "web/WebUploadManager.kt").read_text(encoding="utf-8")
 CATALOG = (MAIN / "data/diagnostics/DiagnosticEventSpec.kt").read_text(encoding="utf-8")

@@ -11,6 +11,8 @@ MAIN = (BASE / "MainActivity.kt").read_text(encoding="utf-8")
 ACTIVITY_DIAGNOSTICS = (BASE / "ActivityDiagnosticsController.kt").read_text(encoding="utf-8")
 IMMERSIVE = (BASE / "ImmersiveModeController.kt").read_text(encoding="utf-8")
 VM = (BASE / "ui/slideshow/SlideshowViewModel.kt").read_text(encoding="utf-8")
+# Feature areas the ViewModel delegates to live in ui/slideshow/viewmodel/.
+VM += "".join(p.read_text(encoding="utf-8") for p in sorted((BASE / "ui/slideshow/viewmodel").glob("*.kt")))
 
 
 def main() -> int:

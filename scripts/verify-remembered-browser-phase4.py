@@ -11,6 +11,8 @@ setup = (ROOT / 'app/src/main/java/com/example/familyphotoframe/web/SetupPage.kt
 settings_dir = ROOT / 'app/src/main/java/com/example/familyphotoframe/ui/settings'
 settings = ''.join(p.read_text() for p in sorted(settings_dir.glob('Settings*.kt')))
 vm = (ROOT / 'app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowViewModel.kt').read_text()
+# Feature areas the ViewModel delegates to live in ui/slideshow/viewmodel/.
+vm += "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / 'app/src/main/java/com/example/familyphotoframe/ui/slideshow/viewmodel').glob("*.kt")))
 state = (ROOT / 'app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowUiState.kt').read_text()
 controller = (ROOT / 'app/src/main/java/com/example/familyphotoframe/web/WebServerController.kt').read_text()
 

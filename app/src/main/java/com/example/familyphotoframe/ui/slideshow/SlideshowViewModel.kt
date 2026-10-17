@@ -92,6 +92,22 @@ import com.example.familyphotoframe.data.source.CertPinning
 import com.example.familyphotoframe.perf.FrameStats
 import com.example.familyphotoframe.perf.FrameStatsCollector
 import com.example.familyphotoframe.ui.slideshow.transition.TransitionEvent
+import com.example.familyphotoframe.ui.slideshow.viewmodel.ConfigTransferActions
+import com.example.familyphotoframe.ui.slideshow.viewmodel.SlideshowFeatureHost
+import com.example.familyphotoframe.ui.slideshow.viewmodel.SourceSettingsActions
+import com.example.familyphotoframe.ui.slideshow.viewmodel.LocalThumbnailCacheActions
+import com.example.familyphotoframe.ui.slideshow.viewmodel.WebControlActions
+import com.example.familyphotoframe.ui.slideshow.viewmodel.AutoRescanScheduler
+import com.example.familyphotoframe.ui.slideshow.viewmodel.BrightnessActions
+import com.example.familyphotoframe.ui.slideshow.viewmodel.OnThisDayActions
+import com.example.familyphotoframe.ui.slideshow.viewmodel.PlaylistActions
+import com.example.familyphotoframe.ui.slideshow.viewmodel.PhotoLibraryActions
+import com.example.familyphotoframe.ui.slideshow.viewmodel.PresentationReporter
+import com.example.familyphotoframe.ui.slideshow.viewmodel.diagnosticSourceKind
+import com.example.familyphotoframe.ui.slideshow.viewmodel.PlaybackPhotoAccess
+import com.example.familyphotoframe.ui.slideshow.viewmodel.WeatherActions
+import com.example.familyphotoframe.ui.slideshow.viewmodel.healthErrorCode
+import com.example.familyphotoframe.ui.slideshow.viewmodel.healthStateCode
 import com.example.familyphotoframe.data.source.SynologyApi
 import com.example.familyphotoframe.data.source.SynologyConnection
 import com.example.familyphotoframe.data.source.SynologyCredentials
@@ -176,7 +192,6 @@ class SlideshowViewModel(
     private val _hostGeneration = MutableStateFlow(0L)
     val hostGeneration: StateFlow<Long> = _hostGeneration.asStateFlow()
     private val hostLifecycleGate = HostLifecycleGate()
-    private val webPinRegenerationInFlight = AtomicBoolean(false)
     private var engineOwnerToken: Long = 0L
     private var webControlsOwnerToken: Long = 0L
 
@@ -208,6 +223,29 @@ class SlideshowViewModel(
 
     private val _fileRequests = MutableSharedFlow<FileRequest>(extraBufferCapacity = 1)
     val fileRequests: SharedFlow<FileRequest> = _fileRequests.asSharedFlow()
+
+    private val featureHost = SlideshowFeatureHost(services, appContext, viewModelScope, _state)
+    private val configTransferActions = ConfigTransferActions(featureHost, _fileRequests) { trigger, transform ->
+        updateSettingsAndRefresh(trigger, transform = transform)
+    }
+    private val sourceSettingsActions = SourceSettingsActions(
+        featureHost,
+        updateSettingsAndRefresh = { trigger, transform ->
+            updateSettingsAndRefresh(trigger, transform = transform)
+        },
+        setPendingSynologyOtp = { pendingSynologyOtp = it },
+    )
+    private val webControlActions = WebControlActions(featureHost)
+    private val thumbnailCacheActions = LocalThumbnailCacheActions(featureHost)
+    private val playlistActions = PlaylistActions(featureHost)
+    private val brightnessActions = BrightnessActions(featureHost)
+    private val autoRescan = AutoRescanScheduler(featureHost) { trigger, origin, awaitCompletion ->
+        requestSourceRefresh(trigger = trigger, origin = origin, awaitCompletion = awaitCompletion)
+    }
+    private val onThisDayActions = OnThisDayActions(featureHost) { currentPlaybackSourceIds() }
+    private val weatherActions = WeatherActions(featureHost) { lastSettings }
+    private val presentationReporter = PresentationReporter(featureHost)
+    private val photoLibraryActions = PhotoLibraryActions(featureHost) { currentPlaybackSourceIds() }
 
     private val engine = services.engine
     private val diagnostics = services.diagnostics
@@ -272,6 +310,13 @@ class SlideshowViewModel(
      * loser cleanup, and teardown so credential suspensions cannot strand duplicates.
      */
     private val remoteSources = RemoteSourceRegistry()
+    private val photoAccess = PlaybackPhotoAccess(
+        featureHost,
+        remoteSources = remoteSources,
+        isRemotePrimaryCachedOnly = { remotePrimaryCachedOnly },
+        currentRemotePrimarySourceId = { remotePrimarySourceId },
+        maxFailures = { currentMaxFailures() },
+    )
 
     /**
      * True while a remote primary is unreachable and the frame is playing its already
@@ -314,19 +359,10 @@ class SlideshowViewModel(
     private val recoveryRuntimes = mutableMapOf<String, RecoveryRuntime>()
     private var sourceApplyJob: Job? = null
     private var settingsCollectorJob: Job? = null
-    private var rescanScheduleJob: kotlinx.coroutines.Job? = null
-    private var playlistScheduleJob: kotlinx.coroutines.Job? = null
-    private var brightnessJob: kotlinx.coroutines.Job? = null
     private var healthJob: kotlinx.coroutines.Job? = null
-    private var onThisDayJob: kotlinx.coroutines.Job? = null
     /** Starts playback from a partially built index; see [startEarlyPlaybackWatcher]. */
     private var earlyPlaybackJob: Job? = null
-    @Volatile private var ambientLux: Float? = null
-    @Volatile private var ambientSensorAvailable: Boolean = false
     private var activePlaylistSourceFilter: Set<String> = emptySet()
-
-    /** Memory-only: held between the user typing it and the SAF callback completing. */
-    @Volatile private var pendingPassphrase: String? = null
 
     /**
      * 2FA one-time code for the next Synology login. Held in memory only and cleared
@@ -345,7 +381,7 @@ class SlideshowViewModel(
             engine.ui.collect { model ->
                 _state.update { it.copy(engine = model) }
                 onDisplayedPhotoChanged(model)
-                publishDiagnosticPlayback(_state.value)
+                presentationReporter.publishDiagnosticPlayback(_state.value)
             }
         }
         // Single source of truth for config; react to changes.
@@ -372,12 +408,12 @@ class SlideshowViewModel(
         // Weather updates the overlay when a new snapshot lands, and is re-evaluated
         // periodically so a snapshot can age into "stale" and then out of view.
         viewModelScope.launch {
-            services.weather.snapshot.collect { refreshWeatherText() }
+            services.weather.snapshot.collect { weatherActions.refreshWeatherText() }
         }
         viewModelScope.launch {
             while (isActive) {
                 delay(WEATHER_RECHECK_MS)
-                refreshWeatherText()
+                weatherActions.refreshWeatherText()
             }
         }
     }
@@ -417,85 +453,13 @@ class SlideshowViewModel(
             return null
         }
 
-        override suspend fun testSavedSource(): String {
-            val s = services.settings.settings.first()
-            val configRevision = diagnosticToken(SourceRuntimeSignature.of(s), "config")
-            return when (s.source.kind) {
-                ActiveSourceKind.SMB -> {
-                    val smb = s.source.smb ?: return appContext.getString(R.string.msg_smb_missing)
-                    val password = services.secretStore.reveal(smb.credentialRef) ?: ""
-                    val src = services.smbSource(
-                        SmbConnection(smb.host, smb.share, smb.path),
-                        SmbCredentials(smb.domain, smb.user, password),
-                    )
-                    // One-shot test: release the session instead of pooling it.
-                    try {
-                        appContext.getString(smbHealthMessageRes(sourceTestWithDiagnostics(
-                            src, "SMB", 8_000, DiagnosticOrigin.WEB_UI, configRevision,
-                        )))
-                    } finally {
-                        runCatching { src.shutdown() }
-                    }
-                }
-                ActiveSourceKind.SYNOLOGY -> {
-                    val syn = s.source.synology ?: return appContext.getString(R.string.msg_syn_error)
-                    val password = services.secretStore.reveal(syn.credentialRef) ?: ""
-                    val src = services.synologySource(
-                        SynologyConnection(
-                            baseUrl = syn.baseUrl,
-                            folderPath = syn.folderPath,
-                            useThumbnails = syn.useThumbnails,
-                            thumbnailSize = syn.thumbnailSize,
-                            pinnedCertSha256 = syn.pinnedCertSha256,
-                        ),
-                        SynologyCredentials(syn.user, password),
-                    )
-                    try {
-                        appContext.getString(synologyHealthMessageRes(sourceTestWithDiagnostics(
-                            src, "SYNOLOGY", 10_000, DiagnosticOrigin.WEB_UI, configRevision,
-                        )))
-                    } finally {
-                        runCatching { src.shutdown() }
-                    }
-                }
-                ActiveSourceKind.LOCAL_SAF -> {
-                    val uri = s.source.treeUri ?: return appContext.getString(R.string.msg_folder_missing)
-                    val saf = services.safSource(Uri.parse(uri))
-                    when (sourceTestWithDiagnostics(
-                        saf, "LOCAL_SAF", 5_000, DiagnosticOrigin.WEB_UI, configRevision,
-                    )) {
-                        is SourceHealth.Ok -> appContext.getString(R.string.web_source_ok)
-                        is SourceHealth.NeedsPermission -> appContext.getString(R.string.msg_permission_revoked)
-                        is SourceHealth.Missing -> appContext.getString(R.string.msg_folder_missing)
-                        else -> appContext.getString(R.string.msg_provider_error)
-                    }
-                }
-                ActiveSourceKind.WEBDAV -> {
-                    val dav = s.source.webdav ?: return appContext.getString(R.string.msg_dav_error)
-                    val password = services.secretStore.reveal(dav.credentialRef) ?: ""
-                    val src = services.webDavSource(
-                        WebDavConnection(
-                            baseUrl = dav.baseUrl,
-                            rootPath = dav.rootPath,
-                            folderPath = dav.folderPath,
-                            pinnedCertSha256 = dav.pinnedCertSha256,
-                        ),
-                        WebDavCredentials(dav.user, password),
-                    )
-                    appContext.getString(webDavHealthMessageRes(sourceTestWithDiagnostics(
-                        src, "WEBDAV", 10_000, DiagnosticOrigin.WEB_UI, configRevision,
-                    )))
-                }
-                ActiveSourceKind.NONE, ActiveSourceKind.SAMPLES ->
-                    appContext.getString(R.string.web_source_samples)
-            }
-        }
+        override suspend fun testSavedSource(): String = sourceSettingsActions.testSavedSource()
 
         override suspend fun previewFolderOnce(folderKey: String): String? =
-            previewFolderOnceByKey(folderKey)
+            photoLibraryActions.previewFolderOnceByKey(folderKey)
 
         override suspend fun useFolderInActivePlaylist(folderKey: String): String? =
-            useFolderInActivePlaylistByKey(folderKey)
+            photoLibraryActions.useFolderInActivePlaylistByKey(folderKey)
 
         override suspend fun clearMediaCache(): String? {
             services.mediaCache.clear()
@@ -510,7 +474,7 @@ class SlideshowViewModel(
         }
 
         override suspend fun previewOnThisDay(): String? =
-            this@SlideshowViewModel.triggerOnThisDay(preview = true)
+            onThisDayActions.triggerOnThisDay(preview = true)
 
         override suspend fun rebuildLocalThumbnailCache(): String? {
             this@SlideshowViewModel.rebuildLocalThumbnailCache()
@@ -587,18 +551,18 @@ class SlideshowViewModel(
 
         cancelObsoleteIndexWork("factory-reset")
         val backgroundJobs = listOfNotNull(
-            rescanScheduleJob,
-            playlistScheduleJob,
-            brightnessJob,
+            autoRescan.rescanScheduleJob,
+            playlistActions.playlistScheduleJob,
+            brightnessActions.brightnessJob,
             healthJob,
             exifJob,
             contentHashJob,
         )
         backgroundJobs.forEach { it.cancel() }
         backgroundJobs.forEach { it.join() }
-        rescanScheduleJob = null
-        playlistScheduleJob = null
-        brightnessJob = null
+        autoRescan.rescanScheduleJob = null
+        playlistActions.playlistScheduleJob = null
+        brightnessActions.brightnessJob = null
         healthJob = null
         exifJob = null
         contentHashJob = null
@@ -628,22 +592,26 @@ class SlideshowViewModel(
 
     private suspend fun onSettings(s: AppSettings) {
         val previousSettings = lastSettings
-        if (playlistScheduleConfig(lastSettings?.playlists) != playlistScheduleConfig(s.playlists)) {
-            restartPlaylistScheduleWatcher()
+        if (playlistActions.playlistScheduleConfig(lastSettings?.playlists) !=
+            playlistActions.playlistScheduleConfig(s.playlists)
+        ) {
+            playlistActions.restartPlaylistScheduleWatcher()
         }
         if (lastSettings?.brightnessAutomation != s.brightnessAutomation) {
-            restartBrightnessWatcher(s.brightnessAutomation)
+            brightnessActions.restartBrightnessWatcher(s.brightnessAutomation)
         }
         // Deliberately compares only the configuration fields. Including
         // lastAutoRescanAtEpochMs would make the watcher cancel itself the instant it
         // recorded a run — mid-scan.
-        if (rescanConfigSig(lastSettings?.schedule) != rescanConfigSig(s.schedule)) {
-            restartRescanWatcher(s.schedule)
+        if (autoRescan.rescanConfigSig(lastSettings?.schedule) != autoRescan.rescanConfigSig(s.schedule)) {
+            autoRescan.restartRescanWatcher(s.schedule)
         }
-        if (onThisDayConfigSig(lastSettings?.onThisDay) != onThisDayConfigSig(s.onThisDay)) {
-            restartOnThisDayWatcher(s.onThisDay)
+        if (onThisDayActions.onThisDayConfigSig(lastSettings?.onThisDay) !=
+            onThisDayActions.onThisDayConfigSig(s.onThisDay)
+        ) {
+            onThisDayActions.restartOnThisDayWatcher(s.onThisDay)
         }
-        if (lastSettings?.weather != s.weather) restartWeather(s.weather)
+        if (lastSettings?.weather != s.weather) weatherActions.restartWeather(s.weather)
         val playlist = s.playlists.activePlaylist()
         activePlaylistSourceFilter = playlist.sourceIds
         val effectiveSelection = playlist.selectionMode ?: s.selectionMode
@@ -708,7 +676,7 @@ class SlideshowViewModel(
                 webUrl = services.webServer.url(),
             )
         }
-        publishDiagnosticPlayback(_state.value, transitionOverride = effectiveTransition.name)
+        presentationReporter.publishDiagnosticPlayback(_state.value, transitionOverride = effectiveTransition.name)
         services.setNativeMemoryHilMode(s.nativeMemoryHilMode)
         engine.setDiagnosticHold(s.nativeMemoryHilMode.holdPlayback)
         if (previousSettings?.nativeMemoryHilMode != s.nativeMemoryHilMode) {
@@ -1489,88 +1457,6 @@ class SlideshowViewModel(
         }
     }
 
-    private fun healthStateCode(health: SourceHealth): String = when (health) {
-        is SourceHealth.Ok -> "OK"
-        is SourceHealth.NeedsPermission -> "NEEDS_PERMISSION"
-        is SourceHealth.Missing -> "MISSING"
-        is SourceHealth.ProviderError -> "PROVIDER_ERROR"
-        is SourceHealth.Unavailable -> "UNAVAILABLE"
-    }
-
-    private fun healthErrorCode(health: SourceHealth): String = when (health) {
-        is SourceHealth.Ok -> "NONE"
-        is SourceHealth.NeedsPermission -> "AUTH_OR_PERMISSION_REQUIRED"
-        is SourceHealth.Missing -> "SOURCE_MISSING"
-        is SourceHealth.Unavailable -> "HOST_UNAVAILABLE"
-        is SourceHealth.ProviderError -> when (health.detail) {
-            "two_factor_required" -> "TWO_FACTOR_REQUIRED"
-            "auth_failed" -> "AUTH_FAILED"
-            "CertUntrusted" -> "CERT_UNTRUSTED"
-            "HostUnreachable" -> "HOST_UNAVAILABLE"
-            "not_webdav" -> "NOT_WEBDAV"
-            else -> "PROVIDER_ERROR"
-        }
-    }
-
-    private suspend fun sourceTestWithDiagnostics(
-        source: PhotoSource,
-        sourceKind: String,
-        timeoutMs: Long,
-        origin: DiagnosticOrigin,
-        configRevision: String,
-    ): SourceHealth {
-        val operation = diagnostics.operations.start("SOURCE_TEST", origin)
-        val started = SystemClock.elapsedRealtime()
-        val base = mapOf(
-            "sourceKind" to sourceKind,
-            "trigger" to "SOURCE_TEST",
-            "configRevision" to configRevision,
-            "timeoutMs" to timeoutMs.toString(),
-            "stage" to "TESTING",
-        )
-        diagnostics.logEvent("SOURCE_TEST_STARTED", base, operation.context())
-        try {
-            val health = source.healthCheck(timeoutMs)
-            diagnostics.logEvent(
-                if (health is SourceHealth.Ok) "SOURCE_TEST_COMPLETED" else "SOURCE_TEST_FAILED",
-                base + mapOf(
-                    "durationMs" to (SystemClock.elapsedRealtime() - started).coerceAtLeast(0L).toString(),
-                    "healthState" to healthStateCode(health),
-                    "outcome" to if (health is SourceHealth.Ok) "HEALTHY" else "UNAVAILABLE",
-                    "errorCode" to healthErrorCode(health),
-                ),
-                operation.context(),
-            )
-            return health
-        } catch (cancelled: CancellationException) {
-            diagnostics.logEvent(
-                "SOURCE_TEST_FAILED",
-                base + mapOf(
-                    "durationMs" to (SystemClock.elapsedRealtime() - started).coerceAtLeast(0L).toString(),
-                    "outcome" to "CANCELLED",
-                    "errorCode" to "CANCELLED",
-                    "cancellationReason" to "CALLER_CANCELLED",
-                ),
-                operation.context(),
-            )
-            throw cancelled
-        } catch (error: Exception) {
-            diagnostics.logEvent(
-                "SOURCE_TEST_FAILED",
-                base + mapOf(
-                    "durationMs" to (SystemClock.elapsedRealtime() - started).coerceAtLeast(0L).toString(),
-                    "outcome" to "FAILED",
-                    "errorClass" to error.javaClass.simpleName,
-                    "errorCode" to "SOURCE_TEST_EXCEPTION",
-                ),
-                operation.context(),
-            )
-            throw error
-        } finally {
-            diagnostics.operations.finish(operation.operationId)
-        }
-    }
-
     /**
      * Rebuild the engine's primary pool from [primaryPoolIds], the set of sources
      * currently believed healthy.
@@ -1915,26 +1801,6 @@ class SlideshowViewModel(
         "trigger" to request.trigger.name,
         "configRevision" to request.configRevision,
     )
-
-    private fun diagnosticSourceKind(source: PhotoSource): String = when (source.type) {
-        com.example.familyphotoframe.data.source.SourceType.LOCAL_SAF_FOLDER -> "LOCAL_SAF"
-        com.example.familyphotoframe.data.source.SourceType.APP_PRIVATE_BUILTIN -> "SAMPLES"
-        com.example.familyphotoframe.data.source.SourceType.APP_PRIVATE_UPLOADS -> "LOCAL_UPLOADS"
-        com.example.familyphotoframe.data.source.SourceType.SMB_SOURCE -> "SMB"
-        com.example.familyphotoframe.data.source.SourceType.SYNOLOGY_FILE_STATION -> "SYNOLOGY"
-        com.example.familyphotoframe.data.source.SourceType.WEBDAV -> "WEBDAV"
-    }
-
-    private fun diagnosticSourceKind(sourceId: String): String = when (sourceId) {
-        ServiceLocator.SOURCE_LOCAL_SAF -> "LOCAL_SAF"
-        ServiceLocator.SOURCE_LOCAL_UPLOADS -> "LOCAL_UPLOADS"
-        ServiceLocator.SOURCE_SMB -> "SMB"
-        ServiceLocator.SOURCE_SYNOLOGY -> "SYNOLOGY"
-        ServiceLocator.SOURCE_WEBDAV -> "WEBDAV"
-        ServiceLocator.SOURCE_FALLBACK -> "SAMPLES"
-        else -> "UNKNOWN"
-    }
-
 
     /**
      * Hashing is outside the scan and render critical paths. Repeated scans replace the
@@ -2285,288 +2151,27 @@ class SlideshowViewModel(
 
     // ---- configuration backup / restore (spec §7.0) ----
 
-    fun requestExportConfig() {
-        _fileRequests.tryEmit(
-            FileRequest(FileOp.EXPORT_CONFIG, ConfigTransfer.suggestedFileName(dateStamp()))
-        )
-    }
+    fun requestExportConfig() = configTransferActions.requestExportConfig()
 
-    fun requestImportConfig() {
-        _fileRequests.tryEmit(FileRequest(FileOp.IMPORT_CONFIG, ""))
-    }
+    fun requestImportConfig() = configTransferActions.requestImportConfig()
 
     /**
      * Export an encrypted bundle that DOES include the NAS password (spec §14.4).
      * The passphrase is held in memory only for the duration of the file operation and
      * is never persisted, logged, or placed in UI state.
      */
-    fun requestExportEncrypted(passphrase: String) {
-        if (passphrase.isBlank()) {
-            _state.update { it.copy(transientNotice = appContext.getString(R.string.msg_passphrase_required)) }
-            return
-        }
-        pendingPassphrase = passphrase
-        _fileRequests.tryEmit(
-            FileRequest(FileOp.EXPORT_ENCRYPTED, PortableBundle.suggestedFileName(dateStamp()))
-        )
-    }
+    fun requestExportEncrypted(passphrase: String) = configTransferActions.requestExportEncrypted(passphrase)
 
-    fun requestImportEncrypted(passphrase: String) {
-        if (passphrase.isBlank()) {
-            _state.update { it.copy(transientNotice = appContext.getString(R.string.msg_passphrase_required)) }
-            return
-        }
-        pendingPassphrase = passphrase
-        _fileRequests.tryEmit(FileRequest(FileOp.IMPORT_ENCRYPTED, ""))
-    }
+    fun requestImportEncrypted(passphrase: String) = configTransferActions.requestImportEncrypted(passphrase)
 
-    fun requestExportSupportBundle() {
-        _fileRequests.tryEmit(
-            FileRequest(FileOp.EXPORT_SUPPORT, DiagnosticsDownloadNaming.fileName(System.currentTimeMillis()))
-        )
-    }
+    fun requestExportSupportBundle() = configTransferActions.requestExportSupportBundle()
 
     /** Write the chosen document. [uri] is null when the user cancelled. */
-    fun onExportTargetChosen(uri: Uri?, op: FileOp) {
-        if (uri == null) {
-            _state.update { it.copy(transientNotice = appContext.getString(R.string.msg_picker_cancelled)) }
-            return
-        }
-        viewModelScope.launch {
-            if (op == FileOp.EXPORT_SUPPORT) {
-                val current = services.settings.settings.first()
-                val context = DiagnosticsBundleContext(
-                    appVersion = BuildConfig.VERSION_NAME,
-                    versionCode = BuildConfig.VERSION_CODE.toLong(),
-                    buildType = BuildConfig.BUILD_TYPE,
-                    sdkInt = Build.VERSION.SDK_INT,
-                    deviceModel = Build.MODEL,
-                    abi = Build.SUPPORTED_ABIS.firstOrNull().orEmpty(),
-                    sourceKind = current.source.kind.name,
-                    indexedCount = services.photoDao.count().toLong(),
-                    runtime = services.diagnosticRuntimeState.snapshot(),
-                )
-                val ok = withContext(services.dispatchers.io) {
-                    runCatching {
-                        appContext.contentResolver.openOutputStream(uri, "wt")?.use { output ->
-                            diagnostics.openDurableBundle(context).use { input -> input.copyTo(output) }
-                        } ?: error("no output stream")
-                    }.isSuccess
-                }
-                diagnostics.log(
-                    DiagnosticsLog.Category.APP,
-                    if (ok) "CONFIG_EXPORTED" else "CONFIG_EXPORT_FAILED",
-                    "format" to "diagnostics-jsonl",
-                )
-                _state.update {
-                    it.copy(transientNotice = appContext.getString(if (ok) R.string.msg_export_ok else R.string.msg_export_failed))
-                }
-                return@launch
-            }
-            val text = when (op) {
-                FileOp.EXPORT_CONFIG -> ConfigTransfer.export(
-                    settings = services.settings.settings.first(),
-                    appVersion = BuildConfig.VERSION_NAME,
-                    nowEpochMs = System.currentTimeMillis(),
-                )
-                FileOp.EXPORT_ENCRYPTED -> sealEncryptedBundle()
-                else -> null
-            }
-            if (text == null) {
-                pendingPassphrase = null
-                _state.update { it.copy(transientNotice = appContext.getString(R.string.msg_export_failed)) }
-                return@launch
-            }
-            val ok = withContext(services.dispatchers.io) {
-                runCatching {
-                    appContext.contentResolver.openOutputStream(uri, "wt")?.use {
-                        it.write(text.toByteArray(Charsets.UTF_8))
-                    } ?: error("no output stream")
-                }.isSuccess
-            }
-            pendingPassphrase = null
-            val msg = if (ok) R.string.msg_export_ok else R.string.msg_export_failed
-            diagnostics.log(
-                DiagnosticsLog.Category.APP,
-                if (ok) "CONFIG_EXPORTED" else "CONFIG_EXPORT_FAILED",
-                op.name,
-            )
-            _state.update { it.copy(transientNotice = appContext.getString(msg)) }
-        }
-    }
+    fun onExportTargetChosen(uri: Uri?, op: FileOp) = configTransferActions.onExportTargetChosen(uri, op)
 
     /** Read and apply a previously exported configuration (plain or encrypted). */
-    fun onImportSourceChosen(uri: Uri?, op: FileOp = FileOp.IMPORT_CONFIG) {
-        if (uri == null) {
-            pendingPassphrase = null
-            _state.update { it.copy(transientNotice = appContext.getString(R.string.msg_picker_cancelled)) }
-            return
-        }
-        viewModelScope.launch {
-            val readResult = withContext(services.dispatchers.io) {
-                runCatching {
-                    appContext.contentResolver.openInputStream(uri)?.use {
-                        BoundedTextInput.readUtf8(it)
-                    } ?: throw IOException("no input stream")
-                }
-            }
-            val text = readResult.getOrElse { error ->
-                pendingPassphrase = null
-                val oversized = error is ImportTooLargeException
-                diagnostics.log(
-                    DiagnosticsLog.Category.APP,
-                    if (oversized) "CONFIG_IMPORT_TOO_LARGE" else "CONFIG_IMPORT_READ_FAILED",
-                    error.javaClass.simpleName,
-                )
-                _state.update {
-                    it.copy(
-                        transientNotice = appContext.getString(
-                            if (oversized) R.string.msg_import_too_large else R.string.msg_import_read_failed,
-                        )
-                    )
-                }
-                return@launch
-            }
-            if (op == FileOp.IMPORT_ENCRYPTED) {
-                applyEncryptedBundle(text)
-                return@launch
-            }
-            when (val parsed = withContext(services.dispatchers.default) { ConfigTransfer.parse(text) }) {
-                is ImportResult.Failed -> {
-                    diagnostics.log(
-                        DiagnosticsLog.Category.APP,
-                        "CONFIG_IMPORT_REJECTED",
-                        "reason" to parsed.reason.name,
-                    )
-                    _state.update {
-                        it.copy(transientNotice = appContext.getString(importFailureRes(parsed.reason)))
-                    }
-                }
-                is ImportResult.Ok -> {
-                    var needsPassword = false
-                    updateSettingsAndRefresh(SourceRefreshTrigger.CONFIG_IMPORTED) { current ->
-                        val merged = ConfigTransfer.merge(current, parsed.bundle.settings)
-                        needsPassword = ConfigTransfer.needsPasswordReentry(merged)
-                        merged
-                    }
-                    diagnostics.log(DiagnosticsLog.Category.APP, "CONFIG_IMPORTED", "")
-                    val msg = if (needsPassword) R.string.msg_import_ok_needs_password else R.string.msg_import_ok
-                    _state.update { it.copy(transientNotice = appContext.getString(msg)) }
-                }
-            }
-        }
-    }
-
-    /** Build the encrypted bundle, reading all portable secrets back out of the Keystore. */
-    private suspend fun sealEncryptedBundle(): String? {
-        val passphrase = pendingPassphrase ?: return null
-        val settings = services.settings.settings.first()
-        suspend fun reveal(ref: String?): String? =
-            ref?.takeIf { it.isNotBlank() }?.let { services.secretStore.reveal(it) }
-        val payload = PortableBundle.Payload(
-            settings = settings,
-            smbPassword = reveal(settings.source.smb?.credentialRef),
-            synologyPassword = reveal(settings.source.synology?.credentialRef),
-            webDavPassword = reveal(settings.source.webdav?.credentialRef),
-            weatherApiKey = reveal(settings.weather.apiKeyRef),
-        )
-        return withContext(services.dispatchers.default) {
-            PortableBundle.seal(
-                payload = payload,
-                passphrase = passphrase,
-                nowEpochMs = System.currentTimeMillis(),
-            )
-        }
-    }
-
-    /** Decrypt and apply a portable bundle, re-sealing its secrets under this device's Keystore. */
-    private suspend fun applyEncryptedBundle(text: String) {
-        val passphrase = pendingPassphrase
-        pendingPassphrase = null
-        if (passphrase == null) return
-
-        when (val opened = withContext(services.dispatchers.default) {
-            PortableBundle.open(text, passphrase)
-        }) {
-            is PortableBundle.OpenResult.Failed -> {
-                diagnostics.log(
-                    DiagnosticsLog.Category.APP,
-                    "BUNDLE_IMPORT_REJECTED",
-                    "reason" to opened.reason.name,
-                )
-                _state.update {
-                    it.copy(transientNotice = appContext.getString(bundleFailureRes(opened.reason)))
-                }
-            }
-            is PortableBundle.OpenResult.Ok -> {
-                val payload = opened.payload
-                val imported = payload.settings
-                val smb = imported.source.smb
-                val syn = imported.source.synology
-                val dav = imported.source.webdav
-
-                val smbRef = if (smb != null && !payload.smbPassword.isNullOrEmpty()) {
-                    CredentialPolicy.smbRef(smb).also {
-                        services.secretStore.store(it, "smb_password", payload.smbPassword)
-                    }
-                } else ""
-                val synRef = if (syn != null && !payload.synologyPassword.isNullOrEmpty()) {
-                    CredentialPolicy.synologyRef(syn).also {
-                        services.secretStore.store(it, "synology_password", payload.synologyPassword)
-                    }
-                } else ""
-                val davRef = if (dav != null && !payload.webDavPassword.isNullOrEmpty()) {
-                    CredentialPolicy.webDavRef(dav).also {
-                        services.secretStore.store(it, "webdav_password", payload.webDavPassword)
-                    }
-                } else ""
-                val weatherRef = if (!payload.weatherApiKey.isNullOrEmpty()) {
-                    CredentialPolicy.WEATHER_API_KEY_REF.also {
-                        services.secretStore.store(it, "weather_api_key", payload.weatherApiKey)
-                    }
-                } else ""
-
-                updateSettingsAndRefresh(SourceRefreshTrigger.ENCRYPTED_BUNDLE_IMPORTED) {
-                    imported.copy(
-                        source = imported.source.copy(
-                            smb = smb?.copy(credentialRef = smbRef),
-                            synology = syn?.copy(credentialRef = synRef),
-                            webdav = dav?.copy(credentialRef = davRef),
-                        ),
-                        weather = imported.weather.copy(apiKeyRef = weatherRef),
-                    )
-                }
-                diagnostics.log(DiagnosticsLog.Category.APP, "BUNDLE_IMPORTED", "")
-                _state.update { it.copy(transientNotice = appContext.getString(R.string.msg_bundle_import_ok)) }
-            }
-        }
-    }
-
-    private fun bundleFailureRes(reason: PortableBundle.OpenResult.Reason): Int = when (reason) {
-        PortableBundle.OpenResult.Reason.WRONG_PASSPHRASE_OR_CORRUPT -> R.string.msg_bundle_wrong_passphrase
-        PortableBundle.OpenResult.Reason.TOO_NEW -> R.string.msg_import_too_new
-        PortableBundle.OpenResult.Reason.EMPTY_PASSPHRASE -> R.string.msg_passphrase_required
-        PortableBundle.OpenResult.Reason.TOO_LARGE -> R.string.msg_import_too_large
-        PortableBundle.OpenResult.Reason.UNSAFE_PARAMETERS,
-        PortableBundle.OpenResult.Reason.UNSUPPORTED_ALGORITHM -> R.string.msg_bundle_unsafe
-        else -> R.string.msg_bundle_invalid
-    }
-
-    private fun importFailureRes(reason: ImportResult.Reason): Int = when (reason) {
-        ImportResult.Reason.TOO_NEW -> R.string.msg_import_too_new
-        ImportResult.Reason.TOO_LARGE -> R.string.msg_import_too_large
-        ImportResult.Reason.EMPTY, ImportResult.Reason.NOT_JSON,
-        ImportResult.Reason.NOT_A_FRAME_CONFIG -> R.string.msg_import_invalid
-    }
-
-    private fun dateStamp(): String {
-        val c = java.util.Calendar.getInstance()
-        return "%04d%02d%02d".format(
-            c.get(java.util.Calendar.YEAR),
-            c.get(java.util.Calendar.MONTH) + 1,
-            c.get(java.util.Calendar.DAY_OF_MONTH),
-        )
-    }
+    fun onImportSourceChosen(uri: Uri?, op: FileOp = FileOp.IMPORT_CONFIG) =
+        configTransferActions.onImportSourceChosen(uri, op)
 
     /** Called by the Activity after the SAF picker returns (uri == null on cancel). */
     fun onFolderPicked(uri: Uri?, displayName: String?) {
@@ -2598,12 +2203,7 @@ class SlideshowViewModel(
         }
     }
 
-    /**
-     * Resolve a Coil model for a photo. Local content URIs and files resolve
-     * immediately; remote items (SMB and Synology) are fetched through MediaCache to a
-     * verified local file, so Coil never sees a network URL or NAS-relative token.
-     * Returns either a ready model or a structured failure; the UI records the failure and advances.
-     */
+    /** Resolve a Coil model for a photo; see [PlaybackPhotoAccess.resolveModel]. */
     internal suspend fun resolveModel(
         display: DisplayPhoto,
         request: ModelResolutionRequest = ModelResolutionRequest(
@@ -2611,434 +2211,26 @@ class SlideshowViewModel(
         ),
         onPreparationSubstage: (String) -> Unit = {},
         onPreparationTransferUpdate: (PreparationTransferUpdate) -> Unit = {},
-    ): PhotoModelResolution {
-        val extension = ImageFormatSupport.extension(display.fileName)
-        if (!ImageFormatSupport.isPlatformDecodable(
-                display.fileName, display.mimeType, Build.VERSION.SDK_INT,
-            )
-        ) {
-            return PhotoModelResolution.Failed(
-                DecodeFailure(
-                    photoId = display.id,
-                    sourceId = display.sourceId,
-                    fileExtension = extension,
-                    mimeType = display.mimeType,
-                    stage = DecodeFailureStage.CAPABILITY,
-                    permanent = true,
-                    reason = "platform_heif_decoder_unavailable",
-                )
-            )
-        }
+    ): PhotoModelResolution =
+        photoAccess.resolveModel(display, request, onPreparationSubstage, onPreparationTransferUpdate)
 
-        if (display.isContentUri) {
-            return PhotoModelResolution.Ready(Uri.parse(display.openToken), localThumbnailCacheEligible = true)
-        }
-        if (!display.needsCache) {
-            return PhotoModelResolution.Ready(File(display.openToken), localThumbnailCacheEligible = true)
-        }
+    /** Header-only dimension probe for a collage candidate; see [PlaybackPhotoAccess]. */
+    suspend fun probeRemoteCollageDimensions(display: DisplayPhoto): Pair<Int, Int>? =
+        photoAccess.probeRemoteCollageDimensions(display)
 
-        val item = PhotoItem(
-            stableId = display.stableId,
-            sourceId = SourceId(display.sourceId),
-            normalizedPath = display.normalizedPath,
-            folderName = display.folderName,
-            fileName = display.fileName,
-            mimeType = display.mimeType,
-            sizeBytes = display.sizeBytes,
-            fileModifiedEpochMs = display.fileModifiedEpochMs,
-            openToken = display.openToken,
-        )
-        // Do not persist these routine markers.  The selected presentation's bounded
-        // in-memory trace retains the last one, so a watchdog event can distinguish a
-        // cache lock, stream open, transfer, verification, or commit without rotating
-        // the diagnostic bundle during a normal soak.
-        val onMediaCacheStage: (MediaCache.ResolveStage) -> Unit = { stage ->
-            onPreparationSubstage("MEDIA_CACHE_${stage.name}")
-        }
-        val onMediaCacheTransfer: (MediaCache.TransferTelemetry) -> Unit = { telemetry ->
-            onPreparationTransferUpdate(
-                PreparationTransferUpdate(
-                    state = when (telemetry.state) {
-                        MediaCache.TransferTelemetryState.STARTED -> PreparationTransferState.STARTED
-                        MediaCache.TransferTelemetryState.PROGRESS -> PreparationTransferState.PROGRESS
-                        MediaCache.TransferTelemetryState.SELECTED_DEADLINE ->
-                            PreparationTransferState.SELECTED_DEADLINE
-                        MediaCache.TransferTelemetryState.STREAM_CLOSE_REQUESTED ->
-                            PreparationTransferState.STREAM_CLOSE_REQUESTED
-                        MediaCache.TransferTelemetryState.TRANSFER_SLOT_RELEASED ->
-                            PreparationTransferState.TRANSFER_SLOT_RELEASED
-                    },
-                    copiedBytes = telemetry.copiedBytes,
-                    expectedBytes = telemetry.expectedBytes,
-                    deadlineMs = telemetry.deadlineMs,
-                    streamCloseSucceeded = telemetry.streamCloseSucceeded,
-                )
-            )
-        }
-        val mediaTransferPriority = when (request.priority) {
-            ModelResolutionPriority.SELECTED_PRESENTATION ->
-                com.example.familyphotoframe.data.cache.MediaTransferPriority.SELECTED_PRESENTATION
-            ModelResolutionPriority.BACKGROUND_PRELOAD ->
-                com.example.familyphotoframe.data.cache.MediaTransferPriority.BACKGROUND_PRELOAD
-        }
-        if (request.cacheOnly) {
-            // A presentation that is already due must not start NAS transfers for optional
-            // collage companions inside its selection budget. A miss is not a photo fault.
-            return when (val cached = services.mediaCache.resolveIfCached(item, onMediaCacheStage)) {
-                is MediaCache.ResolveResult.Ready -> PhotoModelResolution.Ready(cached.file)
-                is MediaCache.ResolveResult.Failed -> PhotoModelResolution.Failed(
-                    DecodeFailure(
-                        photoId = display.id,
-                        sourceId = display.sourceId,
-                        fileExtension = extension,
-                        mimeType = display.mimeType,
-                        stage = DecodeFailureStage.CACHE_LOOKUP,
-                        reason = NOT_CACHED_REASON,
-                        sourceLevelFailure = true,
-                    )
-                )
-            }
-        }
-        val cacheResult = if (remotePrimaryCachedOnly && display.sourceId == remotePrimarySourceId) {
-            services.mediaCache.resolveIfCached(item, onMediaCacheStage)
-        } else {
-            val src = remoteSources.active(display.sourceId)
-                ?: return PhotoModelResolution.Failed(
-                    DecodeFailure(
-                        photoId = display.id,
-                        sourceId = display.sourceId,
-                        fileExtension = extension,
-                        mimeType = display.mimeType,
-                        stage = DecodeFailureStage.CACHE_LOOKUP,
-                        reason = "source_not_active",
-                    )
-                )
-            val protectedKeys = setOfNotNull(
-                _state.value.engine.current?.stableId,
-                _state.value.engine.next?.stableId,
-            ).filter { it.isNotEmpty() }.toSet()
-            services.mediaCache.resolve(
-                item = item,
-                source = src,
-                protectedKeys = protectedKeys,
-                priority = mediaTransferPriority,
-                transferDeadlineMonotonicMs = request.selectedTransferDeadlineMonotonicMs,
-                onStage = onMediaCacheStage,
-                onTransferTelemetry = onMediaCacheTransfer,
-            )
-        }
-
-        return when (cacheResult) {
-            is MediaCache.ResolveResult.Ready -> PhotoModelResolution.Ready(cacheResult.file)
-            is MediaCache.ResolveResult.Failed -> PhotoModelResolution.Failed(
-                DecodeFailure(
-                    photoId = display.id,
-                    sourceId = display.sourceId,
-                    fileExtension = extension,
-                    mimeType = display.mimeType,
-                    stage = when (cacheResult.stage) {
-                        MediaCache.FailureStage.CACHE_LOOKUP -> DecodeFailureStage.CACHE_LOOKUP
-                        MediaCache.FailureStage.SOURCE_READ -> DecodeFailureStage.SOURCE_READ
-                        MediaCache.FailureStage.VERIFY_DECODE -> DecodeFailureStage.VERIFY_DECODE
-                        MediaCache.FailureStage.CACHE_COMMIT -> DecodeFailureStage.CACHE_COMMIT
-                        MediaCache.FailureStage.UNKNOWN -> DecodeFailureStage.UNKNOWN
-                    },
-                    exceptionClass = cacheResult.exceptionClass,
-                    permanent = cacheResult.stage == MediaCache.FailureStage.VERIFY_DECODE,
-                    reason = if (cacheResult.stage == MediaCache.FailureStage.VERIFY_DECODE) {
-                        "cached_bytes_not_decodable"
-                    } else null,
-                    sourceLevelFailure = cacheResult.sourceLevelFailure,
-                )
-            )
-        }
-    }
-
-    /**
-     * Read only enough bytes to discover dimensions for an optimizer candidate.
-     *
-     * This deliberately bypasses [resolveModel] for a remote cache miss: resolving a
-     * candidate materializes and verifies the complete NAS original, which made collage
-     * ranking take tens of seconds. Successful bounds are persisted so subsequent
-     * presentations stay metadata-only.
-     */
-    suspend fun probeRemoteCollageDimensions(display: DisplayPhoto): Pair<Int, Int>? {
-        if (!display.needsCache) return null
-        val item = PhotoItem(
-            stableId = display.stableId,
-            sourceId = SourceId(display.sourceId),
-            normalizedPath = display.normalizedPath,
-            folderName = display.folderName,
-            fileName = display.fileName,
-            mimeType = display.mimeType,
-            sizeBytes = display.sizeBytes,
-            fileModifiedEpochMs = display.fileModifiedEpochMs,
-            openToken = display.openToken,
-        )
-
-        suspend fun persist(dimensions: Pair<Int, Int>?): Pair<Int, Int>? {
-            val valid = dimensions?.takeIf { it.first > 0 && it.second > 0 } ?: return null
-            runCatching {
-                services.photoDao.updateDimensionsIfMissing(display.id, valid.first, valid.second)
-            }
-            return valid
-        }
-
-        suspend fun trackedProbe(block: suspend () -> Pair<Int, Int>?): Pair<Int, Int>? {
-            val operation = nativeAllocationStageTracker.start(
-                com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Stage.BOUNDS_PROBE
-            )
-            return try {
-                block().also { dimensions ->
-                    operation.finish(
-                        if (dimensions != null) {
-                            com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Outcome.COMPLETED
-                        } else {
-                            com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Outcome.FAILED
-                        }
-                    )
-                }
-            } catch (timeout: TimeoutCancellationException) {
-                operation.finish(
-                    com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Outcome.TIMED_OUT
-                )
-                null
-            } catch (cancelled: CancellationException) {
-                operation.finish(
-                    com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Outcome.CANCELLED
-                )
-                throw cancelled
-            } catch (error: Throwable) {
-                operation.finish(
-                    com.example.familyphotoframe.data.diagnostics.NativeAllocationStageTracker.Outcome.FAILED
-                )
-                throw error
-            }
-        }
-
-        when (val cached = services.mediaCache.resolveIfCached(item)) {
-            is MediaCache.ResolveResult.Ready -> {
-                val dimensions = trackedProbe {
-                    withContext(Dispatchers.IO) {
-                        try {
-                            RemoteImageBoundsProbe.decode(cached.file.inputStream())
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (_: Exception) {
-                            null
-                        }
-                    }
-                }
-                return persist(dimensions)
-            }
-            is MediaCache.ResolveResult.Failed -> Unit
-        }
-
-        val source = remoteSources.active(display.sourceId) ?: return null
-        val dimensions = trackedProbe {
-            withTimeout(REMOTE_COLLAGE_PROBE_TIMEOUT_MS) {
-                withContext(Dispatchers.IO) {
-                    try {
-                        val stream = source.openStream(
-                            item,
-                            OpenOptions(
-                                timeoutMs = REMOTE_COLLAGE_PROBE_TIMEOUT_MS,
-                                preferOriginal = false,
-                                purpose = com.example.familyphotoframe.data.source.OpenPurpose.COLLAGE_BOUNDS,
-                            ),
-                        )
-                        RemoteImageBoundsProbe.decode(stream)
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Exception) {
-                        null
-                    }
-                }
-            }
-        }
-        return persist(dimensions)
-    }
-
-    /**
-     * Return the bounded optimizer pool in deterministic order.
-     *
-     * Folder-balanced reservations/history remain absolute: this method never invents an
-     * unreserved companion. Other selection modes may add source-local candidates from
-     * other folders after the exact anchor folder so the optimizer can apply the task's
-     * same-folder > orientation > visual-fit priority.
-     */
-    suspend fun portraitCollageCandidates(anchor: DisplayPhoto, limit: Int = 12): List<DisplayPhoto> {
-        val cap = limit.coerceIn(1, 12)
-        val engineState = engine.ui.value
-        val reservedMatches = engineState.reservedCandidateIds.firstOrNull() == anchor.id
-        // The folder-balanced turn reserved ahead for the preloaded next presentation.
-        val nextReservedMatches = !reservedMatches &&
-            engineState.nextReservedCandidateIds.firstOrNull() == anchor.id
-        val historyMatches = engineState.historyPhotoIds.firstOrNull() == anchor.id
-        val orderedIds = when {
-            reservedMatches -> engineState.reservedCandidateIds.drop(1)
-            nextReservedMatches -> engineState.nextReservedCandidateIds.drop(1)
-            historyMatches -> engineState.historyPhotoIds.drop(1)
-            else -> emptyList()
-        }.take(cap)
-        if (reservedMatches || nextReservedMatches || historyMatches) {
-            if (orderedIds.isEmpty()) return emptyList()
-            val byId = services.photoDao.byIds(orderedIds).associateBy { it.id }
-            // Do not add or substitute anything here: only reservation/history members
-            // can be committed by folder-balanced shuffle.
-            return orderedIds.mapNotNull(byId::get).map { it.toDisplayPhoto() }
-        }
-        if (_state.value.selectionMode == SelectionMode.FOLDER_BALANCED_SHUFFLE) {
-            // A missing reservation at a folder-cycle boundary is a single presentation,
-            // never permission to consume an arbitrary photo from another folder.
-            return emptyList()
-        }
-
-        val favoritesFlag = if (_state.value.favoritesOnly) 1 else 0
-        val cachedFlag = if (remotePrimaryCachedOnly && anchor.sourceId == remotePrimarySourceId) 1 else 0
-        val anchorTime = anchor.dateTakenEpochMs ?: anchor.fileModifiedEpochMs
-        val now = System.currentTimeMillis()
-        val anchorParent = anchor.normalizedPath.substringBeforeLast('/', "")
-        fun parent(photo: DisplayPhoto) = photo.normalizedPath.substringBeforeLast('/', "")
-        fun orientationTier(photo: DisplayPhoto): Int = when (
-            PortraitCollagePolicy.classify(photo.width, photo.height, photo.exifOrientation)
-        ) {
-            com.example.familyphotoframe.domain.engine.PhotoOrientation.PORTRAIT -> 0
-            com.example.familyphotoframe.domain.engine.PhotoOrientation.SQUARE_OR_UNKNOWN -> 1
-            com.example.familyphotoframe.domain.engine.PhotoOrientation.LANDSCAPE -> 2
-        }
-
-        return runCatching {
-            val sameFolder = services.photoDao.collageCandidates(
-                sourceId = anchor.sourceId,
-                folderName = anchor.folderName,
-                anchorId = anchor.id,
-                anchorTime = anchorTime,
-                maxFailures = currentMaxFailures(),
-                favoritesOnly = favoritesFlag,
-                cachedOnly = cachedFlag,
-                allowHeif = if (services.allowHeifPlayback) 1 else 0,
-                limit = (cap * 4).coerceAtMost(64),
-            ).map { it.toDisplayPhoto() }
-                .filter { parent(it) == anchorParent }
-
-            val sourceWide = services.photoDao.collageCandidatesAcrossSource(
-                sourceId = anchor.sourceId,
-                anchorId = anchor.id,
-                anchorTime = anchorTime,
-                maxFailures = currentMaxFailures(),
-                favoritesOnly = favoritesFlag,
-                cachedOnly = cachedFlag,
-                allowHeif = if (services.allowHeifPlayback) 1 else 0,
-                limit = (cap * 8).coerceAtMost(128),
-            ).map { it.toDisplayPhoto() }
-
-            (sameFolder + sourceWide).asSequence()
-                .filter { it.id != anchor.id }
-                .distinctBy { it.id }
-                .sortedWith(
-                    compareBy<DisplayPhoto> { if (parent(it) == anchorParent) 0 else 1 }
-                        .thenBy(::orientationTier)
-                        .thenBy { PortraitCollagePolicy.candidateScore(anchorTime, it, now) }
-                        .thenBy { it.id },
-                )
-                .take(cap)
-                .toList()
-        }.getOrDefault(emptyList())
-    }
+    /** The bounded collage optimizer pool for [anchor], in deterministic order. */
+    suspend fun portraitCollageCandidates(anchor: DisplayPhoto, limit: Int = 12): List<DisplayPhoto> =
+        photoAccess.portraitCollageCandidates(anchor, limit)
 
     /** Save an SMB source (password encrypted via SecretStore) and make it active. */
-    fun saveSmb(host: String, share: String, path: String, user: String, domain: String, password: String) {
-        viewModelScope.launch {
-            val draft = SmbSettings(
-                host = host.trim(),
-                share = share.trim().trim('/'),
-                path = path.trim().trim('/'),
-                user = user.trim(),
-                domain = domain.trim(),
-            )
-            val current = services.settings.settings.first()
-            val existing = current.source.smb
-            val retainedRef = existing?.credentialRef.orEmpty()
-                .takeIf { it.isNotBlank() && CredentialPolicy.sameSmbScope(existing, draft) }
-            val ref = retainedRef ?: CredentialPolicy.smbRef(draft)
-            val resolvedPassword = password.takeIf { it.isNotEmpty() }
-                ?: retainedRef?.let { services.secretStore.reveal(it) }
-            if (resolvedPassword == null && draft.user.isNotBlank()) {
-                _state.update {
-                    it.copy(transientNotice = appContext.getString(R.string.msg_source_password_required))
-                }
-                return@launch
-            }
-            val savedRef = if (resolvedPassword == null) "" else ref // anonymous/guest SMB
-            if (resolvedPassword != null && (password.isNotEmpty() || retainedRef == null)) {
-                services.secretStore.store(ref, "smb_password", resolvedPassword)
-            }
-            val trigger = if (password.isNotEmpty()) {
-                SourceRefreshTrigger.CREDENTIAL_UPDATED
-            } else {
-                SourceRefreshTrigger.SOURCE_SETTINGS_CHANGED
-            }
-            updateSettingsAndRefresh(trigger) {
-                it.copy(
-                    source = it.source.copy(
-                        kind = ActiveSourceKind.SMB,
-                        displayName = "${draft.host}/${draft.share}",
-                        smb = draft.copy(credentialRef = savedRef),
-                    )
-                )
-            }
-        }
-    }
+    fun saveSmb(host: String, share: String, path: String, user: String, domain: String, password: String) =
+        sourceSettingsActions.saveSmb(host, share, path, user, domain, password)
 
     /** Test an SMB connection without saving it; result shown in [SlideshowUiState.smbTestResult]. */
-    fun testSmb(host: String, share: String, path: String, user: String, domain: String, password: String) {
-        viewModelScope.launch {
-            _state.update { it.copy(smbTestResult = appContext.getString(R.string.msg_smb_testing)) }
-            val draft = SmbSettings(
-                host = host.trim(),
-                share = share.trim().trim('/'),
-                path = path.trim().trim('/'),
-                user = user.trim(),
-                domain = domain.trim(),
-            )
-            val existing = services.settings.settings.first().source.smb
-            val effectivePassword = password.takeIf { it.isNotEmpty() }
-                ?: existing?.credentialRef
-                    ?.takeIf { it.isNotBlank() && CredentialPolicy.sameSmbScope(existing, draft) }
-                    ?.let { services.secretStore.reveal(it) }
-                    .orEmpty()
-            val src = services.smbSource(
-                SmbConnection(draft.host, draft.share, draft.path),
-                SmbCredentials(draft.domain, draft.user, effectivePassword),
-            )
-            // A connection test is one-shot: close the session rather than leaving it
-            // pooled, or every press of Test leaks a context.
-            val res = try {
-                smbHealthMessageRes(sourceTestWithDiagnostics(
-                    src,
-                    "SMB",
-                    8_000,
-                    DiagnosticOrigin.ANDROID_UI,
-                    diagnosticToken(draft.toString(), "config"),
-                ))
-            } finally {
-                runCatching { src.shutdown() }
-            }
-            _state.update { it.copy(smbTestResult = appContext.getString(res)) }
-        }
-    }
+    fun testSmb(host: String, share: String, path: String, user: String, domain: String, password: String) =
+        sourceSettingsActions.testSmb(host, share, path, user, domain, password)
 
-    /** User-facing message for an SMB [SourceHealth] (shared by activate + test). */
-    private fun smbHealthMessageRes(health: SourceHealth): Int = when (health) {
-        is SourceHealth.Ok -> R.string.msg_smb_ok
-        is SourceHealth.NeedsPermission -> R.string.msg_smb_auth
-        is SourceHealth.Missing -> R.string.msg_smb_missing
-        is SourceHealth.Unavailable -> R.string.msg_smb_unreachable
-        is SourceHealth.ProviderError -> R.string.msg_smb_error
-    }
-
-    fun clearSmbTestResult() = _state.update { it.copy(smbTestResult = null) }
+    fun clearSmbTestResult() = sourceSettingsActions.clearSmbTestResult()
 
     // ---- Synology File Station (ROADMAP.md network photo-app sources) ----
 
@@ -3054,166 +2246,26 @@ class SlideshowViewModel(
         otpCode: String,
         useThumbnails: Boolean,
         pinnedCertSha256: String? = null,
-    ) {
-        viewModelScope.launch {
-            val current = services.settings.settings.first()
-            val existing = current.source.synology
-            val host = SynologyApi.normalizeBaseUrl(baseUrl)
-            val draft = SynologySettings(
-                baseUrl = host,
-                folderPath = folderPath.trim().ifBlank { "/photo" },
-                user = user.trim(),
-                useThumbnails = useThumbnails,
-                thumbnailSize = existing?.thumbnailSize ?: "large",
-                pinnedCertSha256 = if (CredentialPolicy.sameSynologyHost(existing, SynologySettings(baseUrl = host))) {
-                    pinnedCertSha256 ?: existing?.pinnedCertSha256
-                } else {
-                    pinnedCertSha256?.takeIf(CertPinning::isValidSha256)
-                },
-            )
-            val retainedRef = existing?.credentialRef.orEmpty()
-                .takeIf { it.isNotBlank() && CredentialPolicy.sameSynologyScope(existing, draft) }
-            val ref = retainedRef ?: CredentialPolicy.synologyRef(draft)
-            val resolvedPassword = password.takeIf { it.isNotEmpty() }
-                ?: retainedRef?.let { services.secretStore.reveal(it) }
-            if (resolvedPassword.isNullOrEmpty()) {
-                _state.update {
-                    it.copy(transientNotice = appContext.getString(R.string.msg_source_password_required))
-                }
-                return@launch
-            }
-            if (password.isNotEmpty() || retainedRef == null) {
-                services.secretStore.store(ref, "synology_password", resolvedPassword)
-            }
-            pendingSynologyOtp = otpCode.trim().ifBlank { null }
-            val trigger = if (password.isNotEmpty()) {
-                SourceRefreshTrigger.CREDENTIAL_UPDATED
-            } else {
-                SourceRefreshTrigger.SOURCE_SETTINGS_CHANGED
-            }
-            updateSettingsAndRefresh(trigger) {
-                it.copy(
-                    source = it.source.copy(
-                        kind = ActiveSourceKind.SYNOLOGY,
-                        displayName = host,
-                        synology = draft.copy(credentialRef = ref),
-                    )
-                )
-            }
-        }
-    }
+    ) = sourceSettingsActions.saveSynology(
+        baseUrl, folderPath, user, password, otpCode, useThumbnails, pinnedCertSha256,
+    )
 
     /** Test a Synology connection without saving it; result shown in [SlideshowUiState.smbTestResult]. */
-    fun testSynology(
-        baseUrl: String,
-        folderPath: String,
-        user: String,
-        password: String,
-        otpCode: String,
-    ) {
-        viewModelScope.launch {
-            _state.update { it.copy(smbTestResult = appContext.getString(R.string.msg_syn_testing)) }
-            val draft = SynologySettings(
-                baseUrl = SynologyApi.normalizeBaseUrl(baseUrl),
-                folderPath = folderPath.trim().ifBlank { "/photo" },
-                user = user.trim(),
-            )
-            val existing = services.settings.settings.first().source.synology
-            val effectivePassword = password.takeIf { it.isNotEmpty() }
-                ?: existing?.credentialRef
-                    ?.takeIf { it.isNotBlank() && CredentialPolicy.sameSynologyScope(existing, draft) }
-                    ?.let { services.secretStore.reveal(it) }
-                    .orEmpty()
-            val src = services.synologySource(
-                SynologyConnection(baseUrl = draft.baseUrl, folderPath = draft.folderPath),
-                SynologyCredentials(draft.user, effectivePassword, otpCode.trim().ifBlank { null }),
-            )
-            val res = try {
-                synologyHealthMessageRes(sourceTestWithDiagnostics(
-                    src,
-                    "SYNOLOGY",
-                    10_000,
-                    DiagnosticOrigin.ANDROID_UI,
-                    diagnosticToken(draft.toString(), "config"),
-                ))
-            } finally {
-                runCatching { src.shutdown() }
-            }
-            _state.update { it.copy(smbTestResult = appContext.getString(res)) }
-        }
-    }
+    fun testSynology(baseUrl: String, folderPath: String, user: String, password: String, otpCode: String) =
+        sourceSettingsActions.testSynology(baseUrl, folderPath, user, password, otpCode)
 
-    /**
-     * Looks up the certificate the NAS presents so the user can approve it. Populates
-     * [SlideshowUiState.synologyCertFingerprint]; null clears any previous offer.
-     */
-    fun probeSynologyCertificate(baseUrl: String) {
-        viewModelScope.launch {
-            val src = services.synologySource(
-                SynologyConnection(baseUrl = SynologyApi.normalizeBaseUrl(baseUrl)),
-                SynologyCredentials("", ""),
-            )
-            try {
-                _state.update { it.copy(synologyCertFingerprint = src.probeCertificateFingerprint()) }
-            } finally {
-                runCatching { src.shutdown() }
-            }
-        }
-    }
+    /** Populates [SlideshowUiState.synologyCertFingerprint]; null clears any previous offer. */
+    fun probeSynologyCertificate(baseUrl: String) = sourceSettingsActions.probeSynologyCertificate(baseUrl)
 
-    /**
-     * Records a certificate fingerprint the user has explicitly approved. Deliberately a
-     * separate, explicit action rather than something the test/save flow does silently —
-     * approving a certificate is a security decision and must be a deliberate one.
-     */
-    fun trustSynologyCertificate(fingerprint: String) {
-        if (!CertPinning.isValidSha256(fingerprint)) return
-        viewModelScope.launch {
-            services.settings.update { s ->
-                val syn = s.source.synology ?: return@update s
-                s.copy(source = s.source.copy(synology = syn.copy(pinnedCertSha256 = fingerprint)))
-            }
-            _state.update { it.copy(synologyCertFingerprint = null) }
-            diagnostics.log(DiagnosticsLog.Category.SOURCE, "SYNOLOGY_CERT_PINNED")
-        }
-    }
+    /** Records a certificate fingerprint the user has explicitly approved. */
+    fun trustSynologyCertificate(fingerprint: String) = sourceSettingsActions.trustSynologyCertificate(fingerprint)
 
     /** Removes a previously approved certificate, returning to strict platform validation. */
-    fun clearSynologyCertificate() {
-        viewModelScope.launch {
-            services.settings.update { s ->
-                val syn = s.source.synology ?: return@update s
-                s.copy(source = s.source.copy(synology = syn.copy(pinnedCertSha256 = null)))
-            }
-            diagnostics.log(DiagnosticsLog.Category.SOURCE, "SYNOLOGY_CERT_UNPINNED")
-        }
-    }
-
-    /** User-facing message for a Synology [SourceHealth]; 2FA gets its own hint. */
-    private fun synologyHealthMessageRes(health: SourceHealth): Int = when (health) {
-        is SourceHealth.Ok -> R.string.msg_syn_ok
-        is SourceHealth.NeedsPermission -> R.string.msg_syn_permission
-        is SourceHealth.Missing -> R.string.msg_syn_folder_missing
-        is SourceHealth.Unavailable -> R.string.msg_syn_unreachable
-        is SourceHealth.ProviderError -> when (health.detail) {
-            "two_factor_required" -> R.string.msg_syn_2fa
-            "auth_failed" -> R.string.msg_syn_auth
-            "CertUntrusted" -> R.string.msg_syn_cert
-            "HostUnreachable" -> R.string.msg_syn_unreachable
-            else -> R.string.msg_syn_error
-        }
-    }
+    fun clearSynologyCertificate() = sourceSettingsActions.clearSynologyCertificate()
 
     // ---- WebDAV / Nextcloud (ROADMAP.md other candidate sources) ----------------
 
-    /**
-     * Save and activate a WebDAV source. An empty [password] keeps the stored secret
-     * when the host and account are unchanged, exactly as for SMB and Synology.
-     *
-     * When [rootPath] is blank the standard Nextcloud endpoint for [user] is assumed,
-     * which is right for the overwhelmingly common case and still overridable for a
-     * plain Apache mount.
-     */
+    /** Save and activate a WebDAV source; an empty [password] keeps the stored secret. */
     fun saveWebDav(
         baseUrl: String,
         rootPath: String,
@@ -3221,111 +2273,13 @@ class SlideshowViewModel(
         user: String,
         password: String,
         pinnedCertSha256: String? = null,
-    ) {
-        viewModelScope.launch {
-            val current = services.settings.settings.first()
-            val existing = current.source.webdav
-            val host = WebDavApi.normalizeBaseUrl(baseUrl)
-            val trimmedUser = user.trim()
-            val draft = WebDavSettings(
-                baseUrl = host,
-                rootPath = rootPath.trim().ifBlank { WebDavApi.nextcloudFilesRoot(trimmedUser) },
-                folderPath = WebDavApi.normalizePath(folderPath),
-                user = trimmedUser,
-                pinnedCertSha256 = if (CredentialPolicy.sameWebDavHost(existing, WebDavSettings(baseUrl = host))) {
-                    pinnedCertSha256 ?: existing?.pinnedCertSha256
-                } else {
-                    pinnedCertSha256?.takeIf(CertPinning::isValidSha256)
-                },
-            )
-            val retainedRef = existing?.credentialRef.orEmpty()
-                .takeIf { it.isNotBlank() && CredentialPolicy.sameWebDavScope(existing, draft) }
-            val ref = retainedRef ?: CredentialPolicy.webDavRef(draft)
-            val resolvedPassword = password.takeIf { it.isNotEmpty() }
-                ?: retainedRef?.let { services.secretStore.reveal(it) }
-            if (resolvedPassword.isNullOrEmpty()) {
-                _state.update {
-                    it.copy(transientNotice = appContext.getString(R.string.msg_source_password_required))
-                }
-                return@launch
-            }
-            if (password.isNotEmpty() || retainedRef == null) {
-                services.secretStore.store(ref, "webdav_password", resolvedPassword)
-            }
-            val trigger = if (password.isNotEmpty()) {
-                SourceRefreshTrigger.CREDENTIAL_UPDATED
-            } else {
-                SourceRefreshTrigger.SOURCE_SETTINGS_CHANGED
-            }
-            updateSettingsAndRefresh(trigger) {
-                it.copy(
-                    source = it.source.copy(
-                        kind = ActiveSourceKind.WEBDAV,
-                        displayName = host,
-                        webdav = draft.copy(credentialRef = ref),
-                    )
-                )
-            }
-        }
-    }
+    ) = sourceSettingsActions.saveWebDav(
+        baseUrl, rootPath, folderPath, user, password, pinnedCertSha256,
+    )
 
     /** Test a WebDAV connection without saving it; result shown in [SlideshowUiState.smbTestResult]. */
-    fun testWebDav(
-        baseUrl: String,
-        rootPath: String,
-        folderPath: String,
-        user: String,
-        password: String,
-    ) {
-        viewModelScope.launch {
-            _state.update { it.copy(smbTestResult = appContext.getString(R.string.msg_dav_testing)) }
-            val trimmedUser = user.trim()
-            val draft = WebDavSettings(
-                baseUrl = WebDavApi.normalizeBaseUrl(baseUrl),
-                rootPath = rootPath.trim().ifBlank { WebDavApi.nextcloudFilesRoot(trimmedUser) },
-                folderPath = WebDavApi.normalizePath(folderPath),
-                user = trimmedUser,
-            )
-            val existing = services.settings.settings.first().source.webdav
-            val effectivePassword = password.takeIf { it.isNotEmpty() }
-                ?: existing?.credentialRef
-                    ?.takeIf { it.isNotBlank() && CredentialPolicy.sameWebDavScope(existing, draft) }
-                    ?.let { services.secretStore.reveal(it) }
-                    .orEmpty()
-            val src = services.webDavSource(
-                WebDavConnection(
-                    baseUrl = draft.baseUrl,
-                    rootPath = draft.rootPath,
-                    folderPath = draft.folderPath,
-                    pinnedCertSha256 = existing?.pinnedCertSha256,
-                ),
-                WebDavCredentials(draft.user, effectivePassword),
-            )
-            val res = webDavHealthMessageRes(sourceTestWithDiagnostics(
-                src,
-                "WEBDAV",
-                10_000,
-                DiagnosticOrigin.ANDROID_UI,
-                diagnosticToken(draft.toString(), "config"),
-            ))
-            _state.update { it.copy(smbTestResult = appContext.getString(res)) }
-        }
-    }
-
-    /** User-facing message for a WebDAV [SourceHealth]; "not WebDAV" gets its own hint. */
-    private fun webDavHealthMessageRes(health: SourceHealth): Int = when (health) {
-        is SourceHealth.Ok -> R.string.msg_dav_ok
-        is SourceHealth.NeedsPermission -> R.string.msg_dav_permission
-        is SourceHealth.Missing -> R.string.msg_dav_folder_missing
-        is SourceHealth.Unavailable -> R.string.msg_dav_unreachable
-        is SourceHealth.ProviderError -> when (health.detail) {
-            "auth_failed" -> R.string.msg_dav_auth
-            "not_webdav" -> R.string.msg_dav_not_webdav
-            "CertUntrusted" -> R.string.msg_dav_cert
-            "HostUnreachable" -> R.string.msg_dav_unreachable
-            else -> R.string.msg_dav_error
-        }
-    }
+    fun testWebDav(baseUrl: String, rootPath: String, folderPath: String, user: String, password: String) =
+        sourceSettingsActions.testWebDav(baseUrl, rootPath, folderPath, user, password)
 
     /** Force a re-scan of the current source without changing it. */
     fun rebuildIndex() {
@@ -3342,70 +2296,14 @@ class SlideshowViewModel(
 
     // ---- merged primary pool (spec §9.3) ---------------------------------------
 
-    /**
-     * Add or remove a co-primary source, so a local folder and a NAS (or two NAS
-     * protocols) can feed one slideshow.
-     *
-     * Refuses to merge in a kind that has no connection settings yet: it would silently
-     * contribute nothing, and "I ticked it and nothing happened" is a worse outcome than
-     * being told to configure it first.
-     */
-    fun setAlsoPlay(kind: ActiveSourceKind, enabled: Boolean) {
-        viewModelScope.launch {
-            val current = services.settings.settings.first().source
-            if (enabled && !isConfigured(kind, current)) {
-                _state.update {
-                    it.copy(transientNotice = appContext.getString(R.string.msg_source_not_configured))
-                }
-                return@launch
-            }
-            services.settings.update { s ->
-                val next = if (enabled) s.source.alsoPlay + kind else s.source.alsoPlay - kind
-                // The chosen source is already a primary; listing it again would just
-                // duplicate it in the pool.
-                s.copy(source = s.source.copy(alsoPlay = next - s.source.kind))
-            }
-        }
-    }
+    /** Add or remove a co-primary source, so several sources can feed one slideshow. */
+    fun setAlsoPlay(kind: ActiveSourceKind, enabled: Boolean) = sourceSettingsActions.setAlsoPlay(kind, enabled)
 
     private fun isConfigured(kind: ActiveSourceKind, source: ActiveSource): Boolean =
         SourceStatusPolicy.isConfigured(kind, source)
 
-    /**
-     * Promote an already-configured source to primary without retyping its connection.
-     * Samples are allowed here too, which is what the "use samples" button does.
-     */
-    fun setPrimarySource(kind: ActiveSourceKind) {
-        viewModelScope.launch {
-            val current = services.settings.settings.first().source
-            if (kind == current.kind) return@launch
-            if (kind != ActiveSourceKind.SAMPLES && !isConfigured(kind, current)) {
-                _state.update {
-                    it.copy(transientNotice = appContext.getString(R.string.msg_source_not_configured))
-                }
-                return@launch
-            }
-            updateSettingsAndRefresh(SourceRefreshTrigger.SOURCE_SETTINGS_CHANGED) { s ->
-                s.copy(
-                    source = s.source.copy(
-                        kind = kind,
-                        displayName = primaryDisplayName(kind, s.source),
-                        // A primary listed again as a co-primary would duplicate the pool.
-                        alsoPlay = s.source.alsoPlay - kind,
-                    )
-                )
-            }
-        }
-    }
-
-    private fun primaryDisplayName(kind: ActiveSourceKind, source: ActiveSource): String = when (kind) {
-        // The SAF display name is captured when the folder is picked and cannot be rebuilt.
-        ActiveSourceKind.LOCAL_SAF -> source.displayName
-        ActiveSourceKind.SMB -> source.smb?.let { "${it.host}/${it.share}" }.orEmpty()
-        ActiveSourceKind.SYNOLOGY -> source.synology?.baseUrl.orEmpty()
-        ActiveSourceKind.WEBDAV -> source.webdav?.baseUrl.orEmpty()
-        ActiveSourceKind.NONE, ActiveSourceKind.SAMPLES -> ""
-    }
+    /** Promote an already-configured source to primary without retyping its connection. */
+    fun setPrimarySource(kind: ActiveSourceKind) = sourceSettingsActions.setPrimarySource(kind)
 
     /** One bounded COUNT per built-in source; runs on the health cadence, never per frame. */
     private suspend fun refreshIndexedPhotoCounts() {
@@ -3439,59 +2337,11 @@ class SlideshowViewModel(
 
     // ---- automatic index refresh (spec §20) -------------------------------------
 
-    /**
-     * Enabling with no weekdays selected would silently never run, so switching it on
-     * seeds every day; the user can then deselect.
-     */
-    fun setAutoRescanEnabled(enabled: Boolean) {
-        viewModelScope.launch {
-            services.settings.update { s ->
-                val days = RescanSchedule.parseDays(s.schedule.autoRescanDays)
-                s.copy(
-                    schedule = s.schedule.copy(
-                        autoRescanEnabled = enabled,
-                        autoRescanDays = if (enabled && days.isEmpty()) {
-                            RescanSchedule.formatDays(RescanSchedule.everyDay())
-                        } else {
-                            s.schedule.autoRescanDays
-                        },
-                    )
-                )
-            }
-        }
-    }
-
-    /** Accepts partial input while typing; only a valid `HH:mm` is stored. */
-    fun setAutoRescanAt(text: String) {
-        viewModelScope.launch {
-            val minutes = SleepSchedule.parseMinutes(text) ?: return@launch
-            services.settings.update {
-                it.copy(schedule = it.schedule.copy(
-                    autoRescanAt = SleepSchedule.formatMinutes(minutes),
-                ))
-            }
-        }
-    }
-
-    fun setAutoRescanDay(isoDay: Int, selected: Boolean) {
-        viewModelScope.launch {
-            services.settings.update { s ->
-                val days = RescanSchedule.parseDays(s.schedule.autoRescanDays)
-                val next = if (selected) days + isoDay else days - isoDay
-                s.copy(schedule = s.schedule.copy(autoRescanDays = RescanSchedule.formatDays(next)))
-            }
-        }
-    }
-
-    fun setAutoRescanDays(days: Set<Int>) {
-        viewModelScope.launch {
-            services.settings.update {
-                it.copy(schedule = it.schedule.copy(
-                    autoRescanDays = RescanSchedule.formatDays(days),
-                ))
-            }
-        }
-    }
+    fun setAutoRescanEnabled(enabled: Boolean) = autoRescan.setAutoRescanEnabled(enabled)
+    fun setAutoRescanAt(text: String) = autoRescan.setAutoRescanAt(text)
+    fun setAutoRescanDay(isoDay: Int, selected: Boolean) =
+        autoRescan.setAutoRescanDay(isoDay, selected)
+    fun setAutoRescanDays(days: Set<Int>) = autoRescan.setAutoRescanDays(days)
 
     fun setIntervalSeconds(seconds: Int) {
         viewModelScope.launch { services.settings.update { it.copy(intervalSeconds = PlaybackInterval.clamp(seconds)) } }
@@ -3528,120 +2378,25 @@ class SlideshowViewModel(
         viewModelScope.launch { services.settings.update { it.copy(onUnreachable = policy) } }
     }
 
-    /**
-     * Turn favourites-only playback on or off.
-     *
-     * Refuses to switch on with an empty favourites set: the engine would find no
-     * primary photo, silently drop to the sample pool, and look like a bug rather than
-     * a setting. Telling the user why is cheaper than letting them debug it.
-     */
     // ---- folder ("album") selection (spec §9.4) --------------------------------
 
-    /**
-     * Folders available to choose from, for the current playback sources.
-     *
-     * Read on demand rather than kept in UI state: the list only matters while the
-     * picker is open, and it changes with every rescan.
-     */
-    suspend fun availableFolders(): List<FolderSummary> =
-        runCatching { services.photoDao.folderSummaries(currentPlaybackSourceIds()) }
-            .getOrDefault(emptyList())
-
-    /** Replace the complete folder selection with exactly one DataStore transaction. */
-    fun setSelectedFolders(folderKeys: Set<String>) {
-        viewModelScope.launch { services.settings.setSelectedFolders(folderKeys) }
-    }
-
-    /** Show one temporary photo from an exact direct folder without mutating shuffle queues. */
-    fun previewFolderOnce(folder: FolderSummary) {
-        viewModelScope.launch { previewFolderOnceByKey(folder.selectionKey, folder) }
-    }
-
-    private suspend fun previewFolderOnceByKey(
-        folderKey: String,
-        knownFolder: FolderSummary? = null,
-    ): String? {
-        val folder = knownFolder ?: availableFolders().firstOrNull { it.selectionKey == folderKey }
-            ?: return "Folder is not available"
-        engine.previewFolderOnce(folder.selectionKey)
-        diagnostics.log(
-            DiagnosticsLog.Category.ENGINE, "FOLDER_PREVIEW_REQUESTED",
-            "folderToken" to diagnosticToken(folder.selectionKey, "folder"),
-        )
-        _state.update {
-            it.copy(transientNotice = appContext.getString(R.string.msg_folder_preview_once, folder.displayPath))
-        }
-        return null
-    }
-
-    /**
-     * Restrict the active playlist to this exact source/direct-directory key. Built-in
-     * playlists use the global folder selection; user playlists own their folder rules.
-     * Either path changes eligibility and therefore produces a new shuffle scope.
-     */
-    fun useFolderInActivePlaylist(folder: FolderSummary) {
-        viewModelScope.launch { useFolderInActivePlaylistByKey(folder.selectionKey, folder) }
-    }
-
-    private suspend fun useFolderInActivePlaylistByKey(
-        folderKey: String,
-        knownFolder: FolderSummary? = null,
-    ): String? {
-        val folder = knownFolder ?: availableFolders().firstOrNull { it.selectionKey == folderKey }
-            ?: return "Folder is not available"
-        services.settings.update { current ->
-            val activeId = current.playlists.activePlaylistId
-            if (activeId in PlaylistSettings.BUILT_IN_IDS) {
-                current.copy(selectedFolders = setOf(folder.selectionKey))
-            } else {
-                val now = System.currentTimeMillis()
-                current.copy(
-                    playlists = current.playlists.copy(
-                        playlists = current.playlists.playlists.map { playlist ->
-                            if (playlist.id == activeId) {
-                                playlist.copy(folderNames = setOf(folder.selectionKey), updatedAtEpochMs = now)
-                            } else playlist
-                        }
-                    )
-                )
-            }
-        }
-        diagnostics.log(
-            DiagnosticsLog.Category.ENGINE, "PLAYLIST_FOLDER_APPLIED",
-            "playlistToken" to diagnosticToken(_state.value.activePlaylistId, "playlist"),
-            "folderToken" to diagnosticToken(folder.selectionKey, "folder"),
-        )
-        _state.update {
-            it.copy(transientNotice = appContext.getString(R.string.msg_folder_used_in_playlist, folder.displayPath))
-        }
-        return null
-    }
-
-    /** Clear the filter — play everything again. */
-    fun clearFolderSelection() {
-        setSelectedFolders(emptySet())
-    }
-
-    fun setFavoritesOnly(enabled: Boolean) {
-        viewModelScope.launch {
-            if (enabled) {
-                val pools = currentPlaybackSourceIds()
-                val favorites = runCatching { services.photoDao.favoriteCount(pools) }.getOrDefault(0)
-                if (favorites == 0) {
-                    _state.update {
-                        it.copy(transientNotice = appContext.getString(R.string.msg_no_favorites))
-                    }
-                    return@launch
-                }
-            }
-            services.settings.update { it.copy(favoritesOnly = enabled) }
-        }
-    }
-
-    /** Star or un-star the photo on screen (D-pad, web, or touch). */
-    fun toggleFavorite() = engine.toggleFavorite()
-
-    fun setInteractionHold(held: Boolean) = engine.setInteractionHold(held)
+    suspend fun availableFolders() = photoLibraryActions.availableFolders()
+    fun setSelectedFolders(folderKeys: Set<String>) =
+        photoLibraryActions.setSelectedFolders(folderKeys)
+    fun previewFolderOnce(folder: FolderSummary) = photoLibraryActions.previewFolderOnce(folder)
+    fun useFolderInActivePlaylist(folder: FolderSummary) =
+        photoLibraryActions.useFolderInActivePlaylist(folder)
+    fun clearFolderSelection() = photoLibraryActions.clearFolderSelection()
+    fun setFavoritesOnly(enabled: Boolean) = photoLibraryActions.setFavoritesOnly(enabled)
+    fun toggleFavorite() = photoLibraryActions.toggleFavorite()
+    fun setInteractionHold(held: Boolean) = photoLibraryActions.setInteractionHold(held)
+    fun setFavoriteForPhotos(ids: List<Long>, favorite: Boolean) =
+        photoLibraryActions.setFavoriteForPhotos(ids, favorite)
+    fun hidePhotos(ids: List<Long>) = photoLibraryActions.hidePhotos(ids)
+    fun undoLastHide() = photoLibraryActions.undoLastHide()
+    fun clearHideUndo() = photoLibraryActions.clearHideUndo()
+    fun hideCurrentPhoto() = photoLibraryActions.hideCurrentPhoto()
+    fun unhideAllPhotos() = photoLibraryActions.unhideAllPhotos()
 
     fun setSurfaceObscured(obscured: Boolean) =
         engine.setSurfaceObscured(engineOwnerToken, obscured)
@@ -3651,7 +2406,7 @@ class SlideshowViewModel(
             if (current.visiblePresentationPhotos.map { it.id } == photos.map { it.id }) current
             else current.copy(visiblePresentationPhotos = photos)
         }
-        publishDiagnosticPlayback(
+        presentationReporter.publishDiagnosticPlayback(
             _state.value,
             layoutOverride = when (photos.size) {
                 0 -> "NONE"
@@ -3659,98 +2414,6 @@ class SlideshowViewModel(
                 else -> "COLLAGE_${photos.size.coerceAtMost(3)}"
             },
         )
-    }
-
-    fun setFavoriteForPhotos(ids: List<Long>, favorite: Boolean) {
-        val distinct = ids.distinct()
-        if (distinct.isEmpty()) return
-        viewModelScope.launch {
-            services.photoDao.setFavorites(distinct, favorite)
-            engine.reflectFavoriteState(distinct.toSet(), favorite)
-            _state.update { state ->
-                state.copy(
-                    visiblePresentationPhotos = state.visiblePresentationPhotos.map { photo ->
-                        if (photo.id in distinct) photo.copy(isFavorite = favorite) else photo
-                    },
-                    transientNotice = if (favorite) "Added to favorites" else "Removed from favorites",
-                )
-            }
-            diagnostics.log(
-                DiagnosticsLog.Category.ENGINE,
-                if (favorite) "PHOTO_FAVORITE_ADDED" else "PHOTO_FAVORITE_REMOVED",
-                "presentationToken" to diagnosticToken(distinct.joinToString(","), "presentation"),
-                "members" to distinct.size.toString(),
-            )
-            if (!favorite && _state.value.favoritesOnly &&
-                _state.value.engine.current?.id in distinct
-            ) engine.next()
-        }
-    }
-
-    fun hidePhotos(ids: List<Long>) {
-        val distinct = ids.distinct()
-        if (distinct.isEmpty()) return
-        viewModelScope.launch {
-            services.photoDao.setHiddenBatch(distinct, true)
-            engine.invalidatePlaybackPool()
-            diagnostics.log(
-                DiagnosticsLog.Category.ENGINE,
-                "PHOTO_EXCLUDED",
-                "presentationToken" to diagnosticToken(distinct.joinToString(","), "presentation"),
-                "members" to distinct.size.toString(),
-            )
-            _state.update {
-                it.copy(
-                    undoHiddenPhotoIds = distinct,
-                    transientNotice = if (distinct.size == 1) "Photo hidden from slideshow" else "${distinct.size} photos hidden from slideshow",
-                )
-            }
-            engine.next()
-        }
-    }
-
-    fun undoLastHide() {
-        val ids = _state.value.undoHiddenPhotoIds
-        if (ids.isEmpty()) return
-        viewModelScope.launch {
-            services.photoDao.setHiddenBatch(ids, false)
-            engine.invalidatePlaybackPool()
-            diagnostics.log(
-                DiagnosticsLog.Category.ENGINE,
-                "PHOTO_EXCLUSION_UNDONE",
-                "presentationToken" to diagnosticToken(ids.joinToString(","), "presentation"),
-                "members" to ids.size.toString(),
-            )
-            _state.update { it.copy(undoHiddenPhotoIds = emptyList(), transientNotice = "Photos restored") }
-        }
-    }
-
-    fun clearHideUndo() {
-        _state.update { it.copy(undoHiddenPhotoIds = emptyList()) }
-    }
-
-    /** Hide the photo on screen from all future playback; undone by [unhideAllPhotos]. */
-    fun hideCurrentPhoto() {
-        engine.hideCurrent()
-        _state.update { it.copy(transientNotice = appContext.getString(R.string.msg_photo_hidden)) }
-    }
-
-    /** Restore every hidden photo — the escape hatch for an accidental hide. */
-    fun unhideAllPhotos() {
-        viewModelScope.launch {
-            val hidden = runCatching { services.photoDao.hiddenCount() }.getOrDefault(0)
-            services.photoDao.unhideAll()
-            engine.invalidatePlaybackPool()
-            diagnostics.log(
-                DiagnosticsLog.Category.ENGINE,
-                "PHOTOS_UNHIDDEN",
-                "count" to hidden.toString(),
-            )
-            _state.update {
-                it.copy(transientNotice = appContext.getString(R.string.msg_photos_unhidden, hidden))
-            }
-            engine.next()
-        }
     }
 
     /** Source ids currently feeding playback, used for curation counts. */
@@ -3765,85 +2428,13 @@ class SlideshowViewModel(
 
     // ---- playlists and local-time switching ---------------------------------------
 
-    fun playPlaylist(id: String, overrideMinutes: Int? = null) {
-        viewModelScope.launch {
-            services.settings.update { current ->
-                if (current.playlists.playlists.none { it.id == id && it.enabled }) return@update current
-                val now = System.currentTimeMillis()
-                val until = when {
-                    overrideMinutes == null && current.playlists.scheduleEnabled ->
-                        now + PlaylistSchedule.minutesUntilBoundary(current.playlists.scheduleRules, now) * 60_000L
-                    overrideMinutes == null -> 0L
-                    overrideMinutes < 0 -> Long.MAX_VALUE
-                    else -> now + overrideMinutes.coerceIn(1, 24 * 60) * 60_000L
-                }
-                current.copy(
-                    playlists = current.playlists.copy(
-                        activePlaylistId = id,
-                        manualOverrideUntilEpochMs = until,
-                    )
-                )
-            }
-            diagnostics.log(
-                DiagnosticsLog.Category.ENGINE,
-                "PLAYLIST_STARTED",
-                "playlistToken" to diagnosticToken(id, "playlist"),
-            )
-        }
-    }
-
-    fun createPlaylist(name: String, favoritesOnly: Boolean = false, localUploadsOnly: Boolean = false) {
-        val clean = name.trim().take(80)
-        if (clean.isBlank()) return
-        viewModelScope.launch {
-            services.settings.update { current ->
-                if (current.playlists.playlists.any { it.name.equals(clean, ignoreCase = true) }) return@update current
-                val now = System.currentTimeMillis()
-                val playlist = SlideshowPlaylist(
-                    id = "user_${java.util.UUID.randomUUID()}",
-                    name = clean,
-                    favoritesOnly = favoritesOnly,
-                    localUploadsOnly = localUploadsOnly,
-                    sourceIds = if (localUploadsOnly) setOf(ServiceLocator.SOURCE_LOCAL_UPLOADS) else emptySet(),
-                    folderNames = current.selectedFolders,
-                    selectionMode = SelectionMode.FOLDER_BALANCED_SHUFFLE,
-                    intervalSeconds = current.intervalSecondsClamped,
-                    transitionSelectionMode = current.transitionSelectionMode,
-                    transition = current.transition,
-                    collageMode = current.portraitCollage.mode,
-                    createdAtEpochMs = now,
-                    updatedAtEpochMs = now,
-                )
-                current.copy(playlists = current.playlists.copy(playlists = current.playlists.playlists + playlist))
-            }
-        }
-    }
-
-    fun deletePlaylist(id: String) {
-        if (id in PlaylistSettings.BUILT_IN_IDS) return
-        viewModelScope.launch {
-            services.settings.update { current ->
-                val remaining = current.playlists.playlists.filterNot { it.id == id }
-                val active = if (current.playlists.activePlaylistId == id) PlaylistSettings.PLAYLIST_ALL
-                    else current.playlists.activePlaylistId
-                current.copy(
-                    playlists = current.playlists.copy(
-                        playlists = remaining,
-                        activePlaylistId = active,
-                        scheduleRules = current.playlists.scheduleRules.filterNot { it.playlistId == id },
-                    )
-                )
-            }
-            engine.deletePlaylistShuffleState(id)
-        }
-    }
-
-    fun setPlaylistScheduleEnabled(enabled: Boolean) {
-        viewModelScope.launch {
-            services.settings.update { it.copy(playlists = it.playlists.copy(scheduleEnabled = enabled)) }
-        }
-    }
-
+    fun playPlaylist(id: String, overrideMinutes: Int? = null) =
+        playlistActions.playPlaylist(id, overrideMinutes)
+    fun createPlaylist(name: String, favoritesOnly: Boolean = false, localUploadsOnly: Boolean = false) =
+        playlistActions.createPlaylist(name, favoritesOnly, localUploadsOnly)
+    fun deletePlaylist(id: String) = playlistActions.deletePlaylist(id)
+    fun setPlaylistScheduleEnabled(enabled: Boolean) =
+        playlistActions.setPlaylistScheduleEnabled(enabled)
     fun addPlaylistScheduleRule(
         name: String,
         playlistId: String,
@@ -3851,103 +2442,9 @@ class SlideshowViewModel(
         endTime: String,
         days: Set<Int> = setOf(1, 2, 3, 4, 5, 6, 7),
         priority: Int = 0,
-    ) {
-        if (SleepSchedule.parseMinutes(startTime) == null || SleepSchedule.parseMinutes(endTime) == null) return
-        viewModelScope.launch {
-            services.settings.update { current ->
-                if (current.playlists.playlists.none { it.id == playlistId }) return@update current
-                val rule = PlaylistScheduleRule(
-                    id = "rule_${java.util.UUID.randomUUID()}",
-                    name = name.trim().ifBlank { "Playlist schedule" }.take(80),
-                    playlistId = playlistId,
-                    daysOfWeek = days,
-                    startTime = startTime,
-                    endTime = endTime,
-                    priority = priority,
-                    updatedAtEpochMs = System.currentTimeMillis(),
-                )
-                current.copy(playlists = current.playlists.copy(scheduleRules = current.playlists.scheduleRules + rule))
-            }
-        }
-    }
-
-    fun deletePlaylistScheduleRule(id: String) {
-        viewModelScope.launch {
-            services.settings.update { current ->
-                current.copy(playlists = current.playlists.copy(
-                    scheduleRules = current.playlists.scheduleRules.filterNot { it.id == id }
-                ))
-            }
-        }
-    }
-
-    fun cancelPlaylistOverride() {
-        viewModelScope.launch {
-            services.settings.update { it.copy(playlists = it.playlists.copy(manualOverrideUntilEpochMs = 0L)) }
-        }
-    }
-
-    private fun playlistScheduleConfig(settings: PlaylistSettings?): String = settings?.let {
-        "${it.scheduleEnabled}|${it.defaultPlaylistId}|${it.manualOverrideUntilEpochMs}|" +
-            it.playlists.joinToString(",") { p -> "${p.id}:${p.enabled}" } + "|" +
-            it.scheduleRules.joinToString(";") { r ->
-                "${r.id}:${r.enabled}:${r.playlistId}:${r.daysOfWeek.sorted()}:${r.startTime}:${r.endTime}:" +
-                    "${r.priority}:${r.startDateIso}:${r.endDateIso}:${r.updatedAtEpochMs}"
-            }
-    }.orEmpty()
-
-    private fun restartPlaylistScheduleWatcher() {
-        playlistScheduleJob?.cancel()
-        playlistScheduleJob = viewModelScope.launch {
-            while (isActive) {
-                val current = services.settings.settings.first()
-                val config = current.playlists
-                val now = System.currentTimeMillis()
-                val overrideActive = config.manualOverrideUntilEpochMs == Long.MAX_VALUE ||
-                    config.manualOverrideUntilEpochMs > now
-                if (!overrideActive) {
-                    // An expired manual override (e.g. from On This Day, or a timed
-                    // playlist activation) must revert regardless of whether day/time
-                    // schedule switching is separately enabled — otherwise a frame with
-                    // scheduling off (the default) stays parked on the override's
-                    // playlist forever once its window passes.
-                    val match = if (config.scheduleEnabled) {
-                        PlaylistSchedule.activeRule(config.scheduleRules, now)
-                    } else {
-                        null
-                    }
-                    val target = match?.rule?.playlistId ?: config.defaultPlaylistId
-                    if (config.playlists.any { it.id == target && it.enabled } && target != config.activePlaylistId) {
-                        services.settings.update { latest ->
-                            latest.copy(playlists = latest.playlists.copy(activePlaylistId = target))
-                        }
-                        diagnostics.log(
-                            DiagnosticsLog.Category.ENGINE,
-                            "PLAYLIST_SCHEDULE_SWITCHED",
-                            "playlistId" to target,
-                            "ruleId" to match?.rule?.id.orEmpty(),
-                        )
-                    }
-                    _state.update { it.copy(activePlaylistRuleName = match?.rule?.name) }
-                } else {
-                    _state.update { it.copy(activePlaylistRuleName = null) }
-                }
-                val scheduleDelayMs = PlaylistSchedule.minutesUntilBoundary(config.scheduleRules, now)
-                    .coerceIn(1, 15).toLong() * 60_000L
-                // A timed manual override (notably On This Day) is also a schedule
-                // boundary. Without this, a five-minute interlude can remain active
-                // until the watcher's next fifteen-minute wake and repeatedly select
-                // its final image in the meantime.
-                delay(
-                    PlaylistOverrideWakePolicy.nextWakeDelayMs(
-                        nowEpochMs = now,
-                        scheduleDelayMs = scheduleDelayMs,
-                        overrideUntilEpochMs = config.manualOverrideUntilEpochMs,
-                    )
-                )
-            }
-        }
-    }
+    ) = playlistActions.addPlaylistScheduleRule(name, playlistId, startTime, endTime, days, priority)
+    fun deletePlaylistScheduleRule(id: String) = playlistActions.deletePlaylistScheduleRule(id)
+    fun cancelPlaylistOverride() = playlistActions.cancelPlaylistOverride()
 
     private fun playlistFilteredIds(ids: List<String>): List<String> {
         if (activePlaylistSourceFilter.isEmpty()) return ids.distinct()
@@ -4277,363 +2774,36 @@ class SlideshowViewModel(
 
     // ---- weather overlay (spec §11) ----
 
-    fun setWeatherEnabled(value: Boolean) {
-        viewModelScope.launch {
-            services.settings.update { it.copy(weather = it.weather.copy(enabled = value)) }
-        }
-    }
-
     /** Whether a successfully fetched weather reading is drawn as an on-screen overlay. */
     fun setWeatherOverlayShow(value: Boolean) = updateOverlays { it.copy(weatherShow = value) }
+    fun setWeatherEnabled(value: Boolean) = weatherActions.setWeatherEnabled(value)
+    fun setWeatherLocation(latitudeText: String, longitudeText: String) =
+        weatherActions.setWeatherLocation(latitudeText, longitudeText)
+    fun setWeatherUnits(units: TemperatureUnits) = weatherActions.setWeatherUnits(units)
+    fun setWeatherEndpoint(url: String) = weatherActions.setWeatherEndpoint(url)
+    fun setWeatherApiKey(key: String) = weatherActions.setWeatherApiKey(key)
 
-    /** Coordinates are typed by the user, so the app never needs a location permission. */
-    fun setWeatherLocation(latitudeText: String, longitudeText: String) {
-        val lat = latitudeText.trim().toDoubleOrNull()
-        val lon = longitudeText.trim().toDoubleOrNull()
-        if (lat == null || lon == null || lat !in -90.0..90.0 || lon !in -180.0..180.0) {
-            _state.update { it.copy(transientNotice = appContext.getString(R.string.msg_weather_bad_location)) }
-            return
-        }
-        viewModelScope.launch {
-            services.settings.update {
-                it.copy(weather = it.weather.copy(latitude = lat, longitude = lon))
-            }
-        }
-    }
+    // ---- screen brightness and night mode ----
 
-    fun setWeatherUnits(units: TemperatureUnits) {
-        viewModelScope.launch {
-            services.settings.update { it.copy(weather = it.weather.copy(units = units)) }
-        }
-    }
-
-    fun setWeatherEndpoint(url: String) {
-        val trimmed = url.trim()
-        if (!trimmed.startsWith("http")) return
-        viewModelScope.launch {
-            services.settings.update { it.copy(weather = it.weather.copy(endpointBaseUrl = trimmed)) }
-        }
-    }
-
-    /** The key is a secret: stored in the Keystore, never in the settings file. */
-    fun setWeatherApiKey(key: String) {
-        viewModelScope.launch {
-            val ref = if (key.isBlank()) "" else WEATHER_KEY_REF
-            if (key.isNotBlank()) services.secretStore.store(WEATHER_KEY_REF, "weather_api_key", key)
-            else services.secretStore.forget(WEATHER_KEY_REF)
-            services.settings.update { it.copy(weather = it.weather.copy(apiKeyRef = ref)) }
-        }
-    }
-
-    private fun restartWeather(settings: com.example.familyphotoframe.data.settings.WeatherSettings) {
-        viewModelScope.launch {
-            val key = if (settings.apiKeyRef.isBlank()) "" else services.secretStore.reveal(settings.apiKeyRef).orEmpty()
-            services.weather.restart(viewModelScope, settings, key)
-            refreshWeatherText()
-        }
-    }
-
-    /**
-     * Recompute the overlay string. Weather is decoration, so this only ever reads the
-     * last snapshot — it never waits on the network and cannot delay a slide.
-     */
-    private fun refreshWeatherText() {
-        val settings = lastSettings?.weather ?: return
-        val display = WeatherPresentation.resolve(
-            snapshot = services.weather.snapshot.value,
-            nowEpochMs = System.currentTimeMillis(),
-            maxStaleMs = settings.maxStaleMs,
-            units = settings.units,
-            staleAfterMs = settings.staleAfterMs,
-        )
-        val text = (display as? WeatherDisplay.Visible)?.text
-        _state.update { it.copy(weatherText = if (settings.enabled) text else null) }
-    }
-
-
-    fun setNightBrightness(value: Float) {
-        viewModelScope.launch {
-            services.settings.update {
-                it.copy(schedule = it.schedule.copy(brightnessNight = value.coerceIn(0.01f, 1f)))
-            }
-        }
-    }
-
-    /**
-     * Re-evaluate the quiet-hours window and drive the engine and screen brightness.
-     *
-     * The state is derived from the wall clock each time rather than tracked with a
-     * running timer, so it is correct after a reboot, process death, or a device that
-     * was suspended across the transition (spec §22.4). Waits are capped so a clock
-     * change or timezone shift is picked up within the cap rather than at the next
-     * scheduled boundary.
-     */
-    /**
-     * Watches for the scheduled automatic index refresh (spec §20).
-     *
-     * Polls the wall clock rather than sleeping until the exact moment, for the same
-     * reason as the sleep watcher: a timer does not survive a reboot or a suspended
-     * device, whereas re-deriving "is it due?" from the clock and the last-run timestamp
-     * is correct however the device behaved in between.
-     */
-    private fun rescanConfigSig(schedule: ScheduleSettings?): String =
-        schedule?.let { "${it.autoRescanEnabled}|${it.autoRescanAt}|${it.autoRescanDays}" } ?: ""
-
-    private fun restartRescanWatcher(schedule: ScheduleSettings) {
-        rescanScheduleJob?.cancel()
-        val days = RescanSchedule.parseDays(schedule.autoRescanDays)
-        val at = SleepSchedule.parseMinutes(schedule.autoRescanAt)
-        if (!schedule.autoRescanEnabled || at == null || days.isEmpty()) return
-
-        rescanScheduleJob = viewModelScope.launch {
-            while (isActive) {
-                val now = System.currentTimeMillis()
-                val due = RescanSchedule.isDue(
-                    nowMinutes = nowMinutes(),
-                    nowDayOfWeek = java.time.LocalDate.now().dayOfWeek.value,
-                    atMinutes = at,
-                    days = days,
-                    // Read fresh rather than captured: the watcher writes this value, and
-                    // a captured copy would go stale the moment it fired once.
-                    minutesSinceLastRun = RescanSchedule.minutesSince(
-                        services.settings.settings.first()
-                            .schedule.lastAutoRescanAtEpochMs.takeIf { it > 0L },
-                        now,
-                    ),
-                )
-                if (due) {
-                    diagnostics.log(
-                        DiagnosticsLog.Category.SCAN, "AUTO_RESCAN_START",
-                        "at" to schedule.autoRescanAt,
-                        "days" to RescanSchedule.formatDays(days),
-                    )
-                    // Persist before scanning: if the scan crashes or the device dies
-                    // mid-way, the slot is still consumed rather than retried in a loop.
-                    services.settings.update {
-                        it.copy(schedule = it.schedule.copy(lastAutoRescanAtEpochMs = now))
-                    }
-                    try {
-                        requestSourceRefresh(
-                            trigger = SourceRefreshTrigger.SCHEDULED_RESCAN,
-                            origin = DiagnosticOrigin.SCHEDULER,
-                            awaitCompletion = true,
-                        )
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (error: Exception) {
-                        diagnostics.log(
-                            DiagnosticsLog.Category.SCAN, "AUTO_RESCAN_FAILED",
-                            "error" to error.javaClass.simpleName,
-                        )
-                    }
-                    diagnostics.log(DiagnosticsLog.Category.SCAN, "AUTO_RESCAN_DONE")
-                    // Step past this slot so the same window cannot re-trigger.
-                    delay(RESCAN_SETTLE_MS)
-                } else {
-                    delay(RESCAN_POLL_MS)
-                }
-            }
-        }
-    }
+    fun setNightBrightness(value: Float) = brightnessActions.setNightBrightness(value)
+    fun setBrightnessMode(mode: BrightnessMode) = brightnessActions.setBrightnessMode(mode)
+    fun previewBrightness(value: Float?) = brightnessActions.previewBrightness(value)
+    fun setManualBrightness(value: Float) = brightnessActions.setManualBrightness(value)
+    fun setBrightnessPeriod(index: Int, startTime: String, brightness: Float, action: NightAction) =
+        brightnessActions.setBrightnessPeriod(index, startTime, brightness, action)
+    fun temporaryWake() = brightnessActions.temporaryWake()
+    fun onAmbientLight(lux: Float?, available: Boolean) =
+        brightnessActions.onAmbientLight(lux, available)
 
     // ---- "On this day" memory interlude (docs/FPF-FEAT-ON-THIS-DAY-001.md) --------
 
-    fun setOnThisDayEnabled(enabled: Boolean) {
-        viewModelScope.launch {
-            services.settings.update { it.copy(onThisDay = it.onThisDay.copy(enabled = enabled)) }
-        }
-    }
-
-    fun setOnThisDayTimesPerDay(timesPerDay: Int) {
-        viewModelScope.launch {
-            services.settings.update {
-                it.copy(onThisDay = it.onThisDay.copy(timesPerDay = timesPerDay.coerceIn(1, 12)))
-            }
-        }
-    }
-
-    fun setOnThisDayDurationMinutes(minutes: Int) {
-        viewModelScope.launch {
-            services.settings.update {
-                it.copy(onThisDay = it.onThisDay.copy(durationMinutes = minutes.coerceIn(1, 60)))
-            }
-        }
-    }
-
-    fun setOnThisDayMinYearsAgo(years: Int) {
-        viewModelScope.launch {
-            services.settings.update {
-                it.copy(onThisDay = it.onThisDay.copy(minYearsAgo = years.coerceIn(0, 100)))
-            }
-        }
-    }
-
-    /** Deliberately excludes lastTriggeredEpochMs — see rescanConfigSig's own comment. */
-    private fun onThisDayConfigSig(cfg: OnThisDaySettings?): String =
-        cfg?.let { "${it.enabled}|${it.timesPerDay}|${it.durationMinutes}|${it.minYearsAgo}" }.orEmpty()
-
-    private fun restartOnThisDayWatcher(cfg: OnThisDaySettings) {
-        onThisDayJob?.cancel()
-        if (!cfg.enabled) return
-        onThisDayJob = viewModelScope.launch {
-            while (isActive) {
-                runCatching { maybeAutoTriggerOnThisDay() }
-                delay(ON_THIS_DAY_POLL_MS)
-            }
-        }
-    }
-
-    private suspend fun maybeAutoTriggerOnThisDay() {
-        val current = services.settings.settings.first()
-        val cfg = current.onThisDay
-        if (!cfg.enabled) return
-        // Quiet hours: the slideshow itself is paused, so firing now would just be
-        // consumed silently — wait for the next window after waking instead (§5.5).
-        if (_state.value.asleep) return
-        // Never preempts an active override (§0.3) — skip this occurrence entirely
-        // rather than deferring it; the next window gets its own chance.
-        val playlists = current.playlists
-        val overrideActive = playlists.manualOverrideUntilEpochMs == Long.MAX_VALUE ||
-            playlists.manualOverrideUntilEpochMs > System.currentTimeMillis()
-        if (overrideActive) return
-        val due = OnThisDaySchedule.isDue(
-            nowMinutes = nowMinutes(),
-            timesPerDay = cfg.timesPerDay,
-            minutesSinceLastTrigger = RescanSchedule.minutesSince(
-                cfg.lastTriggeredEpochMs.takeIf { it > 0L },
-                System.currentTimeMillis(),
-            ),
-        )
-        if (!due) return
-        triggerOnThisDay(preview = false)
-    }
-
-    /**
-     * On-demand trigger for an eventual Settings/web "Preview now" button (Phase 4 of
-     * docs/FPF-FEAT-ON-THIS-DAY-001.md) — bypasses the enabled/schedule checks so it
-     * works even while the feature is off, matching [previewFolderOnce]'s calling
-     * convention (fire-and-forget from a button, notice surfaced via [transientNotice]).
-     */
-    fun previewOnThisDay() {
-        viewModelScope.launch {
-            triggerOnThisDay(preview = true)?.let { message ->
-                _state.update { it.copy(transientNotice = message) }
-            }
-        }
-    }
-
-    /**
-     * Assembles today's memory pool and activates it via the same bounded playlist
-     * override that manual playlist activation already uses (`playPlaylist`) — the
-     * existing `restartPlaylistScheduleWatcher` loop automatically reverts once the
-     * override expires, so no separate revert logic is needed here.
-     *
-     * @param preview true for the on-demand "Preview now" action, which bypasses the
-     * enabled/schedule checks that already ran (or didn't) before this is called.
-     * @return null on success, or a message explaining why nothing happened.
-     */
-    private suspend fun triggerOnThisDay(preview: Boolean): String? {
-        val current = services.settings.settings.first()
-        val cfg = current.onThisDay
-        if (!preview && !cfg.enabled) return "On this day is disabled"
-        val today = java.time.LocalDate.now()
-        val monthDay = "%02d-%02d".format(today.monthValue, today.dayOfMonth)
-        val candidates = services.photoDao.onThisDayCandidates(
-            sourceIds = currentPlaybackSourceIds(),
-            monthDay = monthDay,
-            maxFailures = current.temporarilySuppressAfterDecodeFailures,
-            allowHeif = if (services.allowHeifPlayback) 1 else 0,
-            limit = ON_THIS_DAY_CANDIDATE_LIMIT,
-        )
-        val selected = OnThisDaySelection.select(
-            candidates = candidates,
-            currentYear = today.year,
-            minYearsAgo = cfg.minYearsAgo,
-            maxYears = ON_THIS_DAY_MAX_YEARS,
-        )
-        if (selected.isEmpty()) {
-            diagnostics.log(DiagnosticsLog.Category.ENGINE, "ON_THIS_DAY_SKIPPED_EMPTY")
-            return if (preview) "No memories match today's date yet" else null
-        }
-        engine.setOnThisDayPool(selected.map { it.id })
-        val now = System.currentTimeMillis()
-        services.settings.update { latest ->
-            latest.copy(
-                playlists = latest.playlists.copy(
-                    activePlaylistId = PlaylistSettings.PLAYLIST_ON_THIS_DAY,
-                    manualOverrideUntilEpochMs = now + cfg.durationMinutes.coerceIn(1, 60) * 60_000L,
-                ),
-                onThisDay = latest.onThisDay.copy(lastTriggeredEpochMs = now),
-            )
-        }
-        val years = selected.map {
-            java.time.Instant.ofEpochMilli(it.dateTakenEpochMs).atZone(java.time.ZoneId.systemDefault()).year
-        }
-        diagnostics.log(
-            DiagnosticsLog.Category.ENGINE, "ON_THIS_DAY_TRIGGERED",
-            "years" to years.size.toString(),
-            "preview" to preview.toString(),
-        )
-        _state.update {
-            it.copy(transientNotice = "Showing memories from " + years.joinToString(", "))
-        }
-        return null
-    }
-
-    private fun restartBrightnessWatcher(automation: BrightnessAutomationSettings) {
-        brightnessJob?.cancel()
-        brightnessJob = viewModelScope.launch {
-            while (isActive) {
-                val nowMs = System.currentTimeMillis()
-                val now = nowMinutes()
-                val decision = BrightnessPolicy.decide(automation, nowMs, now)
-                val brightness = applyAmbientBrightness(decision.brightness, automation)
-                val asleep = decision.action == NightAction.PAUSE_SLIDESHOW ||
-                    decision.action == NightAction.BLACK_SCREEN
-                engine.setAsleep(asleep)
-                _state.update {
-                    it.copy(
-                        asleep = asleep,
-                        screenBrightness = brightness,
-                        activeBrightnessPeriodId = decision.periodId,
-                        activeNightAction = decision.action,
-                        temporaryWakeActive = decision.temporaryWake,
-                        blackScreen = decision.action == NightAction.BLACK_SCREEN && !decision.temporaryWake,
-                        ambientLux = ambientLux,
-                        ambientSensorAvailable = ambientSensorAvailable,
-                    )
-                }
-                diagnostics.log(
-                    DiagnosticsLog.Category.ENGINE,
-                    "BRIGHTNESS_LEVEL_APPLIED",
-                    "level" to (brightness * 100f).toInt().coerceIn(1, 100).toString(),
-                    "action" to decision.action.name,
-                    "mode" to automation.mode.name,
-                    "periodToken" to diagnosticToken(decision.periodId.orEmpty(), "period"),
-                )
-                delay(30_000L)
-            }
-        }
-    }
-
-    private fun applyAmbientBrightness(base: Float, settings: BrightnessAutomationSettings): Float {
-        if (settings.mode != BrightnessMode.AMBIENT && settings.mode != BrightnessMode.SCHEDULED_AMBIENT) {
-            return base.coerceIn(0.01f, 1f)
-        }
-        val lux = ambientLux ?: return base.coerceIn(settings.ambientMinimum, settings.ambientMaximum)
-        // Logarithmic response: useful from a dark room through ordinary indoor light,
-        // with a hard min/max so sensor noise cannot flash the wall frame.
-        val normalized = (kotlin.math.ln(1f + lux.coerceAtLeast(0f)) / kotlin.math.ln(1001f))
-            .coerceIn(0f, 1f)
-        val ambient = settings.ambientMinimum +
-            (settings.ambientMaximum - settings.ambientMinimum) * normalized
-        return minOf(base, ambient).coerceIn(0.01f, 1f)
-    }
-
-    private fun nowMinutes(): Int {
-        val c = java.util.Calendar.getInstance()
-        return c.get(java.util.Calendar.HOUR_OF_DAY) * 60 + c.get(java.util.Calendar.MINUTE)
-    }
+    fun setOnThisDayEnabled(enabled: Boolean) = onThisDayActions.setOnThisDayEnabled(enabled)
+    fun setOnThisDayTimesPerDay(timesPerDay: Int) =
+        onThisDayActions.setOnThisDayTimesPerDay(timesPerDay)
+    fun setOnThisDayDurationMinutes(minutes: Int) =
+        onThisDayActions.setOnThisDayDurationMinutes(minutes)
+    fun setOnThisDayMinYearsAgo(years: Int) = onThisDayActions.setOnThisDayMinYearsAgo(years)
+    fun previewOnThisDay() = onThisDayActions.previewOnThisDay()
 
     fun setWebUploadEnabled(enabled: Boolean) {
         viewModelScope.launch {
@@ -4658,75 +2828,6 @@ class SlideshowViewModel(
         viewModelScope.launch {
             services.settings.update { it.copy(webUpload = it.webUpload.copy(maxFileBytes = bytes)) }
         }
-    }
-
-    fun setBrightnessMode(mode: BrightnessMode) {
-        viewModelScope.launch {
-            services.settings.update { it.copy(brightnessAutomation = it.brightnessAutomation.copy(mode = mode)) }
-        }
-    }
-
-    /**
-     * Window-only brightness while a settings slider is dragged; nothing is persisted. The
-     * matching setter clears it once the chosen value has been saved, so the window does not
-     * flick back to the previous level in between.
-     */
-    fun previewBrightness(value: Float?) {
-        _state.update { it.copy(brightnessPreview = value?.coerceIn(0.01f, 1f)) }
-    }
-
-    fun setManualBrightness(value: Float) {
-        viewModelScope.launch {
-            services.settings.update {
-                it.copy(brightnessAutomation = it.brightnessAutomation.copy(
-                    manualBrightness = value.coerceIn(0.01f, 1f),
-                ))
-            }
-            previewBrightness(null)
-        }
-    }
-
-    fun setBrightnessPeriod(index: Int, startTime: String, brightness: Float, action: NightAction) {
-        val startMinutes = SleepSchedule.parseMinutes(startTime) ?: run {
-            previewBrightness(null)
-            return
-        }
-        val normalizedStart = SleepSchedule.formatMinutes(startMinutes)
-        viewModelScope.launch {
-            services.settings.update { current ->
-                val periods = current.brightnessAutomation.periods.toMutableList()
-                if (index !in periods.indices) return@update current
-                periods[index] = periods[index].copy(
-                    startTime = normalizedStart,
-                    brightness = brightness.coerceIn(0.01f, 1f),
-                    action = action,
-                )
-                current.copy(brightnessAutomation = current.brightnessAutomation.copy(periods = periods))
-            }
-            previewBrightness(null)
-        }
-    }
-
-    fun temporaryWake() {
-        viewModelScope.launch {
-            services.settings.update { current ->
-                val minutes = current.brightnessAutomation.temporaryWakeMinutes.coerceIn(1, 240)
-                current.copy(brightnessAutomation = current.brightnessAutomation.copy(
-                    temporaryWakeUntilEpochMs = System.currentTimeMillis() + minutes * 60_000L,
-                ))
-            }
-            diagnostics.log(DiagnosticsLog.Category.APP, "TEMPORARY_WAKE_STARTED")
-        }
-    }
-
-    fun onAmbientLight(lux: Float?, available: Boolean) {
-        ambientSensorAvailable = available
-        if (lux != null && lux.isFinite()) {
-            val previous = ambientLux
-            ambientLux = if (previous == null) lux.coerceAtLeast(0f)
-                else previous * 0.8f + lux.coerceAtLeast(0f) * 0.2f
-        }
-        _state.update { it.copy(ambientLux = ambientLux, ambientSensorAvailable = available) }
     }
 
     private suspend fun refreshHealth() {
@@ -4831,266 +2932,35 @@ class SlideshowViewModel(
         viewModelScope.launch { services.settings.update { it.copy(overlays = transform(it.overlays)) } }
     }
 
-    // ---- D-pad / transport ---------------------------------------------------
+    // ---- Web control server and remembered browsers (spec §15) ----
 
-    fun setWebEnabled(value: Boolean) {
-        viewModelScope.launch {
-            services.settings.update { it.copy(web = it.web.copy(enabled = value)) }
-        }
-    }
-
-
-    fun refreshRememberedBrowsers() {
-        viewModelScope.launch {
-            val records = runCatching { services.rememberedBrowsers.list() }.getOrDefault(emptyList())
-            _state.update { current ->
-                current.copy(
-                    rememberedBrowserRecords = records.map { row ->
-                        RememberedBrowserUi(
-                            id = row.id,
-                            label = row.label,
-                            browserSummary = row.browserSummary.orEmpty(),
-                            osSummary = row.osSummary.orEmpty(),
-                            createdAtEpochMs = row.createdAtEpochMs,
-                            lastUsedAtEpochMs = row.lastUsedAtEpochMs,
-                            expiresAtEpochMs = row.expiresAtEpochMs,
-                            revoked = row.revokedAtEpochMs != null,
-                        )
-                    }
-                )
-            }
-        }
-    }
-
-    private fun updateRememberedPolicy(
-        transform: (com.example.familyphotoframe.data.settings.RememberedBrowserPolicy) ->
-            com.example.familyphotoframe.data.settings.RememberedBrowserPolicy,
-    ) {
-        viewModelScope.launch {
-            val current = services.rememberedBrowsers.policy()
-            services.rememberedBrowsers.updatePolicy(transform(current).normalized())
-            refreshRememberedBrowsers()
-        }
-    }
-
+    fun setWebEnabled(value: Boolean) = webControlActions.setWebEnabled(value)
+    fun refreshRememberedBrowsers() = webControlActions.refreshRememberedBrowsers()
     fun setRememberedBrowsersEnabled(enabled: Boolean) =
-        updateRememberedPolicy { it.copy(enabled = enabled) }
-
-    fun setRememberedAllowForever(allowed: Boolean) =
-        updateRememberedPolicy { it.copy(allowForever = allowed) }
-
+        webControlActions.setRememberedBrowsersEnabled(enabled)
+    fun setRememberedAllowForever(allowed: Boolean) = webControlActions.setRememberedAllowForever(allowed)
     fun setRememberedDefaultExpiry(mode: com.example.familyphotoframe.data.settings.RememberExpiryMode) =
-        updateRememberedPolicy { it.copy(defaultExpiry = mode) }
-
-    fun setRememberedMaximumBrowsers(count: Int) =
-        updateRememberedPolicy { it.copy(maxRememberedBrowsers = count.coerceIn(1, 32)) }
-
-    fun setRememberedMaximumExpiryDays(days: Int) =
-        updateRememberedPolicy {
-            it.copy(maxExpirySeconds = days.coerceIn(1, 3650).toLong() * 24L * 60L * 60L)
-        }
-
-    fun revokeRememberedBrowser(id: String) {
-        viewModelScope.launch {
-            if (services.rememberedBrowsers.revoke(id)) {
-                services.webServer.revokeRememberedBrowserSessions(id)
-            }
-            refreshRememberedBrowsers()
-        }
-    }
-
-    fun revokeAllRememberedBrowsers() {
-        viewModelScope.launch {
-            services.rememberedBrowsers.revokeAll()
-            services.webServer.revokeAllWebSessions()
-            refreshRememberedBrowsers()
-        }
-    }
-
-    fun setWebPort(port: Int) {
-        viewModelScope.launch {
-            services.settings.update { it.copy(web = it.web.copy(port = port)) }
-        }
-    }
-
-    /** Invalidate web sessions and show a new pairing PIN (spec §15.2). */
-    fun regenerateWebPin(keepRememberedBrowsers: Boolean = false) {
-        // The PBKDF2 derivation is deliberately expensive. This intent is invoked from a
-        // Compose button, so never do that work (or remembered-browser Room work) inline on
-        // the main thread. The CAS also closes the brief window before Compose disables the
-        // button, so repeated taps produce one new PIN rather than a queue of derivations.
-        if (!webPinRegenerationInFlight.compareAndSet(false, true)) return
-        _state.update { it.copy(webPinRegenerationInProgress = true) }
-        viewModelScope.launch {
-            try {
-                val generated = try {
-                    withContext(services.dispatchers.default) {
-                        services.webServer.regeneratePin(
-                            revokeRememberedBrowsers = !keepRememberedBrowsers,
-                        )
-                    }
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    null
-                }
-                refreshWebInfo()
-                refreshRememberedBrowsers()
-                if (generated == null && services.webServer.url() != null) {
-                    _state.update {
-                        it.copy(transientNotice = "Couldn’t generate a new web PIN.")
-                    }
-                }
-            } finally {
-                webPinRegenerationInFlight.set(false)
-                _state.update { it.copy(webPinRegenerationInProgress = false) }
-            }
-        }
-    }
-
-    /** Pull the current PIN/URL from the server into UI state. */
-    fun refreshWebInfo() {
-        _state.update {
-            it.copy(
-                webPin = services.webServer.visiblePin(),
-                webUrl = services.webServer.url(),
-                webQrUrl = services.webServer.qrPairingUrl(),
-            )
-        }
-    }
+        webControlActions.setRememberedDefaultExpiry(mode)
+    fun setRememberedMaximumBrowsers(count: Int) = webControlActions.setRememberedMaximumBrowsers(count)
+    fun setRememberedMaximumExpiryDays(days: Int) = webControlActions.setRememberedMaximumExpiryDays(days)
+    fun revokeRememberedBrowser(id: String) = webControlActions.revokeRememberedBrowser(id)
+    fun revokeAllRememberedBrowsers() = webControlActions.revokeAllRememberedBrowsers()
+    fun setWebPort(port: Int) = webControlActions.setWebPort(port)
+    fun regenerateWebPin(keepRememberedBrowsers: Boolean = false) =
+        webControlActions.regenerateWebPin(keepRememberedBrowsers)
+    fun refreshWebInfo() = webControlActions.refreshWebInfo()
 
     // ---- Local thumbnail cache (docs/FPF-FEAT-LOCAL-THUMBNAIL-CACHE-001.md) ----
 
-    private var localThumbnailRebuildJob: Job? = null
+    fun setLocalThumbnailCacheEnabled(enabled: Boolean) =
+        thumbnailCacheActions.setLocalThumbnailCacheEnabled(enabled)
+    fun setLocalThumbnailCacheMaxGiB(gib: Int) =
+        thumbnailCacheActions.setLocalThumbnailCacheMaxGiB(gib)
+    fun refreshLocalThumbnailCacheInfo() = thumbnailCacheActions.refreshLocalThumbnailCacheInfo()
+    fun cleanLocalThumbnailCache() = thumbnailCacheActions.cleanLocalThumbnailCache()
+    fun rebuildLocalThumbnailCache() = thumbnailCacheActions.rebuildLocalThumbnailCache()
 
-    fun setLocalThumbnailCacheEnabled(enabled: Boolean) {
-        viewModelScope.launch {
-            services.settings.update {
-                it.copy(localThumbnailCache = it.localThumbnailCache.copy(enabled = enabled))
-            }
-        }
-    }
-
-    fun setLocalThumbnailCacheMaxGiB(gib: Int) {
-        val bytes = gib.coerceAtLeast(1).toLong() * 1024L * 1024L * 1024L
-        viewModelScope.launch {
-            services.settings.update {
-                it.copy(localThumbnailCache = it.localThumbnailCache.copy(maxBytes = bytes))
-            }
-        }
-    }
-
-    /** Populates the usage/effective-max display fields; call when the settings card opens. */
-    fun refreshLocalThumbnailCacheInfo() {
-        viewModelScope.launch {
-            val usage = services.localThumbnailCache.currentSizeBytes()
-            val requested = services.settings.settings.first().localThumbnailCache.maxBytes
-            val effectiveMax = com.example.familyphotoframe.data.cache.LocalThumbnailCache
-                .clampMaxBytes(requested, appContext, usage)
-            _state.update {
-                it.copy(
-                    localThumbnailCacheUsageBytes = usage,
-                    localThumbnailCacheEffectiveMaxBytes = effectiveMax,
-                )
-            }
-        }
-    }
-
-    fun cleanLocalThumbnailCache() {
-        localThumbnailRebuildJob?.cancel()
-        viewModelScope.launch {
-            services.localThumbnailCache.clear()
-            refreshLocalThumbnailCacheInfo()
-            _state.update { it.copy(transientNotice = "Local photo cache cleared") }
-        }
-    }
-
-    /**
-     * Clears the cache, then eagerly walks the local photo index and populates it —
-     * unlike [cleanLocalThumbnailCache], which just clears and lets the cache repopulate
-     * lazily as photos are shown again. Paged and yields between photos so it competes
-     * as little as possible with live playback decode, and pauses entirely rather than
-     * fights the existing memory-pressure circuit breaker for the same budget.
-     */
-    fun rebuildLocalThumbnailCache() {
-        localThumbnailRebuildJob?.cancel()
-        localThumbnailRebuildJob = viewModelScope.launch {
-            services.localThumbnailCache.clear()
-            services.localThumbnailCache.rebuildInProgress = true
-            services.localThumbnailCache.rebuildCount = 0
-            _state.update {
-                it.copy(localThumbnailCacheRebuildInProgress = true, localThumbnailCacheRebuildCount = 0)
-            }
-            try {
-                val metrics = appContext.resources.displayMetrics
-                val targetW = metrics.widthPixels.coerceAtLeast(1)
-                val targetH = metrics.heightPixels.coerceAtLeast(1)
-                var offset = 0
-                var populated = 0
-                while (isActive) {
-                    if (!memoryProtection.value.allowNextPreload) {
-                        delay(2_000)
-                        continue
-                    }
-                    val batch = services.photoDao.localThumbnailRebuildCandidates(limit = 25, offset = offset)
-                    if (batch.isEmpty()) break
-                    offset += batch.size
-                    for (candidate in batch) {
-                        ensureActive()
-                        if (!memoryProtection.value.allowNextPreload) break
-                        val protectedKeys = setOfNotNull(
-                            _state.value.engine.current?.stableId,
-                            _state.value.engine.next?.stableId,
-                        )
-                        val model: Any = if (candidate.openToken.startsWith("content://")) {
-                            Uri.parse(candidate.openToken)
-                        } else {
-                            File(candidate.openToken)
-                        }
-                        val bitmap = decodeForThumbnailRebuild(model, targetW, targetH)
-                        if (bitmap != null) {
-                            try {
-                                services.localThumbnailCache.put(
-                                    candidate.stableId, targetW, targetH, bitmap, protectedKeys,
-                                )
-                            } finally {
-                                if (!bitmap.isRecycled) bitmap.recycle()
-                            }
-                            populated++
-                            services.localThumbnailCache.rebuildCount = populated
-                            _state.update { it.copy(localThumbnailCacheRebuildCount = populated) }
-                        }
-                        yield()
-                    }
-                }
-            } finally {
-                services.localThumbnailCache.rebuildInProgress = false
-                _state.update { it.copy(localThumbnailCacheRebuildInProgress = false) }
-                refreshLocalThumbnailCacheInfo()
-            }
-        }
-    }
-
-    private suspend fun decodeForThumbnailRebuild(model: Any, targetW: Int, targetH: Int): Bitmap? = try {
-        val request = coil.request.ImageRequest.Builder(appContext)
-            .data(model)
-            .size(targetW, targetH)
-            .allowHardware(false)
-            .memoryCachePolicy(coil.request.CachePolicy.DISABLED)
-            .build()
-        when (val result = services.imageLoader.execute(request)) {
-            is coil.request.SuccessResult ->
-                (result.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
-                    ?.takeIf { !it.isRecycled && it.width > 0 && it.height > 0 }
-            else -> null
-        }
-    } catch (c: CancellationException) {
-        throw c
-    } catch (_: OutOfMemoryError) {
-        null
-    } catch (_: Exception) {
-        null
-    }
+    // ---- D-pad / transport ---------------------------------------------------
 
     fun onNext() = engine.next()
     fun onPrevious() = engine.previous()
@@ -5102,7 +2972,7 @@ class SlideshowViewModel(
             // Heap exhaustion is a process condition, not evidence that this photo is
             // defective. Keep the current frame and reservation intact; the memory guard
             // retries the same selected photo only after cooldown and a low-heap sample.
-            recoverFromDecodeOom(failure)
+            presentationReporter.recoverFromDecodeOom(failure)
             return
         }
         if (failure.sourceLevelFailure) {
@@ -5190,282 +3060,50 @@ class SlideshowViewModel(
         }
     }
 
-    fun onCollageCandidateFailure(failure: DecodeFailure) {
-        if (failure.exceptionClass == "OutOfMemoryError") {
-            // Do not count a healthy candidate as failed or consume its shuffle
-            // reservation merely because the process heap was exhausted.
-            recoverFromDecodeOom(failure)
-            return
-        }
-        engine.reportCollageCandidateFailure(failure)
-    }
+    // ---- renderer callbacks: presentation stages, memory, diagnostics ----
 
-    private fun recoverFromDecodeOom(failure: DecodeFailure) {
-        if (failure.exceptionClass != "OutOfMemoryError") return
-        recoverFromPresentationOom(failure.photoId, failure.reason ?: "decode_allocation")
-    }
-
-    fun onRecoverablePresentationOom(photo: DisplayPhoto, reason: String) {
-        recoverFromPresentationOom(photo.id, reason)
-    }
-
-    private fun recoverFromPresentationOom(photoId: Long, trigger: String) {
-        val previousProtection = services.playbackMemoryGuard.snapshot()
-        val protection = services.playbackMemoryGuard.recordDecodeOom(SystemClock.elapsedRealtime())
-        services.diagnosticRuntimeState.updateBitmapInventory(
-            services.diagnosticRuntimeState.snapshot().bitmaps.copy(
-                memoryProtectionLevel = protection.level.name,
-                oomCount = protection.totalOomCount,
-                updatedAtEpochMs = System.currentTimeMillis(),
-            )
-        )
-        val cache = services.imageLoader.memoryCache
-        val before = cache?.size ?: 0
-        cache?.clear()
-        services.webServer.clearPreview()
-        services.diagnostics.log(
-            DiagnosticsLog.Category.MEMORY,
-            "DECODE_OOM_RECOVERY",
-            "trigger" to trigger,
-            "presentationToken" to diagnosticToken(photoId.toString(), "presentation"),
-            "imageCacheBeforeKb" to (before / 1024L).toString(),
-            "webPreviewCleared" to "true",
-            "memoryProtectionLevel" to protection.level.name,
-            "pressurePercent" to protection.pressurePercent.toString(),
-            "circuitOpenMs" to protection.circuitRemainingMs(SystemClock.elapsedRealtime()).toString(),
-            "preloadAllowed" to protection.allowNextPreload.toString(),
-            "maxCollagePhotos" to protection.maxCollagePhotos.toString(),
-            "targetScalePercent" to (protection.decodeScale * 100f).toInt().toString(),
-            "oomCount" to protection.totalOomCount.toString(),
-        )
-        if (protection.level != previousProtection.level ||
-            protection.decisionVersion != previousProtection.decisionVersion
-        ) {
-            services.diagnostics.log(
-                DiagnosticsLog.Category.MEMORY,
-                "MEMORY_PROTECTION_CHANGED",
-                "trigger" to "decode_oom",
-                "previousLevel" to previousProtection.level.name,
-                "memoryProtectionLevel" to protection.level.name,
-                "pressurePercent" to protection.pressurePercent.toString(),
-                "preloadAllowed" to protection.allowNextPreload.toString(),
-                "maxCollagePhotos" to protection.maxCollagePhotos.toString(),
-                "targetScalePercent" to (protection.decodeScale * 100f).toInt().toString(),
-                "oomCount" to protection.totalOomCount.toString(),
-            )
-        }
-    }
-
+    fun onCollageCandidateFailure(failure: DecodeFailure) =
+        presentationReporter.onCollageCandidateFailure(failure)
+    fun onRecoverablePresentationOom(photo: DisplayPhoto, reason: String) =
+        presentationReporter.onRecoverablePresentationOom(photo, reason)
     internal fun onBitmapInventory(
         inventory: PreparedBitmapInventory,
         protection: com.example.familyphotoframe.domain.engine.PlaybackMemoryState,
-    ) {
-        services.diagnosticRuntimeState.updateBitmapInventory(
-            com.example.familyphotoframe.data.diagnostics.DiagnosticRuntimeState.BitmapInventory(
-                preparedSlideCount = inventory.preparedSlideCount,
-                renderedSlideCount = inventory.renderedSlideCount,
-                decodedBitmapCount = inventory.decodedBitmapCount,
-                appBitmapCount = inventory.appBitmapCount,
-                activeDecodedBytes = inventory.activeDecodedBytes,
-                pendingDisposals = inventory.pendingDisposals,
-                oldestPendingDisposalStartedElapsedMs =
-                    inventory.oldestPendingDisposalStartedElapsedMs,
-                memoryProtectionLevel = protection.level.name,
-                oomCount = protection.totalOomCount,
-                updatedAtEpochMs = System.currentTimeMillis(),
-            )
-        )
-    }
-
-    fun onMemoryCleanup(pendingDisposals: Int, heapBeforeKb: Long, heapAfterKb: Long) {
-        services.diagnostics.log(
-            DiagnosticsLog.Category.MEMORY,
-            "MEMORY_CLEANUP_REQUESTED",
-            "trigger" to "decode_circuit_open",
-            "pendingDisposals" to pendingDisposals.toString(),
-            "gcRequested" to "true",
-            "heapBeforeKb" to heapBeforeKb.toString(),
-            "heapAfterKb" to heapAfterKb.toString(),
-            "freedKb" to (heapBeforeKb - heapAfterKb).coerceAtLeast(0L).toString(),
-            "memoryProtectionLevel" to services.playbackMemoryGuard.snapshot().level.name,
-        )
-    }
-    suspend fun onPrepared(
-        anchorId: Long,
-        memberIds: List<Long>,
-        layout: String?,
-    ): Boolean {
-        val committed = engine.commitPrepared(anchorId, memberIds, layout)
-        onPresentationStage(
-            anchorId,
-            if (committed) "ENGINE_COMMITTED" else "ENGINE_COMMIT_REJECTED",
-            committed,
-        )
-        return committed
-    }
-
-    fun onPresentationStage(anchorId: Long, stage: String, active: Boolean) {
-        val photo = _state.value.engine.current?.takeIf { it.id == anchorId }
-        engine.reportPresentationStage(anchorId, stage)
-        // Keep normal stage transitions in the bounded in-memory trace.  Persisting every
-        // intermediate stage rotated the bulk log during an otherwise healthy soak; timeout
-        // events now carry the current stage plus the exact preparation substage instead.
-        services.runtimeBreadcrumbs.record(
-            operation = "PRESENTATION",
-            stage = stage,
-            active = active,
-            presentationToken = diagnosticToken(anchorId.toString(), "presentation"),
-            sourceKind = photo?.sourceId?.let(::diagnosticSourceKind) ?: "NONE",
-        )
-    }
-
+    ) = presentationReporter.onBitmapInventory(inventory, protection)
+    fun onMemoryCleanup(pendingDisposals: Int, heapBeforeKb: Long, heapAfterKb: Long) =
+        presentationReporter.onMemoryCleanup(pendingDisposals, heapBeforeKb, heapAfterKb)
+    suspend fun onPrepared(anchorId: Long, memberIds: List<Long>, layout: String?) =
+        presentationReporter.onPrepared(anchorId, memberIds, layout)
+    fun onPresentationStage(anchorId: Long, stage: String, active: Boolean) =
+        presentationReporter.onPresentationStage(anchorId, stage, active)
     internal fun onPreparationAttemptStage(
         anchorId: Long,
         selectionGeneration: Long,
         stage: String,
         active: Boolean,
-    ) {
-        val photo = _state.value.engine.current?.takeIf { it.id == anchorId }
-        engine.reportPresentationStage(anchorId, stage, selectionGeneration)
-        services.runtimeBreadcrumbs.record(
-            operation = "PRESENTATION",
-            stage = stage,
-            active = active,
-            presentationToken = diagnosticToken(anchorId.toString(), "presentation"),
-            sourceKind = photo?.sourceId?.let(::diagnosticSourceKind) ?: "NONE",
-        )
-    }
-
-    fun onPreparationSubstage(anchorId: Long, selectionGeneration: Long, substage: String) {
-        engine.reportPreparationSubstage(anchorId, selectionGeneration, substage)
-    }
-
-    /** Forward only the current selected presentation's bounded cache-transfer trace. */
+    ) = presentationReporter.onPreparationAttemptStage(anchorId, selectionGeneration, stage, active)
+    fun onPreparationSubstage(anchorId: Long, selectionGeneration: Long, substage: String) =
+        presentationReporter.onPreparationSubstage(anchorId, selectionGeneration, substage)
     internal fun onPreparationTransferUpdate(
         anchorId: Long,
         selectionGeneration: Long,
         update: PreparationTransferUpdate,
-    ) {
-        engine.reportPreparationTransfer(
-            anchorId = anchorId,
-            expectedSelectionGeneration = selectionGeneration,
-            state = update.state.name,
-            copiedBytes = update.copiedBytes,
-            expectedBytes = update.expectedBytes,
-            deadlineMs = update.deadlineMs,
-            streamCloseSucceeded = update.streamCloseSucceeded,
-        )
-    }
-
-    /**
-     * A selected preparation can be cancelled by a display configuration change while
-     * the engine still waits for its acknowledgement.  This is a recoverable UI hand-off
-     * abort, not a decode failure: keep the current file eligible and let the engine pick
-     * the next presentation immediately.
-     */
-    fun onPreparationCancelled(anchorId: Long, selectionGeneration: Long) {
-        val photo = _state.value.engine.current?.takeIf { it.id == anchorId }
-        engine.reportPreparationCancelled(anchorId, selectionGeneration)
-        services.runtimeBreadcrumbs.record(
-            operation = "PRESENTATION",
-            stage = "PREPARE_CANCELLED",
-            active = false,
-            presentationToken = diagnosticToken(anchorId.toString(), "presentation"),
-            sourceKind = photo?.sourceId?.let(::diagnosticSourceKind) ?: "NONE",
-        )
-    }
-
-    fun onPreparationWatchdogTimeout(anchorId: Long, selectionGeneration: Long) {
-        engine.reportPreparationWatchdogTimeout(anchorId, selectionGeneration)
-    }
-
+    ) = presentationReporter.onPreparationTransferUpdate(anchorId, selectionGeneration, update)
+    fun onPreparationCancelled(anchorId: Long, selectionGeneration: Long) =
+        presentationReporter.onPreparationCancelled(anchorId, selectionGeneration)
+    fun onPreparationWatchdogTimeout(anchorId: Long, selectionGeneration: Long) =
+        presentationReporter.onPreparationWatchdogTimeout(anchorId, selectionGeneration)
     fun onRendered(
         anchorId: Long,
         memberIds: List<Long>,
         dataSources: List<String?>,
         layout: String?,
-    ) {
-        engine.reportRendered(anchorId, memberIds, dataSources, layout)
-        services.diagnosticRuntimeState.updatePlayback { current ->
-            current.copy(
-                presentationToken = diagnosticToken(anchorId.toString(), "presentation"),
-                layout = layout ?: if (memberIds.size <= 1) "SINGLE" else "COLLAGE_${memberIds.size}",
-            )
-        }
-        onPresentationStage(anchorId, "RENDERED", false)
-    }
-
-    fun onWebPreviewReady(requestId: Long, frame: WebPreviewFrame) {
-        services.webServer.publishPreview(requestId, frame)
-    }
-
-    fun onWebPreviewFailed(requestId: Long, reason: String) {
-        services.webServer.failPreview(requestId, reason)
-    }
-
-    fun onTransitionEvent(event: TransitionEvent) {
-        services.diagnosticRuntimeState.updatePlayback { current ->
-            current.copy(transitionCode = event.resolvedEffect.ifBlank { event.configuredEffect })
-        }
-        services.diagnostics.log(
-            DiagnosticsLog.Category.ENGINE, event.code,
-            "configuredMode" to event.configuredMode,
-            "configuredEffect" to event.configuredEffect,
-            "resolvedEffect" to event.resolvedEffect,
-            "outgoingPresentationToken" to event.outgoingId?.let {
-                diagnosticToken(it.toString(), "presentation")
-            }.orEmpty(),
-            "incomingPresentationToken" to
-                diagnosticToken(event.incomingId.toString(), "presentation"),
-            "durationMs" to event.durationMs.toString(),
-            "actualDurationMs" to event.actualDurationMs?.toString().orEmpty(),
-            "direction" to event.direction,
-            "reason" to event.reason.orEmpty(),
-            "fallbackUsed" to event.fallbackUsed.toString(),
-            "frameCount" to event.frameCount?.toString().orEmpty(),
-            "slowFrameCount" to event.slowFrameCount?.toString().orEmpty(),
-            "maximumFrameMs" to event.maximumFrameMs?.toString().orEmpty(),
-            "startLatencyMs" to event.startLatencyMs?.toString().orEmpty(),
-            "preparedSlideCount" to event.preparedSlideCount?.toString().orEmpty(),
-            "activeDecodedBytes" to event.activeDecodedBytes?.toString().orEmpty(),
-            "transitionGeneration" to event.transitionGeneration.toString(),
-            "hostGeneration" to event.hostGeneration.toString(),
-            "cancellationInitiator" to event.cancellationInitiator.orEmpty(),
-        )
-        when (event.code) {
-            "TRANSITION_SELECTED", "TRANSITION_STARTED" ->
-                onPresentationStage(event.incomingId, event.code, true)
-            "TRANSITION_COMPLETED", "TRANSITION_CANCELLED" ->
-                onPresentationStage(event.incomingId, event.code, false)
-        }
-    }
-
-    private fun publishDiagnosticPlayback(
-        state: SlideshowUiState,
-        layoutOverride: String? = null,
-        transitionOverride: String? = null,
-    ) {
-        val currentPhoto = state.engine.current
-        services.diagnosticRuntimeState.updatePlayback { previous ->
-            previous.copy(
-                surface = when (state.surface) {
-                    Surface.Loading -> "LOADING"
-                    Surface.FirstRun -> "FIRST_RUN"
-                    is Surface.Recovery -> "RECOVERY"
-                    Surface.EmptyIndex -> "EMPTY_INDEX"
-                    Surface.Playing -> if (state.blackScreen) "BLACK_SCREEN" else "PLAYING"
-                },
-                engineState = state.engine.state.name,
-                presentationToken = currentPhoto?.let {
-                    diagnosticToken(it.stableId.ifBlank { it.id.toString() }, "presentation")
-                }.orEmpty(),
-                sourceKind = currentPhoto?.sourceId?.let(::diagnosticSourceKind) ?: "NONE",
-                layout = layoutOverride ?: previous.layout,
-                transitionCode = transitionOverride ?: previous.transitionCode,
-            )
-        }
-    }
-
+    ) = presentationReporter.onRendered(anchorId, memberIds, dataSources, layout)
+    fun onWebPreviewReady(requestId: Long, frame: WebPreviewFrame) =
+        presentationReporter.onWebPreviewReady(requestId, frame)
+    fun onWebPreviewFailed(requestId: Long, reason: String) =
+        presentationReporter.onWebPreviewFailed(requestId, reason)
+    fun onTransitionEvent(event: TransitionEvent) = presentationReporter.onTransitionEvent(event)
     fun onCollageEvent(
         event: String,
         anchorId: Long,
@@ -5475,30 +3113,11 @@ class SlideshowViewModel(
         decodedBytes: Long? = null,
         reason: String? = null,
         details: Map<String, String> = emptyMap(),
-    ) {
-        val fields = mapOf(
-            "anchorToken" to diagnosticToken(anchorId.toString(), "photo"),
-            "presentationToken" to diagnosticToken(photoIds.joinToString(","), "presentation"),
-            "members" to photoIds.size.toString(),
-            "layout" to layout.orEmpty(),
-            "durationMs" to prepareMs?.toString().orEmpty(),
-            "sizeBytes" to decodedBytes?.toString().orEmpty(),
-            "reason" to reason.orEmpty(),
-        ) + details
-        services.diagnostics.log(DiagnosticsLog.Category.ENGINE, event, "", fields)
-    }
+    ) = presentationReporter.onCollageEvent(event, anchorId, photoIds, layout, prepareMs, decodedBytes, reason, details)
 
     fun clearTransientNotice() = _state.update { it.copy(transientNotice = null) }
 
     private companion object {
-        /**
-         * Poll interval for the rescan schedule. One minute matches the granularity of a
-         * "HH:mm" setting; anything finer would burn wakeups for no visible benefit.
-         */
-        const val RESCAN_POLL_MS = 60_000L
-
-        /** Step clear of the slot just served so it cannot re-trigger. */
-        const val RESCAN_SETTLE_MS = 5L * 60_000L
 
         /**
          * How long a decode suppression survives before it is released and the photo is
@@ -5518,18 +3137,11 @@ class SlideshowViewModel(
          */
         const val EARLY_PLAYBACK_MIN_PHOTOS = 10
 
-        /** "On this day" windows are short and frequent — poll more often than rescan. */
-        const val ON_THIS_DAY_POLL_MS = 30_000L
-        /** Safety cap on rows fetched before year-grouping; a real day rarely nears this. */
-        const val ON_THIS_DAY_CANDIDATE_LIMIT = 500
-        /** Matches docs/FPF-FEAT-ON-THIS-DAY-001.md §9's proposed default. */
-        const val ON_THIS_DAY_MAX_YEARS = 6
         /** Cap on a single wait so clock/timezone changes are noticed promptly. */
         const val MAX_SCHEDULE_WAIT_MINUTES = 15
         const val WEATHER_RECHECK_MS = 5 * 60_000L
         const val INITIAL_REMOTE_NETWORK_WAIT_MS = 60_000L
         const val INITIAL_REMOTE_NETWORK_POLL_MS = 500L
-        const val WEATHER_KEY_REF = CredentialPolicy.WEATHER_API_KEY_REF
     }
 
     private var lastSettings: AppSettings? = null

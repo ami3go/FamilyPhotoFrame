@@ -23,6 +23,8 @@ web = (read("app/src/main/java/com/example/familyphotoframe/web/SetupPage.kt") +
        read("app/src/main/java/com/example/familyphotoframe/web/WebUiCss.kt") +
        read("app/src/main/java/com/example/familyphotoframe/web/WebUiScript.kt"))
 vm = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowViewModel.kt")
+# Feature areas the ViewModel delegates to live in ui/slideshow/viewmodel/.
+vm += "".join(p.read_text(encoding="utf-8") for p in sorted((root / "app/src/main/java/com/example/familyphotoframe/ui/slideshow/viewmodel").glob("*.kt")))
 model = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/transition/TransitionModel.kt")
 
 EFFECTS = {

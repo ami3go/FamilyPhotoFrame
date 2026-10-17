@@ -14,6 +14,8 @@ build = read("app/build.gradle.kts")
 assets = read("app/src/main/java/com/example/familyphotoframe/web/WebUiAssets.kt")
 app = read("app/src/main/java/com/example/familyphotoframe/App.kt")
 vm = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowViewModel.kt")
+# Feature areas the ViewModel delegates to live in ui/slideshow/viewmodel/.
+vm += "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "app/src/main/java/com/example/familyphotoframe/ui/slideshow/viewmodel").glob("*.kt")))
 coordinator = read("app/src/main/java/com/example/familyphotoframe/domain/engine/SourceRecoveryCoordinator.kt")
 coordinator_test = read("app/src/test/java/com/example/familyphotoframe/domain/engine/SourceRecoveryCoordinatorTest.kt")
 reset = read("app/src/main/java/com/example/familyphotoframe/maintenance/FactoryResetCoordinator.kt")

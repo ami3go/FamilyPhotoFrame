@@ -45,7 +45,9 @@ def main() -> int:
     )
     adapters = {
         "web/WebServerController.kt": ("code, \"\", fields",),
-        "ui/slideshow/SlideshowViewModel.kt": ("event.code", "event,"),
+        # The ViewModel forwards renderer collage events unchanged; codes are checked at emit().
+        "ui/slideshow/SlideshowViewModel.kt": ("event, anchorId,",),
+        "ui/slideshow/viewmodel/PresentationReporter.kt": ("event.code", "event,"),
         "ui/slideshow/SlideshowPreparation.kt": ("event, photo.id",),
     }
 

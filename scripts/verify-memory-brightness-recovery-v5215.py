@@ -19,6 +19,8 @@ brightness_policy = read("app/src/main/java/com/example/familyphotoframe/domain/
 brightness_timeline = read("app/src/main/java/com/example/familyphotoframe/domain/schedule/BrightnessTimeline.kt")
 settings_ui = read("app/src/main/java/com/example/familyphotoframe/ui/settings/SettingsDisplaySections.kt")
 vm = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowViewModel.kt")
+# Feature areas the ViewModel delegates to live in ui/slideshow/viewmodel/.
+vm += "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "app/src/main/java/com/example/familyphotoframe/ui/slideshow/viewmodel").glob("*.kt")))
 catalog = read("app/src/main/java/com/example/familyphotoframe/data/diagnostics/DiagnosticEventSpec.kt")
 pure_gate = read("scripts/verify-pure-logic.sh")
 memory_checks = read("scripts/verify/MemorySelfRecoveryChecks.kt")
