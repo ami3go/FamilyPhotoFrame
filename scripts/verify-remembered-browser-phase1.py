@@ -9,7 +9,7 @@ def has(path, *needles):
         checks.append((f"{path}: {n}", n in text))
 
 has(Path('app/src/main/java/com/example/familyphotoframe/data/db/AppDatabase.kt'),
-    'RememberedBrowserEntity::class', 'version = 8', 'rememberedBrowserDao()', 'MIGRATION_5_6', 'MIGRATION_6_7')
+    'RememberedBrowserEntity::class', 'version = 9', 'rememberedBrowserDao()', 'MIGRATION_5_6', 'MIGRATION_6_7')
 has(Path('app/src/main/java/com/example/familyphotoframe/data/db/Migrations.kt'),
     'CREATE TABLE IF NOT EXISTS `remembered_browsers`', '`currentTokenHash` BLOB NOT NULL', '`retiredTokenHash` BLOB')
 has(Path('app/src/main/java/com/example/familyphotoframe/data/settings/AppSettings.kt'),

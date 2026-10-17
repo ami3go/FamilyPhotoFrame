@@ -36,7 +36,8 @@ assert 'TRANSITION_STARTED' in screen
 assert 'TRANSITION_COMPLETED' in screen
 assert 'TransitionTiming.COLD_START_DURATION_MS' in screen
 assert 'onRendered(' in screen
-assert screen.index('transitionProgress.animateTo(') < screen.index('onRendered(', screen.index('transitionProgress.animateTo('))
+# Progress is driven per frame; the render ack follows the completed transition.
+assert screen.index('TransitionTiming.progressForElapsedNanos(') < screen.index('onRendered(', screen.index('TransitionTiming.progressForElapsedNanos('))
 assert 'MIN_BASE_DURATION_MS = 300' in model
 assert 'MAX_BASE_DURATION_MS = 2_000' in model
 print('transition phases 1-2 source verification passed')

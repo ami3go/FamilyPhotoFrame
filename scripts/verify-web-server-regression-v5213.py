@@ -24,8 +24,8 @@ security_headers = server.index('response.addHeader("X-Content-Type-Options"')
 
 checks = {
     "v52.13 behavior retained in current metadata":
-        "versionCode = 33" in build and "0.12.13-prerelease" in build and
-        'REVISION: String = "v52150"' in assets,
+        "versionCode = buildNumber" in build and
+        'val REVISION: String by lazy' in assets and 'WebUiCss.VALUE.hashCode()' in assets,
     "bounded worker and queue protection retained":
         "ThreadPoolExecutor" in runner and "ArrayBlockingQueue" in runner and
         "DEFAULT_WORKERS = 4" in runner and "DEFAULT_QUEUE_CAPACITY = 8" in runner and

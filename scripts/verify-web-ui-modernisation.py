@@ -43,18 +43,19 @@ def extract(source: str, name: str) -> str:
 css = extract(CSS_SOURCE, "CSS")
 js = extract(JS_SOURCE, "JS")
 
-tabs = ["overview", "photos", "playback", "display", "schedule", "device", "diagnostics", "backup", "about"]
+tabs = ["overview", "photos", "playback", "collage", "display", "schedule", "device", "web", "diagnostics", "backup", "about"]
 for tab in tabs:
     require(f'id="tab-{tab}"' in HTML, f"missing HTML tab: {tab}")
     require(re.search(rf"['\"]{tab}['\"]", js) is not None, f"missing JS navigation entry: {tab}")
 
-require("['device','Web control','⚙']" in js, "Device route must be labelled Web control")
-require("pageTitle('Web control','Web access, pairing, device status, and maintenance')" in js, "Web control page heading missing")
-require("['device','Device','⚙']" not in js, "Legacy Device navigation label remains")
+# Device and Web control are separate pages since the 2026-08 settings regrouping.
+require("['web','Web control','⚙']" in js, "Web control route missing")
+require("['device','Device','▤']" in js, "Device route missing")
+require("pageTitle('Web control','Web access, pairing, and remembered-browser security')" in js, "Web control page heading missing")
 
 require('app-${WebUiAssets.REVISION}.js' in HTML, "UI JavaScript must use a revisioned asset URL")
 require('app-${WebUiAssets.REVISION}.css' in HTML, "UI CSS must use a revisioned asset URL")
-require('const val REVISION: String = "v52150"' in UI, "expected web asset revision v52150")
+require('val REVISION: String by lazy' in UI and 'WebUiCss.VALUE.hashCode()' in UI, "expected content-derived web asset revision")
 require('max-age=31536000, immutable' in SERVER, "revisioned assets must be immutable")
 require('no-cache, must-revalidate' in SERVER, "legacy asset URLs must be revalidated")
 require("max-width:899px" in css and "max-width:599px" in css, "missing tablet/mobile breakpoints")
@@ -62,29 +63,27 @@ require(":focus-visible" in css, "missing visible keyboard focus")
 require("prefers-reduced-motion" in css, "missing browser reduced-motion styling")
 require("min-height:44px" in css, "touch-target minimum is not enforced")
 require(".settings-row>*,.setting-control>*{min-width:0;max-width:100%}" in css, "shared settings controls can overflow their card")
-require(".card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr))" in css, "generic cards can become narrower than their controls")
-require(".display-layout{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))" in css, "Display tab lacks its reviewed two-column layout")
-require(".display-layout{grid-template-columns:1fr}" in css, "Display tab does not stack at the tablet breakpoint")
+# Hairline groups (2026-08-17) replaced the multi-column card grids with one readable
+# column, so cards can no longer be squeezed narrower than their controls.
+require(".card-grid{display:block}" in css, "generic cards must use the single-column group layout")
+require(".display-layout{display:block}" in css, "Display tab must use the single-column group layout")
 require(".display-layout .brightness-period-row{grid-template-columns:1fr" in css, "brightness period labels and controls can collide")
 require(".brightness-period-control{display:grid;grid-template-columns:" in css, "brightness period controls lack a bounded sub-grid")
 require(".brightness-period-control select{grid-column:1/-1}" in css, "brightness period action does not stack on narrow phones")
 require("'<div class=\"display-layout\"><div class=\"stack\">'+fit+overlays+'</div><div class=\"stack\">'+screen+brightness" in js, "Display cards are not arranged in two stable columns")
 require("brightness-period-row" in js and "brightness-period-control" in js, "brightness period responsive hooks are missing")
 
-require(".photos-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))" in css, "Photos page must use a deliberate two-column desktop grid")
-require("align-items:start" in css and ".photos-grid .card" in css, "Photos cards must keep natural height without row stretching")
-require("max-width:1199px" in css and ".photos-grid{grid-template-columns:1fr}" in css, "Photos layout must stack before cards become too narrow")
-require("'<div class=\"photos-grid\">'+source+folders+synology+webdav+filters+scan" in js, "Photos cards are not arranged in the reviewed horizontal order")
+require(".photos-grid{display:block}" in css, "Photos page must use the single-column group layout")
+require(".photos-grid .card{width:100%;height:auto" in css, "Photos cards must keep natural height")
+require("'<div class=\"photos-grid\"><div id=\"sourceStatusHost\">'+sourceStatusCard()+'</div>'+source+folders+synology+webdav+filters" in js, "Photos cards are not arranged in the reviewed order")
 require("photos-source-card" in js and "photos-folders-card" in js and "photos-filters-card" in js and "photos-maintenance-card" in js, "Photos card layout roles are incomplete")
-require(".playback-layout{display:grid;gap:16px}" in css, "Playback layout wrapper missing")
-require(".playback-layout{grid-template-columns:repeat(2,minmax(0,1fr))" in css, "Playback must use two independent desktop columns")
-require(".playback-column{display:grid;gap:16px;align-content:start" in css, "Playback columns must keep independent natural-height stacks")
-require(".playback-layout{grid-template-columns:1fr}" in css, "Playback columns must stack before cards become too narrow")
+require(".playback-layout{display:block}" in css and ".playback-column{display:block}" in css, "Playback must use the single-column group layout")
+require(".playback-column .card{width:100%;height:auto" in css, "Playback cards must keep natural height")
 require("left.className='playback-column'" in js and "right.className='playback-column'" in js, "Playback cards are not reflowed into independent columns")
 require("playback-timing-card" in js and "playback-order-card" in js and "playback-collage-card" in js and "playback-transitions-card" in js, "Playback card layout roles are incomplete")
 require(".playback-layout .interval-control input[type=number]{grid-column:1/-1;grid-row:2" in css, "Playback interval control lacks narrow-screen overflow protection")
 
-for label in ["Discovered folders", "Portrait collage", "Soft focus fade", "Quiet hours", "Maintenance", "Event viewer", "Import configuration"]:
+for label in ["Discovered folders", "pageTitle('Collage'", "Soft focus fade", "Automatic brightness and night mode", "Maintenance", "Event viewer", "Import configuration"]:
     require(label in js, f"missing grouped setting/feature: {label}")
 for source in ["SMB source", "Synology File Station", "WebDAV / Nextcloud"]:
     require(source in js, f"missing source group: {source}")
@@ -136,8 +135,7 @@ require("rollback_backup" in CONTROLLER and "rollback-backup" in js, "backup rol
 require("confirmAction" in js and "factory-reset" in js, "destructive confirmation flow missing")
 require("REVISION_CONFLICT" in SERVER and "settingsRevision" in CONTROLLER, "revision conflict handling missing")
 
-require("versionCode = 33" in BUILD, "expected versionCode 33")
-require('versionName = "0.12.13-prerelease"' in BUILD, "expected versionName 0.12.13-prerelease")
+require("versionCode = buildNumber" in BUILD, "expected versionCode derived from buildNumber")
 
 size = len(css.encode()) + len(js.encode()) + len(HTML.encode())
 notes.append(f"embedded web payload: {size / 1024:.1f} KiB")

@@ -31,8 +31,8 @@ normal_transition_commit = screen.index("committedHandle = targetHandle", stale_
 
 checks = {
     "v52.14 metadata and web cache revision":
-        "versionCode = 33" in build and "0.12.13-prerelease" in build and
-        'REVISION: String = "v52150"' in assets,
+        "versionCode = buildNumber" in build and
+        'val REVISION: String by lazy' in assets and 'WebUiCss.VALUE.hashCode()' in assets,
     "host lifecycle uses an advancing generation":
         "generation++" in gate and "fun tokenIfActive(): Long?" in gate and
         "fun isCurrent(token: Long)" in gate,

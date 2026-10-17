@@ -28,11 +28,11 @@ notes = read("docs/FamilyPhotoFrame_v52.15_Memory_Brightness_Recovery.md")
 
 checks = {
     "v52.15 metadata and web revision":
-        "versionCode = 33" in build and "0.12.13-prerelease" in build and
-        'REVISION: String = "v52150"' in assets,
+        "versionCode = buildNumber" in build and
+        'val REVISION: String by lazy' in assets and 'WebUiCss.VALUE.hashCode()' in assets,
     "expired OOM circuit admits conservative recovery below critical pressure":
         "previous.level == PlaybackMemoryLevel.CIRCUIT_OPEN" in memory_policy and
-        "percent >= CRITICAL_ENTER_PERCENT -> PlaybackMemoryLevel.CIRCUIT_OPEN" in memory_policy and
+        "percent >= limits.criticalEnter -> PlaybackMemoryLevel.CIRCUIT_OPEN" in memory_policy and
         "val allowSelectedDecode: Boolean get() = level != PlaybackMemoryLevel.CIRCUIT_OPEN" in memory_policy,
     "legacy watchdog requires recent real OOM and critical heap":
         "oomAgeMs in 0L..OOM_ELIGIBILITY_WINDOW_MS" in self_recovery and
@@ -58,7 +58,7 @@ checks = {
         "candidate.length == 5" in settings_ui and "SleepSchedule.parseMinutes(candidate) != null" in settings_ui and
         "vm.setBrightnessPeriod(index, candidate" in settings_ui,
     "ViewModel refuses malformed brightness time persistence":
-        "val startMinutes = SleepSchedule.parseMinutes(startTime) ?: return" in vm and
+        "val startMinutes = SleepSchedule.parseMinutes(startTime) ?: run {" in vm and
         "startTime = normalizedStart" in vm,
     "both fixes execute in the offline regression gate":
         "MemorySelfRecoveryPolicy.kt" in pure_gate and "BrightnessTimeline.kt" in pure_gate and

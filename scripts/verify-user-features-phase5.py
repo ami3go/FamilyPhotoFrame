@@ -15,7 +15,7 @@ gradle = (root / 'app/build.gradle.kts').read_text()
 
 checks = {
     'API 21 remains minimum': 'minSdk = 21' in gradle,
-    'version 0.12.13': 'versionCode = 33' in gradle and '0.12.13-prerelease' in gradle,
+    'build-number versioning': 'versionCode = buildNumber' in gradle,
     'local upload source': 'class LocalUploadPhotoSource' in source and 'Local uploads' in source,
     'manager wired': 'WebUploadManager(localUploadSource' in locator and 'webUploadManager,' in locator,
     'one file streaming': 'InputStream' in manager and 'ByteArray(STREAM_BUFFER_BYTES)' in manager,
@@ -49,7 +49,7 @@ checks = {
     'playlist management complete': all(x in controller for x in ['"rename"', '"duplicate"', '"toggle"', '"set_default"', '"move"']),
     'schedule date/day/priority': all(x in controller for x in ['daysOfWeek = days', 'startDateIso', 'endDateIso', 'priority =']),
     'health/brightness/playlist web UI': all(x in assets for x in ['Frame status', 'Automatic brightness and night mode', 'Slideshow playlists', 'Scheduled playlist switching']),
-    'cache-busted assets': 'const val REVISION: String = "v52150"' in assets,
+    'cache-busted assets': 'val REVISION: String by lazy' in assets and 'WebUiCss.VALUE.hashCode()' in assets,
 }
 
 failed = [name for name, ok in checks.items() if not ok]

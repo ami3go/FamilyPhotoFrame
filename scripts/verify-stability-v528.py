@@ -35,8 +35,8 @@ settings_repo = read("app/src/main/java/com/example/familyphotoframe/data/settin
 shuffle = read("app/src/main/java/com/example/familyphotoframe/slideshow/shuffle/ShuffleRepository.kt")
 
 checks.update({
-    "current release metadata": "versionCode = 33" in build and "0.12.13-prerelease" in build,
-    "web cache revision": 'REVISION: String = "v52150"' in assets,
+    "current release metadata": "versionCode = buildNumber" in build,
+    "web cache revision": 'val REVISION: String by lazy' in assets and 'WebUiCss.VALUE.hashCode()' in assets,
     "heap-aware Coil cache": "ImageMemoryBudget.bytesForHeap" in services and "maxSizeBytes(cacheBytes)" in services,
     "prepared images bypass cache": "memoryCachePolicy(CachePolicy.DISABLED)" in preparation,
     "blur bypasses cache and catches OOM": "memoryCachePolicy(CachePolicy.DISABLED)" in backdrop and "catch (_: OutOfMemoryError)" in backdrop,
