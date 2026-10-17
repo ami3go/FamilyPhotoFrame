@@ -1,21 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Legacy Auto Backup config (fullBackupContent, Android < 12). Spec §18.3:
-  never back up private family-photo data, caches, thumbnails, diagnostics,
-  or secrets. Phase 0 has no secrets/SMB cache yet, but the exclusions are
-  declared now so later phases inherit a safe default.
+  Legacy Auto Backup config (fullBackupContent, Android 6-11). Spec §18.3: never back up
+  private family-photo data, caches, thumbnails, diagnostics, device runtime state, or
+  secrets. Paths must match the real directory names under filesDir. The cache directory
+  is never backed up by the platform, so it needs no rule (and "cache" is not a valid
+  domain).
 -->
 <full-backup-content>
-    <exclude domain="file" path="media_cache/" />
+    <exclude domain="file" path="mediacache/" />
+    <exclude domain="file" path="localthumbcache/" />
+    <exclude domain="file" path="local-photo-library/" />
     <exclude domain="file" path="fallback/" />
     <exclude domain="file" path="diagnostics/" />
+    <exclude domain="file" path="diagnostics-slides/" />
     <exclude domain="sharedpref" path="diagnostics_crash_envelope.xml" />
     <exclude domain="sharedpref" path="diagnostics_process_exit.xml" />
     <exclude domain="sharedpref" path="process_diagnostics.xml" />
     <exclude domain="sharedpref" path="diagnostics_identity.xml" />
+    <exclude domain="sharedpref" path="runtime_breadcrumb_v1.xml" />
+    <exclude domain="sharedpref" path="process_start_evidence.xml" />
+    <exclude domain="sharedpref" path="memory_process_recovery.xml" />
+    <exclude domain="sharedpref" path="battery_charge_protection.xml" />
+    <exclude domain="sharedpref" path="foreground_intent.xml" />
     <exclude domain="database" path="frame.db" />
     <exclude domain="database" path="frame.db-wal" />
     <exclude domain="database" path="frame.db-shm" />
-    <exclude domain="cache" path="." />
     <exclude domain="external" path="." />
 </full-backup-content>
