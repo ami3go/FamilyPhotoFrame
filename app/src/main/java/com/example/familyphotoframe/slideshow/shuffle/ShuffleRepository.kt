@@ -34,6 +34,11 @@ class ShuffleRepository(
         dao.reservation(descriptor.scopeKey)?.let { existing ->
             return@withTransaction ShuffleAdvanceResult.Reserved(existing.toDomain())
         }
+        // With every source unavailable, skipping folders would only roll empty cycles
+        // forward (an outage once spun cycle 3 -> 1110 in minutes). Wait without writes.
+        if (snapshot.folders.isNotEmpty() && !snapshot.hasServiceableFolder) {
+            return@withTransaction ShuffleAdvanceResult.Empty
+        }
         var scope = ensureScope(descriptor)
         scope = reconcileFolderCycle(scope, snapshot)
         if (snapshot.folders.isEmpty()) return@withTransaction ShuffleAdvanceResult.Empty

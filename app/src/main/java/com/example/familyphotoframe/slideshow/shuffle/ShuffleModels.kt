@@ -86,6 +86,14 @@ data class ShuffleEligibilitySnapshot(
     val exhaustedUnavailableSourceIds: Set<String> = emptySet(),
 ) {
     val folderKeys: Set<String> get() = folders.mapTo(linkedSetOf()) { it.key.storageKey() }
+
+    /** True when at least one folder belongs to a source that can be read right now. */
+    val hasServiceableFolder: Boolean
+        get() = folders.any { folder ->
+            folder.key.sourceId !in temporarilyUnavailableSourceIds &&
+                folder.key.sourceId !in exhaustedUnavailableSourceIds
+        }
+
     fun folder(storageKey: String): EligibleFolder? = folders.firstOrNull { it.key.storageKey() == storageKey }
 }
 
