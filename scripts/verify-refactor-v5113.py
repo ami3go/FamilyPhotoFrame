@@ -56,8 +56,8 @@ for name in (
     "SettingsCommon.kt",
 ):
     assert (root / "app/src/main/java/com/example/familyphotoframe/ui/settings" / name).exists(), name
-# Raised from 1200 after the 2026-10 collage/memory work; splitting it is tracked separately.
-assert lines("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowScreen.kt") <= 1700
+assert lines("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowScreen.kt") <= 1200
+assert lines("app/src/main/java/com/example/familyphotoframe/ui/slideshow/PlayingContent.kt") <= 1200
 assert (root / "app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowTouchControls.kt").exists()
 assert (root / "app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowPreparation.kt").exists()
 

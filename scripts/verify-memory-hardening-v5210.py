@@ -12,6 +12,8 @@ def read(relative: str) -> str:
 
 preparation = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowPreparation.kt")
 screen = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowScreen.kt")
+screen += read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/PlayingContent.kt")
+screen += read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/PreparedCollage.kt")
 preview_renderer = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/WebPreviewRenderer.kt")
 memory = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/PreparedSlideMemory.kt")
 policy = read("app/src/main/java/com/example/familyphotoframe/domain/engine/PlaybackMemoryPolicy.kt")

@@ -13,13 +13,33 @@ inside an activity, screen, or server controller.
 
 ## Slideshow UI
 
-- `SlideshowScreen.kt` — screen composition, lifecycle, and prepared-presentation
-  coordination.
+- `SlideshowScreen.kt` — screen shell: surfaces, status pills, gestures, and curation
+  dialogs.
+- `PlayingContent.kt` — prepared-presentation coordination: selected/next preparation,
+  the explicit transition, and render acknowledgement. Its remembered handles are shared
+  by every effect in it, so it stays one composable.
+- `PreparedCollage.kt` — collage tile layout, panel motion, and decoration.
 - `SlideshowTouchControls.kt` — touch navigation, favorite/hide selection, and undo UI.
 - `SlideshowPreparation.kt` — image resolution, decoding, collage preparation, and
   app-owned bitmap lifecycle.
-- `SlideshowViewModel.kt` — runtime orchestration and application intents. This remains
-  a large coordinator and is the primary target for a future domain-service extraction.
+- `SlideshowViewModel.kt` — owns the UI state, lifecycle, and the source pipeline
+  (activation, indexing, health checks, and recovery), whose state is shared too widely
+  to split as a pure move. Every other feature area is delegated to a collaborator in
+  `ui/slideshow/viewmodel/`; the ViewModel keeps one-line delegators so callers never
+  depend on the collaborators:
+  - `SourceSettingsActions` — SMB/Synology/WebDAV save and test, certificate approval,
+    primary and co-primary sources.
+  - `PlaybackPhotoAccess` — Coil model resolution through MediaCache, remote bounds
+    probes, and collage candidates.
+  - `PresentationReporter` — renderer callbacks, transition/collage diagnostics, and
+    decode-OOM recovery.
+  - `PhotoLibraryActions` — folder selection and previews, favourites, hide/unhide.
+  - `PlaylistActions`, `OnThisDayActions`, `AutoRescanScheduler`, `BrightnessActions`,
+    `WeatherActions` — settings plus their wall-clock watchers.
+  - `ConfigTransferActions`, `WebControlActions`, `LocalThumbnailCacheActions`.
+  - `SlideshowFeatureHost` — the services, context, scope, and UI state a collaborator
+    may use. Collaborators never reach back into the ViewModel except through callbacks
+    passed at construction.
 
 ## Settings UI
 

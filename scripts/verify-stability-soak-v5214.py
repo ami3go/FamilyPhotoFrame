@@ -15,6 +15,8 @@ assets = read("app/src/main/java/com/example/familyphotoframe/web/WebUiAssets.kt
 gate = read("app/src/main/java/com/example/familyphotoframe/domain/engine/HostLifecycleGate.kt")
 gate_test = read("app/src/test/java/com/example/familyphotoframe/domain/engine/HostLifecycleGateTest.kt")
 screen = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowScreen.kt")
+screen += read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/PlayingContent.kt")
+screen += read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/PreparedCollage.kt")
 vm = read("app/src/main/java/com/example/familyphotoframe/ui/slideshow/SlideshowViewModel.kt")
 # Feature areas the ViewModel delegates to live in ui/slideshow/viewmodel/.
 vm += "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "app/src/main/java/com/example/familyphotoframe/ui/slideshow/viewmodel").glob("*.kt")))

@@ -64,6 +64,8 @@ def main() -> int:
                 dynamic.append(f"{relative}:{line}: {body[:80].replace(chr(10), ' ')}")
 
     transition_text = (MAIN / "com/example/familyphotoframe/ui/slideshow/SlideshowScreen.kt").read_text()
+    transition_text += (MAIN / "com/example/familyphotoframe/ui/slideshow/PlayingContent.kt").read_text()
+    transition_text += (MAIN / "com/example/familyphotoframe/ui/slideshow/PreparedCollage.kt").read_text()
     emitted.update(re.findall(r'event\("(TRANSITION_[A-Z0-9_]+)"', transition_text))
 
     categorical_values = {
