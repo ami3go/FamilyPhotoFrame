@@ -9,19 +9,21 @@ Versions now read `<year>.<build>` (`26.36`), with a third part for a test cut
 `0.12.13-prerelease-<build>` scheme and still applies: build numbers carried over
 unchanged across the rename.
 
-## Qualification boundary (recorded as v0.12.13)
+## Qualification boundary (updated 2026-10-17, build 26.111)
 
-- v52.15 fixes recovery from an expired OOM circuit, adds a rate-limited API-21–25 process
-  self-recovery path for critically pinned heaps, and fixes scheduled-brightness time persistence
-  and malformed-timeline handling while retaining the v52.14 and earlier corrections.
-- All 33 checked-in Python verifier entry points and the executable pure-Kotlin/SQL/migration
-  gates pass in the delivery environment.
-- Gradle 8.9 was unavailable in the delivery environment, so current Android unit tests,
-  lint, and APK assembly did not start.
-- The v52.15 package has not yet completed the required six-hour API-22/100-MiB-heap
-  slideshow soak. API 30+ crash/ANR/process-exit, NAS, and 24-hour recovery gates also
-  remain pending. See `docs/FamilyPhotoFrame_v52.15_Memory_Brightness_Recovery.md` and
-  `docs/API22_MEMORY_SOAK_TEST.md`.
+- All 33 Python verifier entry points and the shell gates pass on the development
+  workstation, including the diagnostics end-to-end run and the offline folder-balanced
+  gate (`testDebugUnitTest`, `lintDebug`, `assembleDebug`). The verifiers are source-text
+  contracts; on 2026-10-17 the stale ones were updated to the current code (content-derived
+  web asset revision, `buildNumber` versioning, Room v9, the single-column web settings
+  layout) after checking that each guarded behaviour was still present.
+- The device half of `verify-folder-balanced-android.sh` (`connectedDebugAndroidTest`,
+  `installDebug`) needs a device without the release-signed app: debug and release share
+  the application ID, so a debug install over a release install fails with
+  `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (and leaves the release app untouched).
+- Field validation is on one device: a Cherry Trail V80 tablet (Android 5.1, API 22, x86)
+  playing from an SMB NAS. Release builds have run there for hours without memory warnings;
+  a 24–48 h release soak and any second device or Android version are still pending.
 
 ## Still not implemented
 
@@ -57,12 +59,8 @@ has never been exercised against a real NAS outage.
 
 ## Spike-posture build choices
 
-- **Release signing is not fail-closed.** R8/resource shrinking are enabled, but when no
-  production keystore is configured the release variant falls back to the debug key with
-  a warning. Such an artifact is for private testing only.
-- **The current v0.11.0 increment has not completed a local Gradle build in the delivery
-  environment.** Schema export is enabled and migrations through v5 are verified offline,
-  but Room/KSP and Compose must be compiled again on the development workstation.
+- **Release signing is fail-closed** (resolved 2026-10-17): release tasks refuse to run
+  without the production keystore instead of falling back to the debug key.
 
 
 ## v0.11.0 user-feature limitations

@@ -100,10 +100,12 @@ of eight forbidden broad media/storage permissions is present, and writes a repo
 
 ## Release build
 
-Release builds enable R8 and resource shrinking. A configured production keystore is used when
-available; otherwise the current build deliberately emits a prominent warning and falls back to
-the debug key for private testing. A debug-signed release must never be distributed. Public
-release hardening must change this fallback to a fail-closed production-signing gate.
+Release builds enable R8 and resource shrinking and are signed only with the configured
+production keystore. Signing is fail-closed: without the key, any release assemble/bundle/package
+task stops with an error; there is no debug-key fallback. Debug builds, unit tests and lint are
+unaffected. The published application ID is `com.ami3go.familyphotoframe`; the Kotlin namespace
+remains `com.example.familyphotoframe`, so ADB component names need the full class
+(`com.ami3go.familyphotoframe/com.example.familyphotoframe.MainActivity`).
 
 ## Deferred work
 
@@ -206,9 +208,8 @@ export FPF_KEY_ALIAS=familyphotoframe
 export FPF_KEY_PASSWORD=...
 ```
 
-With neither present the release build still succeeds but falls back to the **debug**
-key and logs a warning. This is for private testing only. Public release CI must fail when
-production signing material is absent.
+With neither present, release tasks fail with an explicit error. Back up the keystore and
+its passwords: without them no update can ever be published under this application ID.
 
 `enableV1Signing` is on deliberately: this app supports `minSdk 21`, and APK Signature
 Scheme v2 alone is not honoured below API 24.

@@ -41,11 +41,12 @@ def main() -> int:
     dynamic: list[str] = []
     log_pattern = re.compile(
         r"\b(?:diagnostics|diag|services\.diagnostics)\.log\s*\(|"
-        r"\bonEvent\s*\(|\bonCollageEvent\s*\("
+        r"\bonEvent\s*\(|\bonCollageEvent\s*\(|\bemit\s*\((?=\s*\")"
     )
     adapters = {
         "web/WebServerController.kt": ("code, \"\", fields",),
         "ui/slideshow/SlideshowViewModel.kt": ("event.code", "event,"),
+        "ui/slideshow/SlideshowPreparation.kt": ("event, photo.id",),
     }
 
     for path in MAIN.rglob("*.kt"):
@@ -66,6 +67,9 @@ def main() -> int:
     categorical_values = {
         "LOCAL_SAF", "SMB", "SYNOLOGY", "WEBDAV", "SAMPLES", "NONE", "UNKNOWN",
         "SAMPLING", "PASS", "FAIL", "SERVER_BUSY",
+        # Field values (reason / renderAck / cancellationInitiator), not event codes.
+        "AWAITING_UI", "REUSED_VISIBLE", "CURRENT_PREPARATION_CANCELLED",
+        "UI_PREPARATION_CANCELLED", "EXPLICIT_POOL_BOUNDED_FALLBACK",
     }
     missing = sorted(emitted - registered - categorical_values)
     if missing:

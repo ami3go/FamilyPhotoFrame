@@ -16,7 +16,7 @@ checks = {
     'candidate failure cannot retire anchor': 'decodeLongs(reservation.photoIdsJson).firstOrNull() == failedPhotoId' in repo,
     'failed candidate removed from live candidate list': 'candidatePhotoIds.filterNot { it == failure.photoId }' in engine,
     'startup uses at-most-once recovery': '!startupSelectionPending && newest != null' in engine and 'startupSelectionPending = false' in engine,
-    'folder-balanced collage never falls back outside reservation': 'Missing reservation/history metadata is treated as no companions' in vm,
+    'folder-balanced collage never falls back outside reservation': 'A missing reservation at a folder-cycle boundary is a single presentation' in vm,
     'explicit empty reservation remains a single photo': 'if (orderedIds.isEmpty()) return emptyList()' in vm,
     'instrumentation covers unreserved companion rejection': 'commitRejectsUnreservedOrFailedCompanions_withoutAdvancing' in tests,
     'instrumentation covers anchor candidate guard': 'candidateFailureApiCannotRetireReservationAnchor' in tests,

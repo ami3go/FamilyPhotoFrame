@@ -3,7 +3,7 @@
 SCRATCH="${OUT_DIR:-$(pwd)/heap-soak}"
 OUT="$SCRATCH"
 mkdir -p "$OUT"
-PKG=com.example.familyphotoframe
+PKG="${FPF_PACKAGE:-com.ami3go.familyphotoframe}"
 D="${FRAME_ADB:?set FRAME_ADB, e.g. export FRAME_ADB=<frame-ip>:5555}"
 CONV="$HOME/Android/Sdk/platform-tools/hprof-conv"
 

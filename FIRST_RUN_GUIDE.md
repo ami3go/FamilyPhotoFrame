@@ -19,7 +19,7 @@ adb logcat -d AndroidRuntime:E FamilyPhotoFrame:V *:S > crash.txt
 Or simply grab everything from the moment it launched:
 
 ```bash
-adb logcat -c && adb shell am start -n com.example.familyphotoframe/.MainActivity
+adb logcat -c && adb shell am start -n com.ami3go.familyphotoframe/com.example.familyphotoframe.MainActivity
 # reproduce, then:
 adb logcat -d > crash.txt
 ```

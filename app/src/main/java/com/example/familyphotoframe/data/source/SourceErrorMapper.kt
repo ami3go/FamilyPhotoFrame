@@ -65,7 +65,11 @@ object SourceErrorMapper {
             SourceError.AuthFailed, SourceError.PermissionDenied -> SourceHealth.NeedsPermission
             SourceError.ShareNotFound -> SourceHealth.Missing
             SourceError.HostUnreachable, SourceError.Timeout -> SourceHealth.Unavailable
-            else -> SourceHealth.ProviderError(error.name)
+            // The exception class is what makes an unexpected provider failure diagnosable
+            // (for example a release-build reflection fault); the category alone is not.
+            else -> SourceHealth.ProviderError(
+                "${error.name}:${generateSequence(t) { it.cause }.last().javaClass.simpleName}",
+            )
         }
     }
 }

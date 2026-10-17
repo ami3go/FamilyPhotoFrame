@@ -1452,7 +1452,7 @@ class SlideshowViewModel(
                 "healthState" to healthStateCode(health),
                 "outcome" to if (health is SourceHealth.Ok) "HEALTHY" else "UNAVAILABLE",
                 "errorCode" to healthErrorCode(health),
-            )
+            ) + ((health as? SourceHealth.ProviderError)?.let { mapOf("errorClass" to it.detail.take(80)) } ?: emptyMap())
             diagnostics.logEvent(
                 if (health is SourceHealth.Ok) "SOURCE_HEALTH_CHECK_COMPLETED"
                 else "SOURCE_HEALTH_CHECK_FAILED",

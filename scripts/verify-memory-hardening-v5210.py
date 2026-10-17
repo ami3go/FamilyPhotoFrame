@@ -25,15 +25,15 @@ assets = read("app/src/main/java/com/example/familyphotoframe/web/WebUiAssets.kt
 
 checks = {
     "request construction is inside OOM boundary":
-        preparation.index("return try {") < preparation.index("val request = ImageRequest.Builder"),
+        preparation.index("val result = try {") < preparation.index("val request = ImageRequest.Builder") and "Request construction is intentionally inside the OOM boundary" in preparation,
     "whole preparation path catches OOM":
         "java_heap_exhausted_during_slide_preparation" in preparation,
     "temporary decode ownership is explicit":
-        "val uncommitted = Collections.newSetFromMap" in preparation and
+        "val uncommitted = IdentityHashMap<Bitmap" in preparation and
         "releaseUncommitted()" in preparation and "fun discard(tile: PreparedTile)" in preparation,
     "candidate OOM stops the collage loop":
-        "return memoryFallback(\"candidate_decode_oom\")" in preparation and
-        "return memoryFallback(\"candidate_model_oom\")" in preparation,
+        "eventReason = \"candidate_decode_oom\"" in preparation and
+        "eventReason = \"candidate_model_oom\"" in preparation,
     "bitmap payloads are outside Compose snapshot state":
         "PreparedSlideRegistry" in screen and
         "mutableStateMapOf<Long, PreparedSlide>" not in screen and
@@ -53,12 +53,12 @@ checks = {
         "MAX_OOM_COOLDOWN_MS = 5L * 60_000L" in policy,
     "circuit remains open while heap stays high":
         "previous.level == PlaybackMemoryLevel.CIRCUIT_OPEN" in policy and
-        "percent >= GUARDED_ENTER_PERCENT" in policy,
+        "percent >= limits.criticalEnter -> PlaybackMemoryLevel.CIRCUIT_OPEN" in policy,
     "weaker system pressure cannot downgrade OOM circuit":
         "nowElapsedMs < previous.circuitOpenUntilElapsedMs" in policy and
         "previous.level == PlaybackMemoryLevel.CRITICAL" in policy,
     "pressure disables next preload":
-        "if (!memoryProtection.allowNextPreload)" in screen,
+        "!memoryProtection.allowNextPreload" in screen,
     "pressure bounds three-photo collage":
         "memoryProtection.maxCollagePhotos" in screen and "maxCollagePhotos: Int get()" in policy,
     "pressure scales decode target":
@@ -67,9 +67,8 @@ checks = {
         "memoryProtection.allowBlurredBackdrop" in screen and
         "memoryProtection.allowWebPreview" in screen,
     "web preview allocation path is OOM-bounded":
-        "catch (_: OutOfMemoryError)" in preview_renderer and
-        "onOutOfMemory()" in preview_renderer and
-        "output?.takeIf { !it.isRecycled }?.recycle()" in preview_renderer,
+        "catch(_:OutOfMemoryError){onOutOfMemory()" in preview_renderer.replace(" ", "") and
+        "output?.takeIf{!it.isRecycled}?.recycle()" in preview_renderer.replace(" ", ""),
     "one GC follows reference pruning":
         screen.index("registry.retain(") < screen.index("Runtime.getRuntime().gc()"),
     "application samples the guard every pressure tick":
@@ -90,8 +89,8 @@ checks = {
     "memory protection events are registered":
         "MEMORY_PROTECTION_CHANGED" in catalog and "MEMORY_CLEANUP_REQUESTED" in catalog,
     "current release metadata is consistent":
-        "versionCode = 33" in build and "0.12.13-prerelease" in build and
-        'REVISION: String = "v52150"' in assets,
+        "versionCode = buildNumber" in build and
+        'val REVISION: String by lazy' in assets and 'WebUiCss.VALUE.hashCode()' in assets,
 }
 
 failed = [name for name, ok in checks.items() if not ok]

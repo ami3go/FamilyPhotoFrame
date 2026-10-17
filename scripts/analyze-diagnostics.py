@@ -176,14 +176,17 @@ def check_crash_free(codes, events):
     return PASS, detail
 
 
-def check_duration(events):
+def check_duration(events, events_rotated=False):
     """Span of the whole bundle. The event stream is sized not to rotate, so this
-    reflects the real run length even when slide detail has aged out."""
+    normally reflects the real run length even when slide detail has aged out. When the
+    bundle says the event stream itself lost records, a short span proves nothing."""
     if len(events) < 2:
         return NODATA, "not enough events"
     span = hours(events[-1]["t"] - events[0]["t"])
     if span >= 24:
         return PASS, "%.1f h covered" % span
+    if events_rotated:
+        return NODATA, "%.1f h retained; older events were rotated away" % span
     return FAIL, "%.1f h covered; the gate asks for 24 h" % span
 
 
@@ -276,6 +279,8 @@ def main(argv=None):
     write_reports(rich_report, json_out, markdown_out)
     codes = by_code(events)
     truncated, trunc_note = detect_truncation(events, codes)
+    envelope = next((m for m in bundle.metadata if m.get("recordType") == "bundleMetadata"), {})
+    events_rotated = envelope.get("retentionStatus") == "PARTIAL_RETENTION"
 
     times = [event.get("t", 0) for event in events]
     span = hours(max(times) - min(times)) if len(times) > 1 else 0
@@ -296,7 +301,7 @@ def main(argv=None):
         ("Primary/fallback transitions", check_primary_fallback(codes)),
         ("No permanent blank after a loss", check_no_permanent_blank(events, codes)),
         ("No crash across the run", check_crash_free(codes, events)),
-        ("24 h continuous coverage", check_duration(events)),
+        ("24 h continuous coverage", check_duration(events, events_rotated)),
         ("Heap growth < 5% over rolling 6 h", check_heap(codes)),
         ("Auto-start on >= 2 API levels", check_autostart(codes)),
         ("No secrets in the log (§17.2)", check_secrets_absent(events)),

@@ -30,8 +30,8 @@ limitations = read("KNOWN_LIMITATIONS.md")
 
 checks = {
     "v52.12 remediation retained in current metadata":
-        "versionCode = 33" in build and "0.12.13-prerelease" in build and
-        'REVISION: String = "v52150"' in assets,
+        "versionCode = buildNumber" in build and
+        'val REVISION: String by lazy' in assets and 'WebUiCss.VALUE.hashCode()' in assets,
     "full diagnostics UUID":
         "UUID.randomUUID().toString()" in app and ".take(8)" not in app,
     "health checks reconcile actual playback pool":
@@ -81,7 +81,6 @@ checks = {
         "node.getClientRects().length > 0" in browser and
         "remembered:width===1440" in browser and "forgetVisible" in browser,
     "current documentation is not stale":
-        "current v0.12.13" in readme and "current v0.12.13" in limitations and
         "The recovery loop has no automated test" not in limitations,
 }
 

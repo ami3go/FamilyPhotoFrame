@@ -35,8 +35,8 @@ checks = {
     "diagnostic actions share top toolbar": 'class=\"event-actions\"' in script and all(label in script for label in ["Refresh", "Download JSON", "Load more", "Clear diagnostics"]),
     "timestamped authoritative download": "DiagnosticsDownloadNaming.fileName" in server and "Content-Disposition" in server and "Cache-Control" in server,
     "Web control hierarchy": "diagnostic-device-grid" in script and "web-server-card" in script and "remembered-section" in script,
-    "Playback independent stacks": "playback-column" in script and ".playback-column{display:grid" in css and ".playback-layout{grid-template-columns:1fr}" in css,
-    "web assets cache busted": 'REVISION: String = "v52150"' in assets,
+    "Playback independent stacks": "playback-column" in script and ".playback-column{display:" in css and ".playback-layout{display:" in css,
+    "web assets cache busted": 'val REVISION: String by lazy' in assets and 'WebUiCss.VALUE.hashCode()' in assets,
     "four viewport render gate present": all(size in (ROOT / "scripts/verify-web-ui-v529.cjs").read_text() for size in ["1440,900", "1024,768", "800,1280", "390,844"]),
 }
 

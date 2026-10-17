@@ -29,6 +29,6 @@ assert "immersiveMode.recover(" in main
 assert "onBackToSlideshow: () -> Unit" in settings
 assert "R.string.settings_back" in settings
 assert "android:windowFullscreen" in theme
-assert "versionCode = 33" in gradle
-assert 'versionName = "0.12.13-prerelease"' in gradle
+assert "versionCode = buildNumber" in gradle
+assert "versionName = listOfNotNull(releaseYear, buildNumber, testingVariant)" in gradle
 print("Fullscreen recovery and Settings back-button contract: PASS")
