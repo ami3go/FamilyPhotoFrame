@@ -107,8 +107,9 @@ class WebPreviewStore(
     fun completeCapture(requestId: Long, frame: WebPreviewFrame): Boolean {
         val completion = synchronized(lock) {
             val capture = pending?.takeIf { it.request.id == requestId } ?: return false
-            val changed = current?.revision != frame.revision
-            val retained = if (changed || current == null) frame.also { current = it } else current!!
+            val existing = current
+            val changed = existing?.revision != frame.revision
+            val retained = if (changed || existing == null) frame.also { current = it } else existing
             pending = null
             _captureRequest.value = null
             capture.completion to WebPreviewCaptureResult.Ready(retained, changed)
