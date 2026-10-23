@@ -426,7 +426,9 @@ internal class WebSettingsPatchApplier(
             }
             str("autoRescanAt")?.let { v ->
                 // Non-null: validated above before any write happened.
-                val m = SleepSchedule.parseMinutes(v)!!
+                val m = checkNotNull(SleepSchedule.parseMinutes(v)) {
+                    "autoRescanAt was validated before any write"
+                }
                 next = next.copy(
                     schedule = next.schedule.copy(autoRescanAt = SleepSchedule.formatMinutes(m)),
                 )
