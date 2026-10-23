@@ -50,10 +50,14 @@ fun OverlayLayer(
     gpsLon: Double? = null,
     modifier: Modifier = Modifier,
 ) {
-    val weatherVisible = overlays.weatherShow && !weatherText.isNullOrBlank()
-    val photoDateVisible = overlays.photoDateShow && photoDateTakenEpochMs != null
-    val captionVisible = overlays.captionShow && !caption.isNullOrBlank()
-    val locationVisible = overlays.locationShow && gpsLat != null && gpsLon != null
+    val weatherLabel = weatherText?.takeIf { overlays.weatherShow && it.isNotBlank() }
+    val photoDateMs = photoDateTakenEpochMs?.takeIf { overlays.photoDateShow }
+    val captionLabel = caption?.takeIf { overlays.captionShow && it.isNotBlank() }
+    val gpsPair = if (overlays.locationShow && gpsLat != null && gpsLon != null) gpsLat to gpsLon else null
+    val weatherVisible = weatherLabel != null
+    val photoDateVisible = photoDateMs != null
+    val captionVisible = captionLabel != null
+    val locationVisible = gpsPair != null
     val anyVisible = overlays.clockShow || overlays.dateShow ||
         (overlays.folderShow && folderName.isNotBlank()) || weatherVisible ||
         photoDateVisible || captionVisible || locationVisible
@@ -75,17 +79,17 @@ fun OverlayLayer(
     val dateText = remember(nowMs) {
         DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.getDefault()).format(time)
     }
-    val photoDateText = if (photoDateVisible) {
-        remember(photoDateTakenEpochMs, zone) {
+    val photoDateText = photoDateMs?.let { ms ->
+        remember(ms, zone) {
             DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.getDefault())
-                .format(Instant.ofEpochMilli(photoDateTakenEpochMs!!).atZone(zone))
+                .format(Instant.ofEpochMilli(ms).atZone(zone))
         }
-    } else null
-    val locationText = if (locationVisible) {
-        remember(gpsLat, gpsLon) {
-            com.example.familyphotoframe.data.index.ExifParsing.formatGpsCoordinate(gpsLat!!, gpsLon!!)
+    }
+    val locationText = gpsPair?.let { (lat, lon) ->
+        remember(lat, lon) {
+            com.example.familyphotoframe.data.index.ExifParsing.formatGpsCoordinate(lat, lon)
         }
-    } else null
+    }
 
     Box(Modifier.fillMaxSize()) {
         // Group overlays by anchor so multiple items at one corner stack cleanly.
@@ -98,25 +102,25 @@ fun OverlayLayer(
                 getOrPut(overlays.datePosition) { mutableListOf() }
                     .add(OverlayPiece(dateText, isPrimary = false))
             }
-            if (weatherVisible) {
+            if (weatherLabel != null) {
                 getOrPut(overlays.weatherPosition) { mutableListOf() }
-                    .add(OverlayPiece(weatherText!!, isPrimary = false))
+                    .add(OverlayPiece(weatherLabel, isPrimary = false))
             }
             if (overlays.folderShow && folderName.isNotBlank()) {
                 getOrPut(overlays.folderPosition) { mutableListOf() }
                     .add(OverlayPiece(folderName, isPrimary = false))
             }
-            if (photoDateVisible) {
+            if (photoDateText != null) {
                 getOrPut(overlays.photoDatePosition) { mutableListOf() }
-                    .add(OverlayPiece(photoDateText!!, isPrimary = false))
+                    .add(OverlayPiece(photoDateText, isPrimary = false))
             }
-            if (captionVisible) {
+            if (captionLabel != null) {
                 getOrPut(overlays.captionPosition) { mutableListOf() }
-                    .add(OverlayPiece(caption!!, isPrimary = false, maxLines = 2))
+                    .add(OverlayPiece(captionLabel, isPrimary = false, maxLines = 2))
             }
-            if (locationVisible) {
+            if (locationText != null) {
                 getOrPut(overlays.locationPosition) { mutableListOf() }
-                    .add(OverlayPiece(locationText!!, isPrimary = false))
+                    .add(OverlayPiece(locationText, isPrimary = false))
             }
         }
 

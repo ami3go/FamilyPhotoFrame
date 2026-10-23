@@ -1733,8 +1733,8 @@ class SlideshowEngine(
                 ageMs = now - (slot?.loadedAtElapsedMs ?: 0L),
                 maxAgeMs = POOL_CACHE_MAX_AGE_MS,
             )
-            if (reusable) {
-                slot!!.ids
+            if (reusable && slot != null) {
+                slot.ids
             } else {
                 // Converted immediately: the DAO's boxed list becomes garbage now
                 // instead of being retained for the life of the cache entry.

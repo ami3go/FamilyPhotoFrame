@@ -793,7 +793,11 @@ internal suspend fun prepareSlide(
                     // Indexed dimensions are enough for scoring. Defer source/model I/O
                     // until this candidate is actually chosen.
                     metadataCandidateCount++
-                    inspectedCandidates += InspectedCollagePhoto(candidate, null, metadata!!)
+                    inspectedCandidates += InspectedCollagePhoto(
+                        candidate,
+                        null,
+                        requireNotNull(metadata) { "USE_METADATA is only chosen when metadata exists" },
+                    )
                     continue
                 }
                 CollageCandidateInspectionAction.QUEUE_REMOTE_BOUNDED_PROBE -> {
