@@ -159,19 +159,23 @@ class ServiceLocator(private val appContext: Context) {
      * nothing is world-readable. Attached to [diagnostics] by [App] at startup.
      */
     val diagnosticsSink: FileDiagnosticsSink by lazy {
-        FileDiagnosticsSink(File(appContext.filesDir, "diagnostics"))
+        FileDiagnosticsSink(
+            File(appContext.filesDir, "diagnostics"),
+            keepGenerations = 9,
+        )
     }
 
     /**
      * High-volume slide stream, kept apart from the evidence stream above so it can never
      * rotate the gate evidence away. Given a larger budget because it is the only stream
-     * that realistically ages out during a long run.
+     * that realistically ages out during a long run. Both sinks are sized to retain at least
+     * 48 hours at the V80 volumes (main ~0.4 MiB/h, slides ~2.7 MiB/h): 20 MiB and 140 MiB.
      */
     val diagnosticsBulkSink: FileDiagnosticsSink by lazy {
         FileDiagnosticsSink(
             File(appContext.filesDir, "diagnostics-slides"),
             maxBytes = 4L * 1024 * 1024,
-            keepGenerations = 2,
+            keepGenerations = 34,
         )
     }
 

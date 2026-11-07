@@ -30,8 +30,8 @@ class FileDiagnosticsSink(
     /** Rotate once the active file passes this size. */
     private val maxBytes: Long = 2L * 1024 * 1024,
     /**
-     * Rotated generations to keep. Two plus the active file spans a multi-day soak at
-     * observed volumes while staying bounded — this is a photo frame, possibly on a
+     * Rotated generations to keep. Callers size this for their stream's volume (see
+     * ServiceLocator, which targets 48 hours) while staying bounded — this is a photo frame, possibly on a
      * device with very little free space, so unbounded logging is not an option.
      */
     private val keepGenerations: Int = 2,

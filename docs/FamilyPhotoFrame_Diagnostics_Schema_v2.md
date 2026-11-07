@@ -73,7 +73,7 @@ All events pass through one allowlist and redaction policy before entering memor
 
 - Standard: critical lifecycle, source, scan, health, memory, crash, and writer evidence.
 - Bulk: repetitive slide, transition, shuffle, preview, and similar high-volume evidence.
-- Combined retained budget: at most 18 MiB.
+- Combined retained budget: at most 160 MiB (20 MiB standard + 140 MiB bulk), sized to retain ≥48 hours.
 - Queue depth, drops, sink errors/recovery, flush timeouts, bytes, generations, sequence ranges, last writes, rotations, privacy drops, and crash-envelope state are exposed through `DiagnosticsHealthSnapshot`.
 - Aggregation/rate control prevents repetitive events from evicting critical standard evidence.
 

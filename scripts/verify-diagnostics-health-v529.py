@@ -56,17 +56,17 @@ def main() -> int:
     need(checks, "repeat(100_000)", "100,000-event endurance test")
     need(checks, "all failed enqueue attempts counted", "exact saturation assertion")
 
-    # Default production budget: 3 * 2 MiB standard + 3 * 4 MiB bulk = 18 MiB.
-    need(services, 'FileDiagnosticsSink(File(appContext.filesDir, "diagnostics"))', "2 MiB standard sink")
+    # Production budget sized for 48 h retention: 10 * 2 MiB standard + 35 * 4 MiB bulk = 160 MiB.
+    need(services, "keepGenerations = 9", "ten standard generations")
     need(services, "maxBytes = 4L * 1024 * 1024", "4 MiB bulk sink")
-    need(services, "keepGenerations = 2", "three bulk generations")
+    need(services, "keepGenerations = 34", "thirty-five bulk generations")
 
     if failures:
         print("V52.9 DIAGNOSTICS HEALTH CONTRACT FAILED")
         for failure in failures:
             print("  -", failure)
         return 1
-    print("  stream routing, aggregation, 18 MiB budget, and health contracts passed")
+    print("  stream routing, aggregation, 160 MiB budget, and health contracts passed")
     return 0
 
 
